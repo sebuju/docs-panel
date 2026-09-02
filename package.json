@@ -2,9 +2,14 @@
   "name": "docs-panel",
   "displayName": "Docs Panel",
   "description": "Browse and read a project's docs folder in a single editor tab.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "local",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sebuju/docs-panel.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
