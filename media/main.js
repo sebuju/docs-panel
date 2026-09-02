@@ -3,6 +3,8 @@
 
   const layout = document.getElementById("layout");
   const treeEl = document.getElementById("tree");
+  const sideBodyEl = document.getElementById("sideBody");
+  const sideSplitter = document.getElementById("sideSplitter");
   const splitter = document.getElementById("splitter");
   const sideTitleEl = document.getElementById("sideTitle");
   const trashViewEl = document.getElementById("trashView");
@@ -12,6 +14,8 @@
   const headerEl = document.getElementById("header");
   const titleEl = document.getElementById("title");
   const dirtyEl = document.getElementById("dirty");
+  const textSmallerEl = document.getElementById("textSmaller");
+  const textBiggerEl = document.getElementById("textBigger");
   const toggleEl = document.getElementById("toggle");
   const bodyEl = document.getElementById("body");
   const tocEl = document.getElementById("toc");
@@ -20,11 +24,20 @@
   const lightboxHintEl = document.getElementById("lightboxHint");
 
   const MIN_SPLIT = 120;
+  const MIN_ROW = 60;
+  const MIN_TEXT = 0.7;
+  const MAX_TEXT = 2.5;
+  const TEXT_STEP = 0.1;
 
   let nodes = [];
   let expanded = new Set();
   let selected = null;
   let split = 240;
+  let sideSplit = 0.5;
+  let textScale = 1;
+  let sections = [];
+  let article = null;
+  let activeFrame = 0;
 
   let current = null;
   let mode = "preview";
@@ -41,10 +54,18 @@
     applyState(saved);
   }
   setSplit(split);
+  setSideSplit(sideSplit);
+  setTextScale(textScale);
 
   function applyState(state) {
     if (typeof state.split === "number") {
       split = state.split;
+    }
+    if (typeof state.sideSplit === "number") {
+      sideSplit = state.sideSplit;
+    }
+    if (typeof state.textScale === "number") {
+      textScale = state.textScale;
     }
     if (Array.isArray(state.expanded)) {
       expanded = new Set(state.expanded);
@@ -53,7 +74,13 @@
   }
 
   function currentState() {
-    return { split: split, expanded: [...expanded], selected: selected };
+    return {
+      split: split,
+      sideSplit: sideSplit,
+      textScale: textScale,
+      expanded: [...expanded],
+      selected: selected
+    };
   }
 
   function persist() {
@@ -66,6 +93,24 @@
     const max = Math.max(MIN_SPLIT, window.innerWidth - MIN_SPLIT - 4);
     split = Math.min(Math.max(value, MIN_SPLIT), max);
     layout.style.setProperty("--split", split + "px");
+  }
+
+  function setSideSplit(value) {
+    const height = sideBodyEl.clientHeight || 1;
+    const min = Math.min(0.4, MIN_ROW / height);
+    sideSplit = Math.min(Math.max(value, min), 1 - min);
+    sideBodyEl.style.setProperty("--tree-row", "calc(" + sideSplit * 100 + "% - 2px)");
+  }
+
+  // One scale for every file, so the reading size is a property of the panel.
+  function setTextScale(value) {
+    textScale = Math.min(Math.max(Math.round(value * 100) / 100, MIN_TEXT), MAX_TEXT);
+    layout.style.setProperty("--text-scale", textScale);
+    const percent = Math.round(textScale * 100) + "%";
+    textSmallerEl.title = "Smaller text (" + percent + ")";
+    textBiggerEl.title = "Bigger text (" + percent + ")";
+    textSmallerEl.disabled = textScale <= MIN_TEXT;
+    textBiggerEl.disabled = textScale >= MAX_TEXT;
   }
 
   function drawTree(notice) {
@@ -107,6 +152,7 @@
       if (!node.dir && statuses[node.path]) {
         const badge = document.createElement("span");
         badge.className = "status status-" + statuses[node.path].replace(/ /g, "-");
+        badge.textContent = statuses[node.path];
         badge.title = statuses[node.path];
         row.appendChild(badge);
       }
@@ -171,7 +217,38 @@
     event.preventDefault();
   });
 
-  window.addEventListener("resize", () => setSplit(split));
+  sideSplitter.addEventListener("pointerdown", (event) => {
+    sideSplitter.setPointerCapture(event.pointerId);
+    const box = sideBodyEl.getBoundingClientRect();
+    const move = (moveEvent) => setSideSplit((moveEvent.clientY - box.top) / box.height);
+    const up = (upEvent) => {
+      sideSplitter.releasePointerCapture(upEvent.pointerId);
+      sideSplitter.removeEventListener("pointermove", move);
+      sideSplitter.removeEventListener("pointerup", up);
+      document.body.classList.remove("dragging-rows");
+      persist();
+    };
+    document.body.classList.add("dragging-rows");
+    sideSplitter.addEventListener("pointermove", move);
+    sideSplitter.addEventListener("pointerup", up);
+    event.preventDefault();
+  });
+
+  window.addEventListener("resize", () => {
+    setSplit(split);
+    setSideSplit(sideSplit);
+  });
+
+  bodyEl.addEventListener("scroll", scheduleActive);
+
+  textSmallerEl.addEventListener("click", () => stepTextScale(-TEXT_STEP));
+  textBiggerEl.addEventListener("click", () => stepTextScale(TEXT_STEP));
+
+  function stepTextScale(delta) {
+    setTextScale(textScale + delta);
+    persist();
+    scheduleActive();
+  }
 
   toggleEl.addEventListener("click", () => {
     if (!current || !editable(current)) {
@@ -379,6 +456,8 @@
     } else if (message.type === "state") {
       applyState(message);
       setSplit(split);
+      setSideSplit(sideSplit);
+      setTextScale(textScale);
       drawTree();
     } else if (message.type === "saved") {
       drafts.delete(message.path);
@@ -414,6 +493,9 @@
     bodyEl.textContent = "";
     tocEl.textContent = "";
     tocEl.hidden = true;
+    sideBodyEl.classList.add("no-toc");
+    sections = [];
+    article = null;
 
     if (!current) {
       headerEl.hidden = true;
@@ -445,7 +527,7 @@
       return;
     }
 
-    const article = document.createElement("div");
+    article = document.createElement("div");
     article.className = "markdown-body";
     article.innerHTML = current.html || "";
     bodyEl.appendChild(article);
@@ -464,7 +546,7 @@
     });
 
     if (current.kind === "md") {
-      buildToc(article);
+      buildToc();
     }
   }
 
@@ -486,7 +568,7 @@
     area.focus();
   }
 
-  function buildToc(article) {
+  function buildToc() {
     const headings = article.querySelectorAll("h1, h2, h3, h4, h5, h6");
     if (headings.length < 2) {
       return;
@@ -503,19 +585,80 @@
       const link = document.createElement("a");
       link.href = "#";
       link.textContent = heading.textContent;
+      const section = { heading: heading, li: li, own: [heading, ...ownedBy(heading)] };
       link.addEventListener("click", (event) => {
         event.preventDefault();
         heading.scrollIntoView({ block: "start" });
-        heading.classList.remove("flash");
-        void heading.offsetWidth; // restart the animation on a repeated click
-        heading.classList.add("flash");
+        flash(section.own);
       });
       link.title = heading.textContent;
       li.appendChild(link);
       list.appendChild(li);
+      sections.push(section);
     }
     tocEl.appendChild(list);
     tocEl.hidden = false;
+    sideBodyEl.classList.remove("no-toc");
+    setSideSplit(sideSplit);
+    scheduleActive();
+  }
+
+  // A heading owns everything down to the next heading, whatever its level.
+  function ownedBy(heading) {
+    const own = [];
+    let node = heading.nextElementSibling;
+    while (node && !/^H[1-6]$/.test(node.tagName)) {
+      own.push(node);
+      node = node.nextElementSibling;
+    }
+    return own;
+  }
+
+  function flash(elements) {
+    for (const element of elements) {
+      element.classList.remove("flash");
+    }
+    void elements[0].offsetWidth; // restart the animation on a repeated click
+    for (const element of elements) {
+      element.classList.add("flash");
+    }
+  }
+
+  function scheduleActive() {
+    if (activeFrame) {
+      return;
+    }
+    activeFrame = requestAnimationFrame(() => {
+      activeFrame = 0;
+      markActive();
+    });
+  }
+
+  // The entry that owns the most visible height wins, so the heading being read stays
+  // marked even once it has scrolled off the top.
+  function markActive() {
+    if (!sections.length || !article) {
+      return;
+    }
+    const view = bodyEl.getBoundingClientRect();
+    const end = article.getBoundingClientRect().bottom;
+    let best = null;
+    let bestHeight = 0;
+
+    for (let i = 0; i < sections.length; i++) {
+      const top = sections[i].heading.getBoundingClientRect().top;
+      const bottom =
+        i + 1 < sections.length ? sections[i + 1].heading.getBoundingClientRect().top : end;
+      const height = Math.min(bottom, view.bottom) - Math.max(top, view.top);
+      if (height > bestHeight) {
+        bestHeight = height;
+        best = sections[i];
+      }
+    }
+
+    for (const section of sections) {
+      section.li.classList.toggle("active", section === best);
+    }
   }
 
   vscode.postMessage({ type: "ready" });

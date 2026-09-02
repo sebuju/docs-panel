@@ -11,6 +11,7 @@ html, body {
 
 #layout {
   --split: 240px;
+  --text-scale: 1;
   display: grid;
   grid-template-columns: var(--split) 4px 1fr;
   height: 100%;
@@ -90,8 +91,45 @@ button.icon.active {
   opacity: 1;
 }
 
-#tree {
+button.icon:disabled {
+  background: transparent;
+  cursor: default;
+  opacity: 0.3;
+}
+
+#sideBody {
+  --tree-row: calc(50% - 2px);
   flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: var(--tree-row) 4px 1fr;
+}
+
+/* With no headings to list the tree takes the whole side, splitter and all. */
+#sideBody.no-toc {
+  grid-template-rows: 1fr 0 0;
+}
+
+#sideSplitter {
+  cursor: row-resize;
+  background: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+}
+
+#sideSplitter:hover,
+body.dragging-rows #sideSplitter {
+  background: var(--vscode-focusBorder);
+}
+
+body.dragging-rows {
+  cursor: row-resize;
+}
+
+#sideBody.no-toc #sideSplitter {
+  display: none;
+}
+
+#tree {
+  min-height: 0;
   overflow: auto;
   padding: 8px 4px;
   user-select: none;
@@ -133,13 +171,20 @@ button.icon.active {
   text-overflow: ellipsis;
 }
 
+/* Fixed and shorter than the label's line box, so adding a pill never moves a row. */
 .status {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  flex: 0 1 auto;
+  height: 14px;
+  line-height: 14px;
   margin-left: 6px;
-  border-radius: 50%;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.75em;
+  color: #fff;
   background: var(--status);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Each status names its colour once; the tree dot and the header pill both read it. */
@@ -229,17 +274,13 @@ body.dragging {
   color: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vscode-foreground));
 }
 
-#panes {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
+/* One size for the whole reading pane; everything below it is sized in em. */
 #body {
   flex: 1;
   min-width: 0;
   overflow: auto;
   padding: 12px 24px 24px;
+  font-size: calc(var(--vscode-font-size, 13px) * var(--text-scale));
 }
 
 .markdown-body > [data-line="0"] { margin-top: 0em; }
@@ -259,13 +300,15 @@ body.dragging {
 }
 
 #toc {
-  flex: 0 1 auto;
-  max-width: 200px;
+  min-height: 0;
   overflow: auto;
   user-select: none;
-  padding: 12px 8px;
-  border-left: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  padding: 8px 4px;
   font-size: 1em;
+}
+
+#toc[hidden] {
+  display: none;
 }
 
 #toc ul {
@@ -276,15 +319,28 @@ body.dragging {
 
 #toc li {
   padding: 1px 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 #toc a {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   color: var(--vscode-foreground);
   text-decoration: none;
   opacity: 0.85;
+}
+
+/* The dot hangs beside the first line, so a wrapped label keeps one straight edge. */
+#toc a::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  margin-top: 0.5em;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
 }
 
 #toc a:hover {
@@ -295,6 +351,17 @@ body.dragging {
 #toc a:focus,
 #toc a:focus-visible {
   outline: none;
+}
+
+/* The active entry is the one whose own section fills most of the reading pane. */
+#toc li.active {
+  background: var(--vscode-list-inactiveSelectionBackground, rgba(128, 128, 128, 0.18));
+  border-radius: 3px;
+}
+
+#toc li.active > a {
+  color: var(--vscode-textLink-activeForeground);
+  opacity: 1;
 }
 
 @keyframes headingFlash {
@@ -334,7 +401,7 @@ body.dragging {
   color: var(--vscode-editor-foreground);
   background: var(--vscode-editor-background);
   font-family: var(--vscode-editor-font-family);
-  font-size: var(--vscode-editor-font-size);
+  font-size: calc(var(--vscode-editor-font-size, 13px) * var(--text-scale));
   line-height: 1.5;
   tab-size: 2;
 }
