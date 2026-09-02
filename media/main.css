@@ -9,15 +9,42 @@ html, body {
   font-size: var(--vscode-font-size);
 }
 
+/* Flat and narrow: the panel is a reading surface, the bar should not draw the eye. */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.55);
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
 #layout {
   --split: 240px;
   --text-scale: 1;
+  --line-height: 1.6;
+  --body-font: var(--vscode-font-family);
   display: grid;
   grid-template-columns: var(--split) 4px 1fr;
   height: 100%;
 }
 
 #side {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -25,8 +52,6 @@ html, body {
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
 }
 
-/* The two bars share a height so their bottom borders line up across the splitter. */
-#sidebar,
 #header {
   display: flex;
   align-items: center;
@@ -35,18 +60,6 @@ html, body {
   box-sizing: border-box;
   padding: 0 8px;
   border-bottom: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
-}
-
-#sideTitle {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.85em;
-  opacity: 0.7;
 }
 
 button.icon {
@@ -69,6 +82,22 @@ button.icon[hidden] {
 }
 
 button.icon span {
+  display: flex;
+}
+
+button.icon .glyph {
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+/* The button carries all three spacing icons and shows the one the step names. */
+#lineHeight .step {
+  display: none;
+}
+
+#lineHeight[data-step="0"] .step-0,
+#lineHeight[data-step="1"] .step-1,
+#lineHeight[data-step="2"] .step-2 {
   display: flex;
 }
 
@@ -112,7 +141,7 @@ button.icon:disabled {
 
 #sideSplitter {
   cursor: row-resize;
-  background: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  /* background: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35)); */
 }
 
 #sideSplitter:hover,
@@ -143,6 +172,12 @@ body.dragging-rows {
 
 #tree > ul {
   padding-left: 0;
+}
+
+.row-icon {
+  display: flex;
+  flex: 0 0 auto;
+  opacity: 0.8;
 }
 
 .row {
@@ -198,7 +233,7 @@ body.dragging-rows {
   box-sizing: border-box;
   border: 1px solid transparent;
   border-radius: 999px;
-  padding: 0 10px;
+  padding: 0 5px;
   line-height: 18px;
   appearance: none;
   text-align: center;
@@ -242,7 +277,6 @@ body.dragging-rows {
 
 #splitter {
   cursor: col-resize;
-  background: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
 }
 
 #splitter:hover,
@@ -280,7 +314,9 @@ body.dragging {
   min-width: 0;
   overflow: auto;
   padding: 12px 24px 24px;
+  font-family: var(--body-font);
   font-size: calc(var(--vscode-font-size, 13px) * var(--text-scale));
+  line-height: var(--line-height);
 }
 
 .markdown-body > [data-line="0"] { margin-top: 0em; }
@@ -291,8 +327,17 @@ body.dragging {
   margin-bottom: 0;
 }
 
+/* An em keeps the marker clear of the text edge at every text scale. */
 .markdown-body :is(ul, ol) {
-  padding-left: 20px;
+  padding-left: 1.8em;
+  margin-left: 0;
+  list-style-position: outside;
+}
+
+/* A title and its sections need a seam; the deeper levels read from weight alone. */
+.markdown-body :is(h1, h2) {
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  padding-bottom: 0.2em;
 }
 
 .markdown-body li :is(ul, ol) {
@@ -311,6 +356,11 @@ body.dragging {
   display: none;
 }
 
+/* A tint marks the list off from the tree above it, but only when it holds something. */
+#toc:not([hidden]) {
+  background: rgba(128, 128, 128, 0.04);
+}
+
 #toc ul {
   list-style: none;
   margin: 0;
@@ -318,7 +368,7 @@ body.dragging {
 }
 
 #toc li {
-  padding: 1px 0;
+  padding: 1px 4px;
   overflow-wrap: anywhere;
 }
 
@@ -331,15 +381,13 @@ body.dragging {
   opacity: 0.85;
 }
 
-/* The dot hangs beside the first line, so a wrapped label keeps one straight edge. */
+/* A glyph, not a box: a 5px square rounds to an oval whenever the pane lands off-pixel.
+   The dot hangs beside the first line, so a wrapped label keeps one straight edge. */
 #toc a::before {
-  content: "";
+  content: "\2022";
   flex: 0 0 auto;
   width: 5px;
-  height: 5px;
-  margin-top: 0.5em;
-  border-radius: 50%;
-  background: currentColor;
+  text-align: center;
   opacity: 0.6;
 }
 
@@ -353,12 +401,7 @@ body.dragging {
   outline: none;
 }
 
-/* The active entry is the one whose own section fills most of the reading pane. */
-#toc li.active {
-  background: var(--vscode-list-inactiveSelectionBackground, rgba(128, 128, 128, 0.18));
-  border-radius: 3px;
-}
-
+/* An entry is active while more than a tenth of its own section is on screen. */
 #toc li.active > a {
   color: var(--vscode-textLink-activeForeground);
   opacity: 1;
@@ -384,25 +427,27 @@ body.dragging {
 
 /* Depth reads from the indent; weight and fade separate a title from its sections. */
 .toc-h1 { font-weight: 600; }
-.toc-h2 { padding-left: 8px; }
-.toc-h3 { padding-left: 16px; font-size: 0.95em; }
-.toc-h4 { padding-left: 24px; font-size: 0.95em; opacity: 0.8; }
-.toc-h5 { padding-left: 32px; font-size: 0.9em; opacity: 0.7; }
-.toc-h6 { padding-left: 40px; font-size: 0.9em; opacity: 0.6; }
+.toc-h2 { padding-left: 12px; }
+.toc-h3 { padding-left: 20px; font-size: 0.95em; }
+.toc-h4 { padding-left: 28px; font-size: 0.95em; opacity: 0.8; }
+.toc-h5 { padding-left: 36px; font-size: 0.9em; opacity: 0.7; }
+.toc-h6 { padding-left: 44px; font-size: 0.9em; opacity: 0.6; }
 
+/* Sized to its own text and scrolled by the pane, so editing is the same page, not a box in it. */
 #body textarea {
+  display: block;
   width: 100%;
-  height: 100%;
   box-sizing: border-box;
+  overflow: hidden;
   resize: none;
   border: none;
   outline: none;
   padding: 0;
   color: var(--vscode-editor-foreground);
-  background: var(--vscode-editor-background);
-  font-family: var(--vscode-editor-font-family);
+  background: transparent;
+  font-family: var(--body-font);
   font-size: calc(var(--vscode-editor-font-size, 13px) * var(--text-scale));
-  line-height: 1.5;
+  line-height: var(--line-height);
   tab-size: 2;
 }
 

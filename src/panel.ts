@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { buildTree } from "./tree";
+import { buildTree, TreeNode } from "./tree";
 import { renderFile, escapeHtml } from "./render";
 import { watchRoot } from "./watch";
 import { prune, rekey, setStatus, Ledger, Status, STATUSES } from "./ledger";
@@ -11,6 +11,8 @@ export interface PanelState {
   split: number;
   sideSplit: number;
   textScale: number;
+  lineHeight: number;
+  mono: boolean;
   expanded: string[];
   selected: string | null;
 }
@@ -19,6 +21,8 @@ const DEFAULT_STATE: PanelState = {
   split: 240,
   sideSplit: 0.5,
   textScale: 1,
+  lineHeight: 1,
+  mono: false,
   expanded: [],
   selected: null
 };
@@ -31,6 +35,11 @@ const RESTORE_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidde
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
 d="M3 8a5 5 0 1 1 1.6 3.7M3 4.5V8h3.5"/></svg>`;
 
+const TAG_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"
+d="M2.5 2.5h5l6 6-5 5-6-6z"/>
+<circle cx="5.2" cy="5.2" r="1" fill="currentColor"/></svg>`;
+
 const PEN_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
 d="M11.2 2.6l2.2 2.2-8 8-2.9.7.7-2.9zM10 3.8l2.2 2.2"/></svg>`;
@@ -42,6 +51,17 @@ d="M3.5 8h9"/></svg>`;
 const PLUS_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
 d="M8 3.5v9M3.5 8h9"/></svg>`;
+
+// One icon per step: the gaps between the rules are the spacing the step gives.
+const LINES_ICONS = [
+  "M2.5 5.5h11M2.5 8h11M2.5 10.5h11",
+  "M2.5 4h11M2.5 8h11M2.5 12h11",
+  "M2.5 2.5h11M2.5 8h11M2.5 13.5h11"
+].map(
+  (path, step) => `<span class="step step-${step}"><svg viewBox="0 0 16 16" width="14" height="14"
+aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"
+d="${path}"/></svg></span>`
+).join("");
 
 const EYE_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
@@ -61,7 +81,6 @@ export class DocsPanel {
   private root: Root | undefined;
   private state: PanelState;
   private ready = false;
-  private viewTrash = false;
 
   static open(context: vscode.ExtensionContext): void {
     if (DocsPanel.current) {
@@ -119,10 +138,7 @@ export class DocsPanel {
   }
 
   private get base(): vscode.Uri | undefined {
-    if (!this.root) {
-      return undefined;
-    }
-    return this.viewTrash ? vscode.Uri.joinPath(this.root.uri, TRASH_DIR) : this.root.uri;
+    return this.root?.uri;
   }
 
   private resourceRoots(): vscode.Uri[] {
@@ -183,6 +199,9 @@ export class DocsPanel {
       case "save":
         await this.save(String(message.path), String(message.text));
         return;
+      case "rename":
+        await this.rename(String(message.path));
+        return;
       case "trash":
         await this.move(String(message.path), "trash");
         return;
@@ -192,20 +211,7 @@ export class DocsPanel {
       case "status":
         await this.status(String(message.path), message.status);
         return;
-      case "view":
-        this.viewTrash = Boolean(message.trash);
-        this.state.selected = null;
-        this.startWatcher();
-        this.post({ type: "view", trash: this.viewTrash });
-        await this.sendTree();
-        return;
     }
-  }
-
-  // Tree paths are relative to the view, ledger keys are relative to the docs root, so
-  // the trash prefix is added once here and nowhere else.
-  private ledgerKey(relPath: string): string {
-    return this.viewTrash ? `${TRASH_DIR}/${relPath}` : relPath;
   }
 
   private async status(relPath: string, value: unknown): Promise<void> {
@@ -213,17 +219,13 @@ export class DocsPanel {
       return;
     }
     const status = STATUSES.includes(value as Status) ? (value as Status) : null;
-    this.postStatuses(await setStatus(this.root.uri, this.ledgerKey(relPath), status));
+    this.postStatuses(await setStatus(this.root.uri, relPath, status));
   }
 
   private postStatuses(ledger: Ledger): void {
-    const prefix = `${TRASH_DIR}/`;
     const statuses: Record<string, Status> = {};
     for (const [path, entry] of Object.entries(ledger.files)) {
-      const inTrash = path.startsWith(prefix);
-      if (inTrash === this.viewTrash) {
-        statuses[inTrash ? path.slice(prefix.length) : path] = entry.status;
-      }
+      statuses[path] = entry.status;
     }
     this.post({ type: "statuses", statuses });
   }
@@ -242,13 +244,69 @@ export class DocsPanel {
     }
   }
 
-  private async move(relPath: string, direction: "trash" | "restore"): Promise<void> {
+  // The file keeps its folder: only the name is asked for, so a rename cannot move a file.
+  private async rename(relPath: string): Promise<void> {
     const base = this.base;
-    if (!base || !this.root || this.viewTrash !== (direction === "restore")) {
+    if (!base || !this.root) {
+      return;
+    }
+    const parts = relPath.split("/");
+    const name = parts.pop() ?? relPath;
+    const dot = name.lastIndexOf(".");
+
+    const next = await vscode.window.showInputBox({
+      title: "Rename",
+      value: name,
+      valueSelection: dot > 0 ? [0, dot] : undefined,
+      validateInput: (value) => {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return "The name cannot be empty.";
+        }
+        return /[\\/:*?"<>|]/.test(trimmed) ? "That name has a character a file cannot use." : null;
+      }
+    });
+    const target = next?.trim();
+    if (!target || target === name) {
+      return;
+    }
+
+    const folder = parts.length ? vscode.Uri.joinPath(base, ...parts) : base;
+    const to = vscode.Uri.joinPath(folder, target);
+    const toPath = [...parts, target].join("/");
+    try {
+      await vscode.workspace.fs.stat(to);
+      void vscode.window.showErrorMessage(`Docs Panel: ${toPath} already exists.`);
+      return;
+    } catch {
+      // Nothing there, so the name is free.
+    }
+
+    try {
+      await vscode.workspace.fs.rename(
+        vscode.Uri.joinPath(base, ...relPath.split("/")),
+        to,
+        { overwrite: false }
+      );
+      await rekey(this.root.uri, relPath, toPath);
+      this.state.selected = toPath;
+      this.post({ type: "renamed", from: relPath, to: toPath });
+      await this.sendTree();
+      await this.sendContent(toPath);
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Docs Panel could not rename ${relPath}: ${error}`);
+    }
+  }
+
+  // The trash is a folder like any other, so a move is only the prefix going on or off.
+  private async move(relPath: string, direction: "trash" | "restore"): Promise<void> {
+    const prefix = `${TRASH_DIR}/`;
+    const inTrash = relPath.startsWith(prefix);
+    if (!this.root || inTrash !== (direction === "restore")) {
       return;
     }
     const root = this.root.uri;
-    const parts = relPath.split("/");
+    const parts = (inTrash ? relPath.slice(prefix.length) : relPath).split("/");
     const name = parts.pop() ?? relPath;
     const anchor = direction === "trash" ? vscode.Uri.joinPath(root, TRASH_DIR) : root;
 
@@ -256,11 +314,11 @@ export class DocsPanel {
       const target = await makeDirectory(anchor, parts);
       const to = await freeName(target, name);
       await vscode.workspace.fs.rename(
-        vscode.Uri.joinPath(base, ...relPath.split("/")),
+        vscode.Uri.joinPath(root, ...relPath.split("/")),
         to,
         { overwrite: false }
       );
-      await rekey(root, this.ledgerKey(relPath), relativeTo(root, to));
+      await rekey(root, relPath, relativeTo(root, to));
       this.state.selected = null;
       this.post({ type: "moved", path: relPath });
       await this.sendTree();
@@ -285,19 +343,13 @@ export class DocsPanel {
       exists = false;
     }
     if (!exists) {
-      this.post({
-        type: "tree",
-        nodes: [],
-        notice: this.viewTrash ? "The trash is empty." : `No folder at ${this.root?.label}`
-      });
+      this.post({ type: "tree", nodes: [], trash: [], notice: `No folder at ${this.root?.label}` });
       return;
     }
-    const nodes = await buildTree(base);
-    this.post({
-      type: "tree",
-      nodes,
-      notice: nodes.length === 0 && this.viewTrash ? "The trash is empty." : undefined
-    });
+    // The walk skips dotted names, so the trash is built on its own and its paths are
+    // prefixed here: one list, one set of keys, whichever side of the trash a file is on.
+    const trash = (await buildTree(vscode.Uri.joinPath(base, TRASH_DIR))).map(prefixNode);
+    this.post({ type: "tree", nodes: await buildTree(base), trash });
     if (this.root) {
       this.postStatuses(await prune(this.root.uri));
     }
@@ -346,10 +398,6 @@ export class DocsPanel {
 <body>
 <div id="layout">
   <div id="side">
-    <div id="sidebar">
-      <span id="sideTitle">Docs</span>
-      <button id="trashView" class="icon" type="button" title="Show the trash">${TRASH_ICON}</button>
-    </div>
     <div id="sideBody" class="no-toc">
       <div id="tree" tabindex="0"></div>
       <div id="sideSplitter"></div>
@@ -367,13 +415,17 @@ export class DocsPanel {
       </select>
       <button id="textSmaller" class="icon" type="button" title="Smaller text">${MINUS_ICON}</button>
       <button id="textBigger" class="icon" type="button" title="Bigger text">${PLUS_ICON}</button>
+      <button id="lineHeight" class="icon" type="button" title="Line spacing">${LINES_ICONS}</button>
+      <button id="font" class="icon" type="button" title="Font"><span class="glyph">Aa</span></button>
       <button id="toggle" class="icon" type="button" title="Edit"><span class="pen">${PEN_ICON}</span><span class="eye">${EYE_ICON}</span></button>
+      <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
       <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
       <button id="restore" class="icon" type="button" title="Put back" hidden>${RESTORE_ICON}</button>
     </div>
     <div id="body"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
   </div>
 </div>
+<template id="trashGlyph">${TRASH_ICON}</template>
 <div id="lightbox" hidden>
   <img id="lightboxImage" alt="">
   <div id="lightboxHint"></div>
@@ -391,6 +443,14 @@ export class DocsPanel {
     }
     this.disposables.length = 0;
   }
+}
+
+function prefixNode(node: TreeNode): TreeNode {
+  return {
+    ...node,
+    path: `${TRASH_DIR}/${node.path}`,
+    children: node.children?.map(prefixNode)
+  };
 }
 
 function relativeTo(root: vscode.Uri, uri: vscode.Uri): string {
@@ -442,10 +502,13 @@ function normalizeState(value: any): PanelState {
   const split = Number(value?.split);
   const sideSplit = Number(value?.sideSplit);
   const textScale = Number(value?.textScale);
+  const lineHeight = Number(value?.lineHeight);
   return {
     split: Number.isFinite(split) ? split : DEFAULT_STATE.split,
     sideSplit: Number.isFinite(sideSplit) ? sideSplit : DEFAULT_STATE.sideSplit,
     textScale: Number.isFinite(textScale) ? textScale : DEFAULT_STATE.textScale,
+    lineHeight: Number.isFinite(lineHeight) ? lineHeight : DEFAULT_STATE.lineHeight,
+    mono: typeof value?.mono === "boolean" ? value.mono : DEFAULT_STATE.mono,
     expanded: Array.isArray(value?.expanded) ? value.expanded.map(String) : [],
     selected: typeof value?.selected === "string" ? value.selected : null
   };

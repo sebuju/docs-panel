@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-export type ContentKind = "md" | "img" | "text";
+export type ContentKind = "md" | "html" | "img" | "text";
 
 export interface Content {
   path: string;
@@ -12,6 +12,7 @@ export interface Content {
 
 const MARKDOWN = new Set([".md", ".markdown"]);
 const IMAGES = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]);
+const HTML = new Set([".html", ".htm"]);
 
 export async function renderFile(
   root: vscode.Uri,
@@ -48,7 +49,23 @@ export async function renderFile(
     }
   }
 
+  if (HTML.has(ext)) {
+    return {
+      path: relPath,
+      kind: "html",
+      html: stripAssets(rewriteLinks(bodyOf(text), root, relPath, webview)),
+      text
+    };
+  }
+
   return { path: relPath, kind: "text", html: `<pre>${escapeHtml(text)}</pre>`, text };
+}
+
+// The page is shown inside the panel's own document, so only what a body may hold is kept.
+function bodyOf(html: string): string {
+  const body = /<body\b[^>]*>([\s\S]*?)<\/body\s*>/i.exec(html);
+  const inner = body ? body[1] : html.replace(/<head\b[^>]*>[\s\S]*?<\/head\s*>/i, "");
+  return inner.replace(/<\/?(?:html|body|head)\b[^>]*>/gi, "");
 }
 
 async function renderMarkdown(text: string): Promise<string | undefined> {

@@ -6,8 +6,8 @@
   const sideBodyEl = document.getElementById("sideBody");
   const sideSplitter = document.getElementById("sideSplitter");
   const splitter = document.getElementById("splitter");
-  const sideTitleEl = document.getElementById("sideTitle");
-  const trashViewEl = document.getElementById("trashView");
+  const trashGlyphEl = document.getElementById("trashGlyph");
+  const renameEl = document.getElementById("rename");
   const trashEl = document.getElementById("trash");
   const restoreEl = document.getElementById("restore");
   const statusEl = document.getElementById("status");
@@ -16,6 +16,8 @@
   const dirtyEl = document.getElementById("dirty");
   const textSmallerEl = document.getElementById("textSmaller");
   const textBiggerEl = document.getElementById("textBigger");
+  const lineHeightEl = document.getElementById("lineHeight");
+  const fontEl = document.getElementById("font");
   const toggleEl = document.getElementById("toggle");
   const bodyEl = document.getElementById("body");
   const tocEl = document.getElementById("toc");
@@ -28,6 +30,10 @@
   const MIN_TEXT = 0.7;
   const MAX_TEXT = 2.5;
   const TEXT_STEP = 0.1;
+  const LINE_HEIGHTS = ["normal", "1.6", "2"];
+  const LINE_LABELS = ["tight", "normal", "loose"];
+  const ACTIVE_SHARE = 0.1;
+  const TRASH_PREFIX = ".trash/";
 
   let nodes = [];
   let expanded = new Set();
@@ -35,19 +41,24 @@
   let split = 240;
   let sideSplit = 0.5;
   let textScale = 1;
+  let lineHeight = 1;
+  let mono = false;
   let sections = [];
   let article = null;
   let activeFrame = 0;
+  let activeSection = null;
 
   let current = null;
   let mode = "preview";
-  let viewTrash = false;
+  let trashOpen = false;
+  let trashNodes = [];
   let zoom = 1;
   let fitScale = 1;
   let panX = 0;
   let panY = 0;
   const drafts = new Map();
   let statuses = {};
+  let notice = "";
 
   const saved = vscode.getState();
   if (saved) {
@@ -56,6 +67,8 @@
   setSplit(split);
   setSideSplit(sideSplit);
   setTextScale(textScale);
+  setLineHeight(lineHeight);
+  setMono(mono);
 
   function applyState(state) {
     if (typeof state.split === "number") {
@@ -66,6 +79,12 @@
     }
     if (typeof state.textScale === "number") {
       textScale = state.textScale;
+    }
+    if (typeof state.lineHeight === "number") {
+      lineHeight = state.lineHeight;
+    }
+    if (typeof state.mono === "boolean") {
+      mono = state.mono;
     }
     if (Array.isArray(state.expanded)) {
       expanded = new Set(state.expanded);
@@ -78,6 +97,8 @@
       split: split,
       sideSplit: sideSplit,
       textScale: textScale,
+      lineHeight: lineHeight,
+      mono: mono,
       expanded: [...expanded],
       selected: selected
     };
@@ -113,20 +134,76 @@
     textBiggerEl.disabled = textScale >= MAX_TEXT;
   }
 
-  function drawTree(notice) {
-    treeEl.textContent = "";
-    if (notice) {
-      const p = document.createElement("p");
-      p.className = "notice";
-      p.textContent = notice;
-      treeEl.appendChild(p);
-      return;
-    }
-    treeEl.appendChild(buildList(nodes));
+  function setLineHeight(value) {
+    lineHeight = Math.min(Math.max(Math.round(value) || 0, 0), LINE_HEIGHTS.length - 1);
+    layout.style.setProperty("--line-height", LINE_HEIGHTS[lineHeight]);
+    lineHeightEl.dataset.step = String(lineHeight);
+    lineHeightEl.title = "Line spacing (" + LINE_LABELS[lineHeight] + ")";
   }
 
-  function buildList(items) {
+  function setMono(value) {
+    mono = !!value;
+    layout.style.setProperty(
+      "--body-font",
+      mono ? "var(--vscode-editor-font-family)" : "var(--vscode-font-family)"
+    );
+    fontEl.classList.toggle("active", mono);
+    fontEl.title = mono ? "Font (mono)" : "Font (default)";
+  }
+
+  function drawTree(text) {
+    if (text !== undefined) {
+      notice = text;
+    }
+    treeEl.textContent = "";
+    const list = buildList(nodes, notice);
+    const li = document.createElement("li");
+    li.appendChild(trashRow());
+    if (trashOpen) {
+      li.appendChild(buildList(trashNodes, trashNodes.length ? "" : "The trash is empty."));
+    }
+    list.appendChild(li);
+    treeEl.appendChild(list);
+  }
+
+  // The trash is a folder in the list, below the docs it came from and opening in place.
+  function trashRow() {
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const twisty = document.createElement("span");
+    twisty.className = "twisty";
+    twisty.textContent = trashOpen ? "▾" : "▸";
+    row.appendChild(twisty);
+
+    const icon = document.createElement("span");
+    icon.className = "row-icon";
+    icon.appendChild(trashGlyphEl.content.cloneNode(true));
+    row.appendChild(icon);
+
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = "Trash";
+    row.appendChild(label);
+
+    row.addEventListener("click", () => {
+      trashOpen = !trashOpen;
+      drawTree();
+    });
+    return row;
+  }
+
+  function buildList(items, text) {
     const ul = document.createElement("ul");
+    if (text) {
+      const li = document.createElement("li");
+      const p = document.createElement("p");
+      p.className = "notice";
+      p.textContent = text;
+      li.appendChild(p);
+      ul.appendChild(li);
+      return ul;
+    }
     for (const node of items) {
       const li = document.createElement("li");
       const row = document.createElement("div");
@@ -237,6 +314,7 @@
   window.addEventListener("resize", () => {
     setSplit(split);
     setSideSplit(sideSplit);
+    fitEditor();
   });
 
   bodyEl.addEventListener("scroll", scheduleActive);
@@ -244,8 +322,23 @@
   textSmallerEl.addEventListener("click", () => stepTextScale(-TEXT_STEP));
   textBiggerEl.addEventListener("click", () => stepTextScale(TEXT_STEP));
 
+  lineHeightEl.addEventListener("click", () => {
+    setLineHeight((lineHeight + 1) % LINE_HEIGHTS.length);
+    fitEditor();
+    persist();
+    scheduleActive();
+  });
+
+  fontEl.addEventListener("click", () => {
+    setMono(!mono);
+    fitEditor();
+    persist();
+    scheduleActive();
+  });
+
   function stepTextScale(delta) {
     setTextScale(textScale + delta);
+    fitEditor();
     persist();
     scheduleActive();
   }
@@ -255,9 +348,22 @@
       return;
     }
     stashDraft();
+    const ratio = scrollRatio();
     mode = mode === "edit" ? "preview" : "edit";
     draw();
+    applyScrollRatio(ratio);
   });
+
+  // Both modes scroll the same box, so a share of the way down carries over as it is.
+  function scrollRatio() {
+    const range = bodyEl.scrollHeight - bodyEl.clientHeight;
+    return range > 0 ? bodyEl.scrollTop / range : 0;
+  }
+
+  function applyScrollRatio(ratio) {
+    const range = bodyEl.scrollHeight - bodyEl.clientHeight;
+    bodyEl.scrollTop = range > 0 ? Math.round(ratio * range) : 0;
+  }
 
   statusEl.addEventListener("change", () => {
     showStatus(statusEl.value);
@@ -272,37 +378,35 @@
     statusEl.className = "pill-" + (value || "none").replace(/ /g, "-");
   }
 
-  trashViewEl.addEventListener("click", () => {
-    stashDraft();
-    viewTrash = !viewTrash;
-    selected = null;
-    current = null;
-    mode = "preview";
-    draw();
-    applyView();
-    vscode.postMessage({ type: "view", trash: viewTrash });
+  renameEl.addEventListener("click", () => {
+    if (current) {
+      stashDraft();
+      vscode.postMessage({ type: "rename", path: current.path });
+    }
   });
 
   trashEl.addEventListener("click", () => {
-    if (current && !viewTrash) {
+    if (current && !inTrash(current.path)) {
       drafts.delete(current.path);
       vscode.postMessage({ type: "trash", path: current.path });
     }
   });
 
   restoreEl.addEventListener("click", () => {
-    if (current && viewTrash) {
+    if (current && inTrash(current.path)) {
       drafts.delete(current.path);
       vscode.postMessage({ type: "restore", path: current.path });
     }
   });
 
+  function inTrash(path) {
+    return path.startsWith(TRASH_PREFIX);
+  }
+
   function applyView() {
-    sideTitleEl.textContent = viewTrash ? "Trash" : "Docs";
-    trashViewEl.classList.toggle("active", viewTrash);
-    trashViewEl.title = viewTrash ? "Back to the docs" : "Show the trash";
-    trashEl.hidden = viewTrash || !current;
-    restoreEl.hidden = !viewTrash || !current;
+    const trashed = !!current && inTrash(current.path);
+    trashEl.hidden = trashed || !current;
+    restoreEl.hidden = !trashed || !current;
   }
 
   document.addEventListener("keydown", (event) => {
@@ -436,7 +540,8 @@
     const message = event.data;
     if (message.type === "tree") {
       nodes = message.nodes || [];
-      drawTree(message.notice);
+      trashNodes = message.trash || [];
+      drawTree(message.notice || "");
     } else if (message.type === "content") {
       // A save fires the watcher, which sends this back. Redrawing then would drop the
       // caret, so an echo of what is already on screen only refreshes the stored copy.
@@ -458,11 +563,23 @@
       setSplit(split);
       setSideSplit(sideSplit);
       setTextScale(textScale);
+      setLineHeight(lineHeight);
+      setMono(mono);
       drawTree();
     } else if (message.type === "saved") {
       drafts.delete(message.path);
       markDirty(false);
       drawTree();
+    } else if (message.type === "renamed") {
+      if (drafts.has(message.from)) {
+        drafts.set(message.to, drafts.get(message.from));
+        drafts.delete(message.from);
+      }
+      selected = message.to;
+      if (current) {
+        current.path = message.to;
+      }
+      persist();
     } else if (message.type === "moved") {
       selected = null;
       current = null;
@@ -475,9 +592,6 @@
       if (current) {
         showStatus(statuses[current.path]);
       }
-    } else if (message.type === "view") {
-      viewTrash = !!message.trash;
-      applyView();
     }
   });
 
@@ -495,6 +609,7 @@
     tocEl.hidden = true;
     sideBodyEl.classList.add("no-toc");
     sections = [];
+    activeSection = null;
     article = null;
 
     if (!current) {
@@ -545,7 +660,7 @@
       }
     });
 
-    if (current.kind === "md") {
+    if (current.kind === "md" || current.kind === "html") {
       buildToc();
     }
   }
@@ -555,8 +670,10 @@
     area.spellcheck = false;
     area.value = drafts.has(current.path) ? drafts.get(current.path) : current.text;
     bodyEl.appendChild(area);
+    fitEditor(area);
     markDirty(area.value !== current.text);
     area.addEventListener("input", () => {
+      fitEditor(area);
       const dirty = area.value !== current.text;
       markDirty(dirty);
       if (dirty) {
@@ -566,6 +683,16 @@
       }
     });
     area.focus();
+  }
+
+  // The editor grows to its text so the reading pane keeps the only scrollbar.
+  function fitEditor(area) {
+    const target = area || bodyEl.querySelector("textarea");
+    if (!target) {
+      return;
+    }
+    target.style.height = "auto";
+    target.style.height = target.scrollHeight + "px";
   }
 
   function buildToc() {
@@ -634,30 +761,42 @@
     });
   }
 
-  // The entry that owns the most visible height wins, so the heading being read stays
-  // marked even once it has scrolled off the top.
+  // Every section with more than a tenth of itself on screen is marked, so a run of short
+  // sections all light up instead of one of them winning the pane.
   function markActive() {
     if (!sections.length || !article) {
       return;
     }
     const view = bodyEl.getBoundingClientRect();
     const end = article.getBoundingClientRect().bottom;
-    let best = null;
-    let bestHeight = 0;
+    let first = null;
 
     for (let i = 0; i < sections.length; i++) {
       const top = sections[i].heading.getBoundingClientRect().top;
       const bottom =
         i + 1 < sections.length ? sections[i + 1].heading.getBoundingClientRect().top : end;
-      const height = Math.min(bottom, view.bottom) - Math.max(top, view.top);
-      if (height > bestHeight) {
-        bestHeight = height;
-        best = sections[i];
+      const shown = Math.min(bottom, view.bottom) - Math.max(top, view.top);
+      const active = shown > 0 && shown / Math.max(bottom - top, 1) > ACTIVE_SHARE;
+      sections[i].li.classList.toggle("active", active);
+      if (active && !first) {
+        first = sections[i];
       }
     }
 
-    for (const section of sections) {
-      section.li.classList.toggle("active", section === best);
+    if (first && first !== activeSection) {
+      revealInToc(first.li);
+    }
+    activeSection = first;
+  }
+
+  // Scrolled by hand, not by scrollIntoView: that one drags the reading pane along too.
+  function revealInToc(li) {
+    const top = li.offsetTop;
+    const bottom = top + li.offsetHeight;
+    if (top < tocEl.scrollTop) {
+      tocEl.scrollTop = top;
+    } else if (bottom > tocEl.scrollTop + tocEl.clientHeight) {
+      tocEl.scrollTop = bottom - tocEl.clientHeight;
     }
   }
 
