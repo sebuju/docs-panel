@@ -1,0 +1,30 @@
+# Dependencies and build output
+node_modules/
+dist/
+out/
+*.vsix
+*.tsbuildinfo
+
+# Agent and assistant working files
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.cursor/
+.aider*
+.mcp.json
+
+# Editor and OS
+.vscode/settings.json
+.vscode-test/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+.env
+.env.*
+*.tmp

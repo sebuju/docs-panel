@@ -1,0 +1,49 @@
+{
+  "name": "docs-panel",
+  "displayName": "Docs Panel",
+  "description": "Browse and read a project's docs folder in a single editor tab.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "docsPanel.open",
+        "title": "Docs Panel: Open"
+      }
+    ],
+    "configuration": {
+      "title": "Docs Panel",
+      "properties": {
+        "docsPanel.folder": {
+          "type": "string",
+          "default": "docs",
+          "scope": "resource",
+          "description": "Folder, relative to the workspace root, that Docs Panel shows."
+        }
+      }
+    }
+  },
+  "activationEvents": [
+    "onWebviewPanel:docsPanel"
+  ],
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "vscode:prepublish": "npm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}
