@@ -8,6 +8,8 @@ export interface Content {
   html?: string;
   uri?: string;
   text?: string;
+  created?: number;
+  modified?: number;
 }
 
 const MARKDOWN = new Set([".md", ".markdown"]);
@@ -21,9 +23,10 @@ export async function renderFile(
 ): Promise<Content> {
   const uri = vscode.Uri.joinPath(root, ...relPath.split("/"));
   const ext = extensionOf(relPath);
+  const stamps = await stampsOf(uri);
 
   if (IMAGES.has(ext)) {
-    return { path: relPath, kind: "img", uri: webview.asWebviewUri(uri).toString() };
+    return { path: relPath, kind: "img", uri: webview.asWebviewUri(uri).toString(), ...stamps };
   }
 
   let text: string;
@@ -33,7 +36,8 @@ export async function renderFile(
     return {
       path: relPath,
       kind: "text",
-      html: `<pre>${escapeHtml("Cannot read " + relPath)}</pre>`
+      html: `<pre>${escapeHtml("Cannot read " + relPath)}</pre>`,
+      ...stamps
     };
   }
 
@@ -44,7 +48,8 @@ export async function renderFile(
         path: relPath,
         kind: "md",
         html: stripAssets(addTaskBoxes(rewriteLinks(html, root, relPath, webview))),
-        text
+        text,
+        ...stamps
       };
     }
   }
@@ -54,11 +59,21 @@ export async function renderFile(
       path: relPath,
       kind: "html",
       html: stripAssets(rewriteLinks(bodyOf(text), root, relPath, webview)),
-      text
+      text,
+      ...stamps
     };
   }
 
-  return { path: relPath, kind: "text", html: `<pre>${escapeHtml(text)}</pre>`, text };
+  return { path: relPath, kind: "text", html: `<pre>${escapeHtml(text)}</pre>`, text, ...stamps };
+}
+
+async function stampsOf(uri: vscode.Uri): Promise<Pick<Content, "created" | "modified">> {
+  try {
+    const stat = await vscode.workspace.fs.stat(uri);
+    return { created: stat.ctime, modified: stat.mtime };
+  } catch {
+    return {};
+  }
 }
 
 // The page is shown inside the panel's own document, so only what a body may hold is kept.

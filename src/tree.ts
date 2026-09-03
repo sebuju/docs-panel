@@ -4,6 +4,7 @@ export interface TreeNode {
   path: string;
   name: string;
   dir: boolean;
+  mtime?: number;
   children?: TreeNode[];
 }
 
@@ -42,14 +43,20 @@ async function walk(uri: vscode.Uri, prefix: string, depth: number): Promise<Tre
         children: await walk(vscode.Uri.joinPath(uri, name), path, depth + 1)
       });
     } else if (type & vscode.FileType.File) {
-      files.push({ path, name, dir: false });
+      files.push({ path, name, dir: false, mtime: await modified(vscode.Uri.joinPath(uri, name)) });
     }
   }
 
-  const byName = (a: TreeNode, b: TreeNode) =>
-    a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-
-  dirs.sort(byName);
-  files.sort(byName);
+  dirs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  // The most recently touched file is the one being worked on, so it heads its folder.
+  files.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
   return [...dirs, ...files];
+}
+
+async function modified(uri: vscode.Uri): Promise<number> {
+  try {
+    return (await vscode.workspace.fs.stat(uri)).mtime;
+  } catch {
+    return 0;
+  }
 }
