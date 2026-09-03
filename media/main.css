@@ -332,6 +332,7 @@ body.dragging {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  contain: size;
 }
 
 #title {
