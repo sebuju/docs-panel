@@ -2,7 +2,19 @@ import * as vscode from "vscode";
 import { buildTree, TreeNode } from "./tree";
 import { renderFile, escapeHtml } from "./render";
 import { watchRoot } from "./watch";
-import { prune, rekey, setStatus, Ledger, Status, STATUSES } from "./ledger";
+import {
+  invalidate,
+  prune,
+  readsLedger,
+  rekey,
+  setStatus,
+  statusLedger,
+  Ledger,
+  LedgerSpec,
+  Status,
+  READ,
+  STATUSES
+} from "./ledger";
 
 export const VIEW_TYPE = "docsPanel";
 export const TRASH_DIR = ".trash";
@@ -63,6 +75,11 @@ aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.2" st
 d="${path}"/></svg></span>`
 ).join("");
 
+const COG_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"
+d="M6.6 1.9h2.8l.3 1.7 1.3.8 1.6-.7 1.4 2.4-1.3 1.1v1.6l1.3 1.1-1.4 2.4-1.6-.7-1.3.8-.3 1.7H6.6l-.3-1.7-1.3-.8-1.6.7-1.4-2.4 1.3-1.1V7.2L2 6.1l1.4-2.4 1.6.7 1.3-.8z"/>
+<circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
+
 const EYE_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
 d="M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8z"/>
@@ -70,6 +87,7 @@ d="M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8z"/>
 
 interface Root {
   uri: vscode.Uri;
+  workspace: vscode.Uri;
   label: string;
 }
 
@@ -141,6 +159,10 @@ export class DocsPanel {
     return this.root?.uri;
   }
 
+  private get ledgers(): LedgerSpec[] {
+    return this.root ? [statusLedger(this.root.uri), readsLedger(this.root.workspace, this.root.uri)] : [];
+  }
+
   private resourceRoots(): vscode.Uri[] {
     const roots = [vscode.Uri.joinPath(this.context.extensionUri, "media")];
     if (this.root) {
@@ -173,7 +195,10 @@ export class DocsPanel {
       onTreeChange: () => void this.sendTree(),
       onFileChange: (path) => {
         if (path === this.state.selected) {
+          void this.markRead(path);
           void this.sendContent(path);
+        } else {
+          void this.unread(path);
         }
       }
     });
@@ -191,6 +216,7 @@ export class DocsPanel {
         return;
       case "open":
         this.state.selected = String(message.path);
+        await this.markRead(this.state.selected);
         await this.sendContent(this.state.selected);
         return;
       case "persist":
@@ -219,15 +245,40 @@ export class DocsPanel {
       return;
     }
     const status = STATUSES.includes(value as Status) ? (value as Status) : null;
-    this.postStatuses(await setStatus(this.root.uri, relPath, status));
+    this.postStatuses(await setStatus(statusLedger(this.root.uri), relPath, status));
   }
 
   private postStatuses(ledger: Ledger): void {
-    const statuses: Record<string, Status> = {};
+    const statuses: Record<string, string> = {};
     for (const [path, entry] of Object.entries(ledger.files)) {
       statuses[path] = entry.status;
     }
     this.post({ type: "statuses", statuses });
+  }
+
+  private postReads(ledger: Ledger): void {
+    this.post({ type: "reads", reads: Object.keys(ledger.files) });
+  }
+
+  private async markRead(relPath: string): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    this.postReads(
+      await setStatus(readsLedger(this.root.workspace, this.root.uri), relPath, READ)
+    );
+  }
+
+  // A file edited behind the panel's back is no longer the one that was read. The open
+  // file is exempt: it is on screen, so the change is being watched as it happens.
+  private async unread(relPath: string): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const ledger = await invalidate(readsLedger(this.root.workspace, this.root.uri), relPath);
+    if (ledger) {
+      this.postReads(ledger);
+    }
   }
 
   private async save(relPath: string, text: string): Promise<void> {
@@ -288,7 +339,9 @@ export class DocsPanel {
         to,
         { overwrite: false }
       );
-      await rekey(this.root.uri, relPath, toPath);
+      for (const spec of this.ledgers) {
+        await rekey(spec, relPath, toPath);
+      }
       this.state.selected = toPath;
       this.post({ type: "renamed", from: relPath, to: toPath });
       await this.sendTree();
@@ -318,7 +371,9 @@ export class DocsPanel {
         to,
         { overwrite: false }
       );
-      await rekey(root, relPath, relativeTo(root, to));
+      for (const spec of this.ledgers) {
+        await rekey(spec, relPath, relativeTo(root, to));
+      }
       this.state.selected = null;
       this.post({ type: "moved", path: relPath });
       await this.sendTree();
@@ -351,7 +406,25 @@ export class DocsPanel {
     const trash = (await buildTree(vscode.Uri.joinPath(base, TRASH_DIR))).map(prefixNode);
     this.post({ type: "tree", nodes: await buildTree(base), trash });
     if (this.root) {
-      this.postStatuses(await prune(this.root.uri));
+      this.postStatuses(await prune(statusLedger(this.root.uri)));
+      this.postReads(await prune(readsLedger(this.root.workspace, this.root.uri)));
+    }
+    await this.dropMissingSelection();
+  }
+
+  // A file can go from under the panel: deleted, or moved by another tool. The reading
+  // pane cannot show it any more, so the whole of the pane - header included - is cleared.
+  private async dropMissingSelection(): Promise<void> {
+    const base = this.base;
+    const selected = this.state.selected;
+    if (!base || !selected) {
+      return;
+    }
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.joinPath(base, ...selected.split("/")));
+    } catch {
+      this.state.selected = null;
+      this.post({ type: "moved", path: selected });
     }
   }
 
@@ -407,16 +480,25 @@ export class DocsPanel {
   <div id="splitter"></div>
   <div id="pane">
     <div id="header" hidden>
-      <span id="title"></span>
+      <button id="title" type="button" title="Copy the path"></button>
+      <span id="stamps">
+        <span id="created"></span>
+        <span id="modified"></span>
+      </span>
       <span id="dirty" hidden>&#9679;</span>
+      <span id="typeSettings" hidden>
+        <button id="textSmaller" class="icon" type="button" title="Smaller text">${MINUS_ICON}</button>
+        <button id="textBigger" class="icon" type="button" title="Bigger text">${PLUS_ICON}</button>
+        <button id="lineHeight" class="icon" type="button" title="Line spacing">${LINES_ICONS}</button>
+        <button id="font" class="icon" type="button" title="Font"><span class="glyph">Aa</span></button>
+      </span>
+      <button id="typeToggle" class="icon" type="button" title="Text settings" aria-expanded="false">${COG_ICON}</button>
       <select id="status" title="Status">
-        <option value="">no status</option>
-        ${STATUSES.map((value) => `<option value="${value}">${value}</option>`).join("")}
+        <option value="" class="opt-none">no status</option>
+        ${STATUSES.map(
+          (value) => `<option value="${value}" class="opt-${value.replace(/ /g, "-")}">${value}</option>`
+        ).join("")}
       </select>
-      <button id="textSmaller" class="icon" type="button" title="Smaller text">${MINUS_ICON}</button>
-      <button id="textBigger" class="icon" type="button" title="Bigger text">${PLUS_ICON}</button>
-      <button id="lineHeight" class="icon" type="button" title="Line spacing">${LINES_ICONS}</button>
-      <button id="font" class="icon" type="button" title="Font"><span class="glyph">Aa</span></button>
       <button id="toggle" class="icon" type="button" title="Edit"><span class="pen">${PEN_ICON}</span><span class="eye">${EYE_ICON}</span></button>
       <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
       <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
@@ -426,6 +508,7 @@ export class DocsPanel {
   </div>
 </div>
 <template id="trashGlyph">${TRASH_ICON}</template>
+<div id="toasts"></div>
 <div id="lightbox" hidden>
   <img id="lightboxImage" alt="">
   <div id="lightboxHint"></div>
@@ -495,7 +578,7 @@ function resolveRoot(): Root | undefined {
     vscode.workspace.getConfiguration("docsPanel", folder.uri).get<string>("folder") ?? "docs";
   const parts = setting.split(/[\\/]/).filter((part) => part.length > 0);
   const uri = parts.length ? vscode.Uri.joinPath(folder.uri, ...parts) : folder.uri;
-  return { uri, label: uri.fsPath };
+  return { uri, workspace: folder.uri, label: uri.fsPath };
 }
 
 function normalizeState(value: any): PanelState {

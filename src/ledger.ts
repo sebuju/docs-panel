@@ -1,11 +1,21 @@
 import * as vscode from "vscode";
 import { createHash } from "crypto";
 
-export const STATUSES = ["planned", "in progress", "done", "stale"] as const;
+export const STATUSES = [
+  "planned",
+  "in progress",
+  "testing",
+  "done",
+  "refused",
+  "stale"
+] as const;
 export type Status = (typeof STATUSES)[number];
 
+export const READ = "read";
+const READ_STATUSES = [READ] as const;
+
 export interface Entry {
-  status: Status;
+  status: string;
   hash: string;
   size: number;
   updated: string;
@@ -16,24 +26,45 @@ export interface Ledger {
   files: Record<string, Entry>;
 }
 
-export const LEDGER_FILE = ".docs-panel.json";
+// Two ledgers share every operation below; only the file they live in, the values they
+// accept, and the meaning of an entry differ.
+export interface LedgerSpec {
+  store: vscode.Uri;
+  root: vscode.Uri;
+  statuses: readonly string[];
+}
+
+const STATUS_FILE = ".docs-panel.json";
+const READS_FILE = "docs-panel-reads.json";
 const TRASH_DIR = ".trash";
 const MAX_DEPTH = 12;
+
+export function statusLedger(root: vscode.Uri): LedgerSpec {
+  return { store: vscode.Uri.joinPath(root, STATUS_FILE), root, statuses: STATUSES };
+}
+
+export function readsLedger(workspace: vscode.Uri, root: vscode.Uri): LedgerSpec {
+  return {
+    store: vscode.Uri.joinPath(workspace, ".vscode", READS_FILE),
+    root,
+    statuses: READ_STATUSES
+  };
+}
 
 export function emptyLedger(): Ledger {
   return { version: 1, files: {} };
 }
 
-export async function readLedger(root: vscode.Uri): Promise<Ledger> {
+export async function load(spec: LedgerSpec): Promise<Ledger> {
   try {
-    const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(root, LEDGER_FILE));
+    const bytes = await vscode.workspace.fs.readFile(spec.store);
     const parsed = JSON.parse(new TextDecoder().decode(bytes));
     const files: Record<string, Entry> = {};
     for (const [path, entry] of Object.entries(parsed?.files ?? {})) {
       const value = entry as Partial<Entry>;
-      if (value && STATUSES.includes(value.status as Status)) {
+      if (value && spec.statuses.includes(value.status as string)) {
         files[path] = {
-          status: value.status as Status,
+          status: value.status as string,
           hash: typeof value.hash === "string" ? value.hash : "",
           size: typeof value.size === "number" ? value.size : -1,
           updated: typeof value.updated === "string" ? value.updated : ""
@@ -46,51 +77,67 @@ export async function readLedger(root: vscode.Uri): Promise<Ledger> {
   }
 }
 
-export async function writeLedger(root: vscode.Uri, ledger: Ledger): Promise<void> {
+export async function save(spec: LedgerSpec, ledger: Ledger): Promise<void> {
   const sorted: Record<string, Entry> = {};
   for (const path of Object.keys(ledger.files).sort()) {
     sorted[path] = ledger.files[path];
   }
   const text = JSON.stringify({ version: ledger.version, files: sorted }, null, 2) + "\n";
-  await vscode.workspace.fs.writeFile(
-    vscode.Uri.joinPath(root, LEDGER_FILE),
-    new TextEncoder().encode(text)
-  );
+  const folder = spec.store.with({ path: spec.store.path.split("/").slice(0, -1).join("/") });
+  await vscode.workspace.fs.createDirectory(folder);
+  await vscode.workspace.fs.writeFile(spec.store, new TextEncoder().encode(text));
 }
 
 export async function setStatus(
-  root: vscode.Uri,
+  spec: LedgerSpec,
   relPath: string,
-  status: Status | null
+  status: string | null
 ): Promise<Ledger> {
-  const ledger = await readLedger(root);
+  const ledger = await load(spec);
   if (status === null) {
     delete ledger.files[relPath];
   } else {
-    ledger.files[relPath] = { status, ...(await fingerprint(root, relPath)) };
+    ledger.files[relPath] = { status, ...(await fingerprint(spec.root, relPath)) };
   }
-  await writeLedger(root, ledger);
+  await save(spec, ledger);
+  return ledger;
+}
+
+// A file edited on disk is no longer the file that was read, so its entry is dropped.
+// Returns the ledger only when something actually changed.
+export async function invalidate(spec: LedgerSpec, relPath: string): Promise<Ledger | undefined> {
+  const ledger = await load(spec);
+  const entry = ledger.files[relPath];
+  if (!entry) {
+    return undefined;
+  }
+  const current = await fingerprint(spec.root, relPath);
+  if (current.hash === entry.hash) {
+    return undefined;
+  }
+  delete ledger.files[relPath];
+  await save(spec, ledger);
   return ledger;
 }
 
 // A move this panel performs is known exactly, so it is re-keyed instead of guessed at.
-export async function rekey(root: vscode.Uri, from: string, to: string): Promise<void> {
-  const ledger = await readLedger(root);
+export async function rekey(spec: LedgerSpec, from: string, to: string): Promise<void> {
+  const ledger = await load(spec);
   const entry = ledger.files[from];
   if (!entry) {
     return;
   }
   delete ledger.files[from];
-  ledger.files[to] = { ...entry, ...(await fingerprint(root, to)) };
-  await writeLedger(root, ledger);
+  ledger.files[to] = { ...entry, ...(await fingerprint(spec.root, to)) };
+  await save(spec, ledger);
 }
 
 // Files can also be moved from outside this panel. An entry whose path is gone is matched
 // against the paths that appeared, by content first and by name second, so a rename keeps
 // its status and two files sharing a name cannot be confused for one another.
-export async function prune(root: vscode.Uri): Promise<Ledger> {
-  const ledger = await readLedger(root);
-  const present = await listFiles(root);
+export async function prune(spec: LedgerSpec): Promise<Ledger> {
+  const ledger = await load(spec);
+  const present = await listFiles(spec.root);
 
   const missing = Object.keys(ledger.files).filter((path) => !present.has(path));
   if (missing.length === 0) {
@@ -100,7 +147,7 @@ export async function prune(root: vscode.Uri): Promise<Ledger> {
   const fresh = [...present].filter((path) => !(path in ledger.files));
   const freshHashes = new Map<string, string>();
   for (const path of fresh) {
-    freshHashes.set(path, (await fingerprint(root, path)).hash);
+    freshHashes.set(path, (await fingerprint(spec.root, path)).hash);
   }
 
   const taken = new Set<string>();
@@ -113,11 +160,11 @@ export async function prune(root: vscode.Uri): Promise<Ledger> {
     delete ledger.files[from];
     if (to) {
       taken.add(to);
-      ledger.files[to] = { ...entry, ...(await fingerprint(root, to)) };
+      ledger.files[to] = { ...entry, ...(await fingerprint(spec.root, to)) };
     }
   }
 
-  await writeLedger(root, ledger);
+  await save(spec, ledger);
   return ledger;
 }
 
