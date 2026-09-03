@@ -43,7 +43,9 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "vscode:prepublish": "npm run build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "clean": "node -e \"for(const f of require('fs').readdirSync('.')) if(f.endsWith('.vsix')) require('fs').unlinkSync(f)\"",
+    "package": "npm run clean && npx --yes @vscode/vsce package"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
