@@ -13,11 +13,16 @@
   const statusEl = document.getElementById("status");
   const headerEl = document.getElementById("header");
   const titleEl = document.getElementById("title");
+  const createdEl = document.getElementById("created");
+  const modifiedEl = document.getElementById("modified");
   const dirtyEl = document.getElementById("dirty");
+  const toastsEl = document.getElementById("toasts");
   const textSmallerEl = document.getElementById("textSmaller");
   const textBiggerEl = document.getElementById("textBigger");
   const lineHeightEl = document.getElementById("lineHeight");
   const fontEl = document.getElementById("font");
+  const typeToggleEl = document.getElementById("typeToggle");
+  const typeSettingsEl = document.getElementById("typeSettings");
   const toggleEl = document.getElementById("toggle");
   const bodyEl = document.getElementById("body");
   const tocEl = document.getElementById("toc");
@@ -58,7 +63,9 @@
   let panY = 0;
   const drafts = new Map();
   let statuses = {};
+  let reads = new Set();
   let notice = "";
+  let flashModified = false;
 
   const saved = vscode.getState();
   if (saved) {
@@ -151,6 +158,53 @@
     fontEl.title = mono ? "Font (mono)" : "Font (default)";
   }
 
+  const TOAST_MS = 2400;
+
+  function toast(message) {
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = message;
+    toastsEl.appendChild(el);
+    setTimeout(() => {
+      el.classList.add("leaving");
+      el.addEventListener("transitionend", () => el.remove(), { once: true });
+    }, TOAST_MS);
+  }
+
+  // A webview may be denied the async clipboard, so the old selection copy stands in.
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => copyBySelection(text));
+      return;
+    }
+    copyBySelection(text);
+  }
+
+  function copyBySelection(text) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+
+  // One format for every date the panel shows: dd/mm/yyyy hh:mm, 24 hour.
+  function formatStamp(ms) {
+    if (!ms) {
+      return "";
+    }
+    const date = new Date(ms);
+    const pad = (value) => String(value).padStart(2, "0");
+    return (
+      pad(date.getDate()) + "/" + pad(date.getMonth() + 1) + "/" + date.getFullYear() +
+      " " + pad(date.getHours()) + ":" + pad(date.getMinutes())
+    );
+  }
+
   function drawTree(text) {
     if (text !== undefined) {
       notice = text;
@@ -214,6 +268,14 @@
       const open = node.dir && expanded.has(node.path);
       twisty.textContent = node.dir ? (open ? "▾" : "▸") : "";
       row.appendChild(twisty);
+
+      // The dot keeps its place whether or not it is shown, so a row never shifts.
+      if (!node.dir) {
+        const dot = document.createElement("span");
+        dot.className = reads.has(node.path) ? "unread read" : "unread";
+        dot.title = reads.has(node.path) ? "" : "Not read yet";
+        row.appendChild(dot);
+      }
 
       const label = document.createElement("span");
       label.className = "label";
@@ -319,6 +381,13 @@
 
   bodyEl.addEventListener("scroll", scheduleActive);
 
+  typeToggleEl.addEventListener("click", () => {
+    const open = typeSettingsEl.hidden;
+    typeSettingsEl.hidden = !open;
+    typeToggleEl.classList.toggle("active", open);
+    typeToggleEl.setAttribute("aria-expanded", String(open));
+  });
+
   textSmallerEl.addEventListener("click", () => stepTextScale(-TEXT_STEP));
   textBiggerEl.addEventListener("click", () => stepTextScale(TEXT_STEP));
 
@@ -377,6 +446,13 @@
     statusEl.value = value || "";
     statusEl.className = "pill-" + (value || "none").replace(/ /g, "-");
   }
+
+  titleEl.addEventListener("click", () => {
+    if (current) {
+      copyText(current.path);
+      toast("copied to clipboard: " + current.path);
+    }
+  });
 
   renameEl.addEventListener("click", () => {
     if (current) {
@@ -553,11 +629,18 @@
         }
         drafts.set(message.path, area.value);
       }
+      // A file rewritten under the reader is the same page, so the place in it is kept.
+      const reopened = !!current && current.path === message.path;
+      const anchor = reopened ? captureAnchor() : null;
+      flashModified = reopened && !!current.modified && current.modified !== message.modified;
       current = message;
       if (!editable(message)) {
         mode = "preview";
       }
       draw();
+      if (anchor) {
+        restoreAnchor(anchor);
+      }
     } else if (message.type === "state") {
       applyState(message);
       setSplit(split);
@@ -592,6 +675,9 @@
       if (current) {
         showStatus(statuses[current.path]);
       }
+    } else if (message.type === "reads") {
+      reads = new Set(message.reads || []);
+      drawTree();
     }
   });
 
@@ -619,7 +705,9 @@
     }
 
     headerEl.hidden = false;
-    titleEl.textContent = current.path;
+    titleEl.textContent = current.path.split("/").pop();
+    titleEl.title = "Copy the path (" + current.path + ")";
+    drawStamps();
     showStatus(statuses[current.path]);
     toggleEl.hidden = !editable(current);
     toggleEl.classList.toggle("editing", mode === "edit");
@@ -663,6 +751,48 @@
     if (current.kind === "md" || current.kind === "html") {
       buildToc();
     }
+  }
+
+  function drawStamps() {
+    const created = formatStamp(current.created);
+    const modified = formatStamp(current.modified);
+    createdEl.textContent = created;
+    createdEl.title = created ? "Created " + created : "";
+    modifiedEl.textContent = modified;
+    modifiedEl.title = modified ? "Updated " + modified : "";
+    modifiedEl.classList.remove("flash");
+    if (flashModified && modified) {
+      void modifiedEl.offsetWidth; // restart the animation on a second update
+      modifiedEl.classList.add("flash");
+    }
+    flashModified = false;
+  }
+
+  // The heading the reader is on is the anchor: after a redraw the same heading is put
+  // back the same distance down the pane, so the page does not jump.
+  function captureAnchor() {
+    if (mode === "edit" || !activeSection) {
+      return { ratio: scrollRatio() };
+    }
+    return {
+      text: activeSection.heading.textContent,
+      offset:
+        activeSection.heading.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top
+    };
+  }
+
+  function restoreAnchor(anchor) {
+    if (anchor.text === undefined) {
+      applyScrollRatio(anchor.ratio);
+      return;
+    }
+    const match = sections.find((section) => section.heading.textContent === anchor.text);
+    if (!match) {
+      return;
+    }
+    const top = match.heading.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top;
+    bodyEl.scrollTop += top - anchor.offset;
+    scheduleActive();
   }
 
   function drawEditor() {

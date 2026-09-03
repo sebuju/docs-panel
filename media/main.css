@@ -81,6 +81,18 @@ button.icon[hidden] {
   display: none;
 }
 
+/* Fixed size so the revealed buttons take room from the dates, not from the cog. */
+#typeSettings {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+#typeSettings[hidden] {
+  display: none;
+}
+
 button.icon span {
   display: flex;
 }
@@ -174,12 +186,24 @@ body.dragging-rows {
   padding-left: 0;
 }
 
+/* A fixed box centred both ways, so the glyph sits on the middle of the label's line. */
 .row-icon {
   display: flex;
-  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
   opacity: 0.8;
 }
 
+.row-icon svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+
+/* One line box for every child: with each of them the same height, centring them puts
+   text, twisty, dot and glyph all on the row's centre line. */
 .row {
   display: flex;
   align-items: center;
@@ -188,6 +212,11 @@ body.dragging-rows {
   border-radius: 3px;
   cursor: pointer;
   white-space: nowrap;
+  line-height: 18px;
+}
+
+.row > * {
+  height: 18px;
 }
 
 .row:hover {
@@ -222,11 +251,26 @@ body.dragging-rows {
   text-overflow: ellipsis;
 }
 
-/* Each status names its colour once; the tree dot and the header pill both read it. */
-.status-planned, .pill-planned { --status: #58a6ff; }
-.status-in-progress, .pill-in-progress { --status: #d29922; }
-.status-done, .pill-done { --status: #3fb950; }
-.status-stale, .pill-stale { --status: #8b949e; }
+/* Each status names its colour once; the tree pill, the header pill and the dropdown
+   list all read it from here. */
+.status-planned, .pill-planned, .opt-planned { --status: #58a6ff; }
+.status-in-progress, .pill-in-progress, .opt-in-progress { --status: #d29922; }
+.status-testing, .pill-testing, .opt-testing { --status: #a371f7; }
+.status-done, .pill-done, .opt-done { --status: #3fb950; }
+.status-refused, .pill-refused, .opt-refused { --status: #f85149; }
+.status-stale, .pill-stale, .opt-stale { --status: #8b949e; }
+
+/* An unread file is marked beside its name; a read one keeps the space, not the dot. */
+.unread {
+  display: flex;
+  align-items: center;
+  flex: 0 0 5px;
+  color: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.unread.read {
+  visibility: hidden;
+}
 
 #status {
   height: 20px;
@@ -263,6 +307,12 @@ body.dragging-rows {
   background: var(--vscode-dropdown-background);
 }
 
+/* The open list is native, so the colour has to ride on the text of each row. */
+#status option[class^="opt-"]:not(.opt-none) {
+  color: var(--status);
+  font-weight: 600;
+}
+
 .row.unsaved .label {
   font-style: italic;
   color: var(--vscode-gitDecoration-modifiedResourceForeground, inherit);
@@ -296,12 +346,100 @@ body.dragging {
 }
 
 #title {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0.8;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0 2px;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+
+#title:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+  opacity: 1;
+}
+
+#title:focus,
+#title:focus-visible {
+  outline: none;
+}
+
+/* The dates sit with the name but never crowd it out: the name shrinks first. */
+#stamps {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0.55;
+}
+
+/* A trailing space inside content collapses, so the gap is a margin. */
+#created::before,
+#modified::before {
+  margin-right: 4px;
+}
+
+#created::before {
+  content: "+";
+}
+
+#modified::before {
+  content: "\21BB";
+}
+
+#stamps span:empty {
+  display: none;
+}
+
+@keyframes stampFlash {
+  from { color: var(--vscode-textLink-activeForeground, #58a6ff); opacity: 1; }
+  to { color: inherit; opacity: 0.55; }
+}
+
+#modified.flash {
+  animation: stampFlash 1.4s ease-out;
+}
+
+#toasts {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.toast {
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 0.9em;
+  opacity: 1;
+  transition: opacity 200ms ease-out;
+}
+
+.toast.leaving {
+  opacity: 0;
 }
 
 #dirty {
@@ -383,7 +521,8 @@ body.dragging {
 
 /* A glyph, not a box: a 5px square rounds to an oval whenever the pane lands off-pixel.
    The dot hangs beside the first line, so a wrapped label keeps one straight edge. */
-#toc a::before {
+#toc a::before,
+.unread::before {
   content: "\2022";
   flex: 0 0 auto;
   width: 5px;
