@@ -2,7 +2,7 @@
   "name": "docs-panel",
   "displayName": "Docs Panel",
   "description": "Browse and read a project's docs folder in a single editor tab.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "local",
   "private": true,
   "license": "MIT",
