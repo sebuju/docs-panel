@@ -507,7 +507,6 @@ export class DocsPanel {
     <div id="body"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
   </div>
 </div>
-<template id="trashGlyph">${TRASH_ICON}</template>
 <div id="toasts"></div>
 <div id="lightbox" hidden>
   <img id="lightboxImage" alt="">

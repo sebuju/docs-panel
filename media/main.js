@@ -6,7 +6,6 @@
   const sideBodyEl = document.getElementById("sideBody");
   const sideSplitter = document.getElementById("sideSplitter");
   const splitter = document.getElementById("splitter");
-  const trashGlyphEl = document.getElementById("trashGlyph");
   const renameEl = document.getElementById("rename");
   const trashEl = document.getElementById("trash");
   const restoreEl = document.getElementById("restore");
@@ -230,11 +229,6 @@
     twisty.textContent = trashOpen ? "▾" : "▸";
     row.appendChild(twisty);
 
-    const icon = document.createElement("span");
-    icon.className = "row-icon";
-    icon.appendChild(trashGlyphEl.content.cloneNode(true));
-    row.appendChild(icon);
-
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = "Trash";
@@ -263,14 +257,13 @@
       const row = document.createElement("div");
       row.className = "row";
 
-      const twisty = document.createElement("span");
-      twisty.className = "twisty";
-      const open = node.dir && expanded.has(node.path);
-      twisty.textContent = node.dir ? (open ? "▾" : "▸") : "";
-      row.appendChild(twisty);
-
-      // The dot keeps its place whether or not it is shown, so a row never shifts.
-      if (!node.dir) {
+      // A file has no twisty, so the dot takes that slot and costs the row no width.
+      if (node.dir) {
+        const twisty = document.createElement("span");
+        twisty.className = "twisty";
+        twisty.textContent = expanded.has(node.path) ? "▾" : "▸";
+        row.appendChild(twisty);
+      } else {
         const dot = document.createElement("span");
         dot.className = reads.has(node.path) ? "unread read" : "unread";
         dot.title = reads.has(node.path) ? "" : "Not read yet";

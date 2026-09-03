@@ -59,7 +59,11 @@ html, body {
   height: 32px;
   box-sizing: border-box;
   padding: 0 8px;
-  border-bottom: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  margin-left: -4px;
+  /* The overlay lifts the theme's own bar colour, so the bar tracks the theme and still
+     reads lighter than both the side and the page. */
+  background: linear-gradient(rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.09)),
+    var(--vscode-titleBar-activeBackground, rgba(128, 128, 128, 0.14));
 }
 
 button.icon {
@@ -186,24 +190,8 @@ body.dragging-rows {
   padding-left: 0;
 }
 
-/* A fixed box centred both ways, so the glyph sits on the middle of the label's line. */
-.row-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 16px;
-  width: 16px;
-  opacity: 0.8;
-}
-
-.row-icon svg {
-  display: block;
-  width: 12px;
-  height: 12px;
-}
-
 /* One line box for every child: with each of them the same height, centring them puts
-   text, twisty, dot and glyph all on the row's centre line. */
+   text, twisty and dot all on the row's centre line. */
 .row {
   display: flex;
   align-items: center;
@@ -260,11 +248,13 @@ body.dragging-rows {
 .status-refused, .pill-refused, .opt-refused { --status: #f85149; }
 .status-stale, .pill-stale, .opt-stale { --status: #8b949e; }
 
-/* An unread file is marked beside its name; a read one keeps the space, not the dot. */
+/* An unread file is marked beside its name; a read one keeps the space, not the dot.
+   The box matches the twisty it stands in for, so a file lines up with a folder. */
 .unread {
   display: flex;
   align-items: center;
-  flex: 0 0 5px;
+  justify-content: center;
+  flex: 0 0 12px;
   color: var(--vscode-descriptionForeground, #8b949e);
 }
 
@@ -342,7 +332,6 @@ body.dragging {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
 }
 
 #title {
