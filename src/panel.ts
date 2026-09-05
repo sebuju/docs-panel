@@ -4,6 +4,7 @@ import { renderFile, escapeHtml } from "./render";
 import { watchRoot } from "./watch";
 import {
   invalidate,
+  listFiles,
   prune,
   readsLedger,
   rekey,
@@ -25,6 +26,7 @@ export interface PanelState {
   textScale: number;
   lineHeight: number;
   mono: boolean;
+  tocAuto: boolean;
   expanded: string[];
   selected: string | null;
 }
@@ -35,6 +37,7 @@ const DEFAULT_STATE: PanelState = {
   textScale: 1,
   lineHeight: 1,
   mono: false,
+  tocAuto: false,
   expanded: [],
   selected: null
 };
@@ -229,10 +232,22 @@ export class DocsPanel {
         await this.rename(String(message.path));
         return;
       case "trash":
-        await this.move(String(message.path), "trash");
+        await this.move(String(message.path), "trash", !!message.dir);
         return;
       case "restore":
-        await this.move(String(message.path), "restore");
+        await this.move(String(message.path), "restore", !!message.dir);
+        return;
+      case "delete":
+        await this.remove(String(message.path), !!message.dir);
+        return;
+      case "create":
+        await this.create(message.kind === "folder" ? "folder" : "file", String(message.at ?? ""));
+        return;
+      case "relocate":
+        await this.relocate(String(message.from), String(message.to), !!message.dir);
+        return;
+      case "reveal":
+        await this.reveal(String(message.path));
         return;
       case "status":
         await this.status(String(message.path), message.status);
@@ -309,13 +324,7 @@ export class DocsPanel {
       title: "Rename",
       value: name,
       valueSelection: dot > 0 ? [0, dot] : undefined,
-      validateInput: (value) => {
-        const trimmed = value.trim();
-        if (!trimmed) {
-          return "The name cannot be empty.";
-        }
-        return /[\\/:*?"<>|]/.test(trimmed) ? "That name has a character a file cannot use." : null;
-      }
+      validateInput: checkName
     });
     const target = next?.trim();
     if (!target || target === name) {
@@ -341,44 +350,198 @@ export class DocsPanel {
       );
       for (const spec of this.ledgers) {
         await rekey(spec, relPath, toPath);
+        for (const inner of await listFiles(to)) {
+          await rekey(spec, `${relPath}/${inner}`, `${toPath}/${inner}`);
+        }
       }
-      this.state.selected = toPath;
-      this.post({ type: "renamed", from: relPath, to: toPath });
+      // Renaming a folder from the tree leaves the reading pane alone unless the open
+      // file was inside it, in which case its path is gone and the pane is cleared.
+      const reopen = this.state.selected === relPath;
+      if (reopen) {
+        this.state.selected = toPath;
+        this.post({ type: "renamed", from: relPath, to: toPath });
+      } else {
+        this.dropSelection(relPath);
+      }
       await this.sendTree();
-      await this.sendContent(toPath);
+      if (reopen) {
+        await this.sendContent(toPath);
+      }
     } catch (error) {
       void vscode.window.showErrorMessage(`Docs Panel could not rename ${relPath}: ${error}`);
     }
   }
 
   // The trash is a folder like any other, so a move is only the prefix going on or off.
-  private async move(relPath: string, direction: "trash" | "restore"): Promise<void> {
+  private async shift(relPath: string, direction: "trash" | "restore"): Promise<void> {
+    const root = this.root!.uri;
     const prefix = `${TRASH_DIR}/`;
     const inTrash = relPath.startsWith(prefix);
-    if (!this.root || inTrash !== (direction === "restore")) {
-      return;
-    }
-    const root = this.root.uri;
     const parts = (inTrash ? relPath.slice(prefix.length) : relPath).split("/");
     const name = parts.pop() ?? relPath;
     const anchor = direction === "trash" ? vscode.Uri.joinPath(root, TRASH_DIR) : root;
 
+    const target = await makeDirectory(anchor, parts);
+    const to = await freeName(target, name);
+    await vscode.workspace.fs.rename(
+      vscode.Uri.joinPath(root, ...relPath.split("/")),
+      to,
+      { overwrite: false }
+    );
+    for (const spec of this.ledgers) {
+      await rekey(spec, relPath, relativeTo(root, to));
+    }
+  }
+
+  // A folder cannot be trashed whole: every file in it is moved on its own so each keeps
+  // its ledger entry, and only the emptied shell is deleted.
+  private async move(
+    relPath: string,
+    direction: "trash" | "restore",
+    dir: boolean
+  ): Promise<void> {
+    const root = this.root?.uri;
+    if (!root || relPath.startsWith(`${TRASH_DIR}/`) !== (direction === "restore")) {
+      return;
+    }
+    const uri = vscode.Uri.joinPath(root, ...relPath.split("/"));
     try {
-      const target = await makeDirectory(anchor, parts);
-      const to = await freeName(target, name);
-      await vscode.workspace.fs.rename(
-        vscode.Uri.joinPath(root, ...relPath.split("/")),
-        to,
-        { overwrite: false }
-      );
-      for (const spec of this.ledgers) {
-        await rekey(spec, relPath, relativeTo(root, to));
+      if (dir) {
+        for (const inner of await listFiles(uri)) {
+          await this.shift(`${relPath}/${inner}`, direction);
+        }
+        await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
+      } else {
+        await this.shift(relPath, direction);
       }
-      this.state.selected = null;
-      this.post({ type: "moved", path: relPath });
+      this.dropSelection(relPath);
       await this.sendTree();
     } catch (error) {
       void vscode.window.showErrorMessage(`Docs Panel could not ${direction} ${relPath}: ${error}`);
+    }
+  }
+
+  private async remove(relPath: string, dir: boolean): Promise<void> {
+    const root = this.root?.uri;
+    if (!root) {
+      return;
+    }
+    const name = relPath.split("/").pop() ?? relPath;
+    const answer = await vscode.window.showWarningMessage(
+      `Delete ${name} for good?`,
+      { modal: true, detail: dir ? "The folder and everything in it goes." : "This cannot be undone." },
+      "Delete"
+    );
+    if (answer !== "Delete") {
+      return;
+    }
+    try {
+      await vscode.workspace.fs.delete(vscode.Uri.joinPath(root, ...relPath.split("/")), {
+        recursive: true,
+        useTrash: false
+      });
+      this.dropSelection(relPath);
+      await this.sendTree();
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Docs Panel could not delete ${relPath}: ${error}`);
+    }
+  }
+
+  // "at" is the folder the new entry lands in, relative to the docs root; "" is the root.
+  private async create(kind: "file" | "folder", at: string): Promise<void> {
+    const base = this.base;
+    if (!base) {
+      return;
+    }
+    const value = kind === "file" ? "untitled.md" : "";
+    const name = (
+      await vscode.window.showInputBox({
+        title: at ? `New ${kind} in ${at}` : `New ${kind}`,
+        value,
+        valueSelection: kind === "file" ? [0, "untitled".length] : undefined,
+        validateInput: checkName
+      })
+    )?.trim();
+    if (!name) {
+      return;
+    }
+    const folder = at ? vscode.Uri.joinPath(base, ...at.split("/")) : base;
+    const uri = vscode.Uri.joinPath(folder, name);
+    const path = at ? `${at}/${name}` : name;
+    try {
+      await vscode.workspace.fs.stat(uri);
+      void vscode.window.showErrorMessage(`Docs Panel: ${path} already exists.`);
+      return;
+    } catch {
+      // Nothing there, so the name is free.
+    }
+    try {
+      if (kind === "folder") {
+        await vscode.workspace.fs.createDirectory(uri);
+        await this.sendTree();
+        return;
+      }
+      await vscode.workspace.fs.writeFile(uri, new Uint8Array());
+      this.state.selected = path;
+      await this.sendTree();
+      this.post({ type: "select", path });
+      await this.markRead(path);
+      await this.sendContent(path);
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Docs Panel could not create ${path}: ${error}`);
+    }
+  }
+
+  // A drag drops one entry into one folder; "" is the root. The ledger keys of a folder's
+  // files are read before the move, because afterwards the old paths are gone.
+  private async relocate(from: string, to: string, dir: boolean): Promise<void> {
+    const root = this.root?.uri;
+    const parent = from.split("/").slice(0, -1).join("/");
+    if (!root || to === parent || to === from || to.startsWith(`${from}/`)) {
+      return;
+    }
+    const fromUri = vscode.Uri.joinPath(root, ...from.split("/"));
+    const name = from.split("/").pop() ?? from;
+    try {
+      const inner = dir ? [...(await listFiles(fromUri))] : [];
+      const folder = to ? await makeDirectory(root, to.split("/")) : root;
+      const target = await freeName(folder, name);
+      await vscode.workspace.fs.rename(fromUri, target, { overwrite: false });
+
+      const toPath = relativeTo(root, target);
+      for (const spec of this.ledgers) {
+        if (dir) {
+          for (const rel of inner) {
+            await rekey(spec, `${from}/${rel}`, `${toPath}/${rel}`);
+          }
+        } else {
+          await rekey(spec, from, toPath);
+        }
+      }
+      this.dropSelection(from);
+      await this.sendTree();
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Docs Panel could not move ${from}: ${error}`);
+    }
+  }
+
+  private async reveal(relPath: string): Promise<void> {
+    const base = this.base;
+    if (!base) {
+      return;
+    }
+    await vscode.commands.executeCommand(
+      "revealFileInOS",
+      vscode.Uri.joinPath(base, ...relPath.split("/"))
+    );
+  }
+
+  // The reading pane cannot show a file that has just been moved out from under it.
+  private dropSelection(relPath: string): void {
+    const selected = this.state.selected;
+    if (selected && (selected === relPath || selected.startsWith(`${relPath}/`))) {
+      this.state.selected = null;
+      this.post({ type: "moved", path: selected });
     }
   }
 
@@ -404,7 +567,12 @@ export class DocsPanel {
     // The walk skips dotted names, so the trash is built on its own and its paths are
     // prefixed here: one list, one set of keys, whichever side of the trash a file is on.
     const trash = (await buildTree(vscode.Uri.joinPath(base, TRASH_DIR))).map(prefixNode);
-    this.post({ type: "tree", nodes: await buildTree(base), trash });
+    this.post({
+      type: "tree",
+      nodes: await buildTree(base),
+      trash,
+      root: this.root ? relativeTo(this.root.workspace, base) : ""
+    });
     if (this.root) {
       this.postStatuses(await prune(statusLedger(this.root.uri)));
       this.postReads(await prune(readsLedger(this.root.workspace, this.root.uri)));
@@ -493,20 +661,21 @@ export class DocsPanel {
         <button id="font" class="icon" type="button" title="Font"><span class="glyph">Aa</span></button>
       </span>
       <button id="typeToggle" class="icon" type="button" title="Text settings" aria-expanded="false">${COG_ICON}</button>
+      <button id="toggle" class="icon" type="button" title="Edit"><span class="pen">${PEN_ICON}</span><span class="eye">${EYE_ICON}</span></button>
+      <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
+      <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
+      <button id="restore" class="icon" type="button" title="Put back" hidden>${RESTORE_ICON}</button>
       <select id="status" title="Status">
         <option value="" class="opt-none">no status</option>
         ${STATUSES.map(
           (value) => `<option value="${value}" class="opt-${value.replace(/ /g, "-")}">${value}</option>`
         ).join("")}
       </select>
-      <button id="toggle" class="icon" type="button" title="Edit"><span class="pen">${PEN_ICON}</span><span class="eye">${EYE_ICON}</span></button>
-      <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
-      <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
-      <button id="restore" class="icon" type="button" title="Put back" hidden>${RESTORE_ICON}</button>
     </div>
     <div id="body"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
   </div>
 </div>
+<div id="menu" hidden></div>
 <div id="toasts"></div>
 <div id="lightbox" hidden>
   <img id="lightboxImage" alt="">
@@ -536,8 +705,19 @@ function prefixNode(node: TreeNode): TreeNode {
 }
 
 function relativeTo(root: vscode.Uri, uri: vscode.Uri): string {
+  if (uri.path === root.path) {
+    return "";
+  }
   const rootPath = root.path.endsWith("/") ? root.path : root.path + "/";
   return uri.path.startsWith(rootPath) ? uri.path.slice(rootPath.length) : uri.path;
+}
+
+function checkName(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "The name cannot be empty.";
+  }
+  return /[\\/:*?"<>|]/.test(trimmed) ? "That name has a character a file cannot use." : null;
 }
 
 // A file can outlive the folder it came from, so the chain is rebuilt one level at a
@@ -591,6 +771,7 @@ function normalizeState(value: any): PanelState {
     textScale: Number.isFinite(textScale) ? textScale : DEFAULT_STATE.textScale,
     lineHeight: Number.isFinite(lineHeight) ? lineHeight : DEFAULT_STATE.lineHeight,
     mono: typeof value?.mono === "boolean" ? value.mono : DEFAULT_STATE.mono,
+    tocAuto: typeof value?.tocAuto === "boolean" ? value.tocAuto : DEFAULT_STATE.tocAuto,
     expanded: Array.isArray(value?.expanded) ? value.expanded.map(String) : [],
     selected: typeof value?.selected === "string" ? value.selected : null
   };
