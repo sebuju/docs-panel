@@ -2,6 +2,8 @@
   const vscode = acquireVsCodeApi();
 
   const layout = document.getElementById("layout");
+  const sideEl = document.getElementById("side");
+  const paneEl = document.getElementById("pane");
   const treeEl = document.getElementById("tree");
   const sideBodyEl = document.getElementById("sideBody");
   const sideSplitter = document.getElementById("sideSplitter");
@@ -28,6 +30,7 @@
   const lightboxEl = document.getElementById("lightbox");
   const lightboxImageEl = document.getElementById("lightboxImage");
   const lightboxHintEl = document.getElementById("lightboxHint");
+  const menuEl = document.getElementById("menu");
 
   const MIN_SPLIT = 120;
   const MIN_ROW = 60;
@@ -65,6 +68,10 @@
   let reads = new Set();
   let notice = "";
   let flashModified = false;
+  let rootPrefix = "";
+  const bars = [];
+  let dragging = null;
+  let tocAuto = false;
 
   const saved = vscode.getState();
   if (saved) {
@@ -92,6 +99,9 @@
     if (typeof state.mono === "boolean") {
       mono = state.mono;
     }
+    if (typeof state.tocAuto === "boolean") {
+      tocAuto = state.tocAuto;
+    }
     if (Array.isArray(state.expanded)) {
       expanded = new Set(state.expanded);
     }
@@ -105,6 +115,7 @@
       textScale: textScale,
       lineHeight: lineHeight,
       mono: mono,
+      tocAuto: tocAuto,
       expanded: [...expanded],
       selected: selected
     };
@@ -127,6 +138,26 @@
     const min = Math.min(0.4, MIN_ROW / height);
     sideSplit = Math.min(Math.max(value, min), 1 - min);
     sideBodyEl.style.setProperty("--tree-row", "calc(" + sideSplit * 100 + "% - 2px)");
+    refreshBars();
+  }
+
+  const TOC_MAX_SHARE = 0.75;
+
+  // Auto size gives the contents list exactly the height its entries need, so it never
+  // scrolls; past three quarters of the side the tree would be squeezed out, so it stops.
+  function fitToc() {
+    const list = tocEl.firstElementChild;
+    if (!tocAuto || tocEl.hidden || !list) {
+      setSideSplit(sideSplit);
+      return;
+    }
+    // The pane's own scrollHeight is never less than the pane, so it can only ever grow.
+    // The list inside it is not a scroller, and its height is the height actually wanted.
+    const style = getComputedStyle(tocEl);
+    const pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    const wanted = list.getBoundingClientRect().height + pad + 3;
+    const total = sideBodyEl.clientHeight || 1;
+    setSideSplit(1 - Math.min(TOC_MAX_SHARE, wanted / total));
   }
 
   // One scale for every file, so the reading size is a property of the panel.
@@ -223,6 +254,8 @@
   function trashRow() {
     const row = document.createElement("div");
     row.className = "row";
+    row.dataset.path = ".trash";
+    row.dataset.dir = "1";
 
     const twisty = document.createElement("span");
     twisty.className = "twisty";
@@ -256,6 +289,9 @@
       const li = document.createElement("li");
       const row = document.createElement("div");
       row.className = "row";
+      row.dataset.path = node.path;
+      row.dataset.dir = node.dir ? "1" : "";
+      row.draggable = true;
 
       // A file has no twisty, so the dot takes that slot and costs the row no width.
       if (node.dir) {
@@ -303,8 +339,26 @@
         }
       });
 
+      row.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        openMenu(event.clientX, event.clientY, nodeMenu(node));
+      });
+
+      row.addEventListener("dragstart", (event) => {
+        dragging = { path: node.path, dir: !!node.dir };
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", node.path);
+        row.classList.add("dragged");
+      });
+
+      row.addEventListener("dragend", () => {
+        dragging = null;
+        row.classList.remove("dragged");
+        highlightDrop(null);
+      });
+
       li.appendChild(row);
-      if (node.dir && open && node.children && node.children.length) {
+      if (node.dir && expanded.has(node.path) && node.children && node.children.length) {
         li.appendChild(buildList(node.children));
       }
       ul.appendChild(li);
@@ -333,6 +387,340 @@
     }
   }
 
+  // Tree paths are relative to the docs root; anything shown or copied is relative to the
+  // project, which is the path the rest of the editor and the terminal use.
+  function fullPath(path) {
+    return rootPrefix ? rootPrefix + "/" + path : path;
+  }
+
+  function copyPath(path) {
+    copyText(fullPath(path));
+    toast("copied to clipboard: " + fullPath(path));
+  }
+
+  // One menu for the whole panel: a list of items in, a placed menu out.
+  function openMenu(x, y, items) {
+    menuEl.textContent = "";
+    for (const item of items) {
+      if (item.separator) {
+        menuEl.appendChild(document.createElement("hr"));
+        continue;
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = item.danger ? "danger" : "";
+      if (item.checked !== undefined) {
+        const tick = document.createElement("span");
+        tick.className = "tick";
+        tick.textContent = item.checked ? "✓" : "";
+        button.appendChild(tick);
+      }
+      button.appendChild(document.createTextNode(item.label));
+      button.addEventListener("click", () => {
+        closeMenu();
+        item.run();
+      });
+      menuEl.appendChild(button);
+    }
+    menuEl.style.left = "0px";
+    menuEl.style.top = "0px";
+    menuEl.hidden = false;
+    const box = menuEl.getBoundingClientRect();
+    menuEl.style.left = Math.max(0, Math.min(x, window.innerWidth - box.width - 4)) + "px";
+    menuEl.style.top = Math.max(0, Math.min(y, window.innerHeight - box.height - 4)) + "px";
+  }
+
+  function closeMenu() {
+    menuEl.hidden = true;
+    menuEl.textContent = "";
+  }
+
+  function nodeMenu(node) {
+    const trashed = inTrash(node.path);
+    const items = [];
+    if (node.dir && !trashed) {
+      items.push(...makeItems(node.path), { separator: true });
+    }
+    items.push({ label: "Reveal in file explorer", run: () => send("reveal", node) });
+    items.push({ label: "Rename…", run: () => send("rename", node) });
+    items.push({ label: "Copy path", run: () => copyPath(node.path) });
+    items.push({ separator: true });
+    if (trashed) {
+      items.push({ label: "Put back", run: () => send("restore", node) });
+    } else {
+      items.push({ label: "Move to the trash", run: () => send("trash", node) });
+    }
+    items.push({ label: "Delete", danger: true, run: () => send("delete", node) });
+    return items;
+  }
+
+  // The same pair of entries wherever a new file can go: a folder's menu, and the empty
+  // space below the tree, which stands for the docs root.
+  function makeItems(at) {
+    return [
+      { label: "New file…", run: () => create("file", at) },
+      { label: "New folder…", run: () => create("folder", at) }
+    ];
+  }
+
+  // The folder is opened first, so whatever is made in it is on screen when it arrives.
+  function create(kind, at) {
+    if (at) {
+      expanded.add(at);
+      persist();
+    }
+    vscode.postMessage({ type: "create", kind: kind, at: at });
+  }
+
+  // A file on its way out of the tree takes any unsaved draft of it along.
+  function send(type, node) {
+    if (type === "trash" || type === "restore" || type === "delete") {
+      drafts.delete(node.path);
+    }
+    vscode.postMessage({ type: type, path: node.path, dir: !!node.dir });
+  }
+
+  const BLOCKS = "p, li, pre, blockquote, td, th, h1, h2, h3, h4, h5, h6";
+
+  // Reading only: the page cannot be changed from here, so there is nothing to cut into
+  // and nothing to paste over. The block is the paragraph or item under the pointer.
+  bodyEl.addEventListener("contextmenu", (event) => {
+    if (mode === "edit" || !article) {
+      return;
+    }
+    const block = blockAt(event.target);
+    const selection = window.getSelection();
+    const picked = String(selection).trim();
+    // Clicking the menu takes the selection away, so the range is kept as it stands now.
+    const range = picked && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+    if (!block && !picked) {
+      return;
+    }
+    event.preventDefault();
+    const items = [];
+    if (picked) {
+      items.push({
+        label: "Copy",
+        run: () => {
+          copyBlock(picked);
+          flashRange(range);
+        }
+      });
+    }
+    if (block) {
+      items.push({
+        label: "Copy text block",
+        run: () => {
+          copyBlock(block.innerText);
+          flashOutline(block);
+        }
+      });
+    }
+    openMenu(event.clientX, event.clientY, items);
+  });
+
+  function blockAt(el) {
+    return el && el.closest && article.contains(el) ? el.closest(BLOCKS) : null;
+  }
+
+  function copyBlock(text) {
+    copyText(text);
+    const line = text.replace(/\s+/g, " ").trim();
+    toast("copied to clipboard: " + (line.length > 60 ? line.slice(0, 60) + "…" : line));
+  }
+
+  const FLASH_MS = 1100;
+
+  // A mark is laid over what it points at rather than put into it, so the page is never
+  // rewritten and no anchor, selection or scroll position is disturbed.
+  function flashMark(rects, kind) {
+    const box = bodyEl.getBoundingClientRect();
+    for (const rect of rects) {
+      if (rect.width < 1 || rect.height < 1) {
+        continue;
+      }
+      const mark = document.createElement("div");
+      mark.className = "flash-mark " + kind;
+      mark.style.left = rect.left - box.left + bodyEl.scrollLeft + "px";
+      mark.style.top = rect.top - box.top + bodyEl.scrollTop + "px";
+      mark.style.width = rect.width + "px";
+      mark.style.height = rect.height + "px";
+      bodyEl.appendChild(mark);
+      setTimeout(() => mark.remove(), FLASH_MS);
+    }
+  }
+
+  // A run of text is filled line by line, because that is the shape it actually has.
+  function flashRange(range) {
+    if (range) {
+      flashMark(range.getClientRects(), "flash-fill");
+    }
+  }
+
+  // A whole element is ringed instead: one box, and its own text stays plain to read.
+  function flashOutline(element) {
+    flashMark([element.getBoundingClientRect()], "flash-outline");
+  }
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!menuEl.hidden && !menuEl.contains(event.target)) {
+      closeMenu();
+    }
+  }, true);
+
+  window.addEventListener("blur", closeMenu);
+  bodyEl.addEventListener("scroll", closeMenu);
+  treeEl.addEventListener("scroll", closeMenu);
+
+  treeEl.addEventListener("contextmenu", (event) => {
+    if (event.target.closest(".row")) {
+      return;
+    }
+    event.preventDefault();
+    openMenu(event.clientX, event.clientY, makeItems(""));
+  });
+
+  // A drop lands in a folder, and the tree's own background is the docs root. A file row
+  // stands for the folder holding it, so the whole list is a target and nothing is dead.
+  function dropInfo(target) {
+    if (!dragging || !target || !target.closest) {
+      return null;
+    }
+    const row = target.closest(".row");
+    const path = !row
+      ? ""
+      : row.dataset.dir
+        ? row.dataset.path
+        : row.dataset.path.split("/").slice(0, -1).join("/");
+    const parent = dragging.path.split("/").slice(0, -1).join("/");
+    if (path === parent || path === dragging.path || path.startsWith(dragging.path + "/")) {
+      return null;
+    }
+    return { row: row, path: path };
+  }
+
+  let dropEl = null;
+
+  function highlightDrop(element) {
+    if (dropEl === element) {
+      return;
+    }
+    if (dropEl) {
+      dropEl.classList.remove("drop");
+    }
+    dropEl = element;
+    if (dropEl) {
+      dropEl.classList.add("drop");
+    }
+  }
+
+  treeEl.addEventListener("dragover", (event) => {
+    const info = dropInfo(event.target);
+    highlightDrop(info ? info.row || treeEl : null);
+    if (!info) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  });
+
+  treeEl.addEventListener("dragleave", (event) => {
+    if (event.target === treeEl) {
+      highlightDrop(null);
+    }
+  });
+
+  treeEl.addEventListener("drop", (event) => {
+    const info = dropInfo(event.target);
+    highlightDrop(null);
+    if (!info) {
+      return;
+    }
+    event.preventDefault();
+    vscode.postMessage({
+      type: "relocate",
+      from: dragging.path,
+      to: info.path,
+      dir: dragging.dir
+    });
+    dragging = null;
+  });
+
+  const MIN_THUMB = 20;
+
+  // The webview will not style its own scrollbars, so every pane gets one of these: an
+  // overlay laid over the pane rather than inside it, so showing it costs no width and
+  // never reflows what it sits on. That lets it stay up whenever there is more to scroll.
+  // "host" is the positioned box the overlay is placed in, which the pane sits inside.
+  function addBar(pane, host) {
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const thumb = document.createElement("div");
+    thumb.className = "thumb";
+    bar.appendChild(thumb);
+    host.appendChild(bar);
+
+    const entry = { pane: pane, bar: bar, thumb: thumb, host: host };
+    bars.push(entry);
+
+    pane.addEventListener("scroll", () => drawBar(entry));
+    new ResizeObserver(() => drawBar(entry)).observe(pane);
+    new MutationObserver(() => drawBar(entry)).observe(pane, { childList: true, subtree: true });
+
+    thumb.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      thumb.setPointerCapture(event.pointerId);
+      const startY = event.clientY;
+      const startTop = pane.scrollTop;
+      const span = pane.clientHeight - thumb.offsetHeight;
+      const reach = pane.scrollHeight - pane.clientHeight;
+      const move = (moveEvent) => {
+        pane.scrollTop = startTop + ((moveEvent.clientY - startY) * reach) / Math.max(span, 1);
+      };
+      const up = (upEvent) => {
+        thumb.releasePointerCapture(upEvent.pointerId);
+        thumb.removeEventListener("pointermove", move);
+        thumb.removeEventListener("pointerup", up);
+        bar.classList.remove("held");
+      };
+      bar.classList.add("held");
+      thumb.addEventListener("pointermove", move);
+      thumb.addEventListener("pointerup", up);
+    });
+
+    drawBar(entry);
+    return entry;
+  }
+
+  function drawBar(entry) {
+    const pane = entry.pane;
+    const view = pane.clientHeight;
+    const total = pane.scrollHeight;
+    const box = pane.getBoundingClientRect();
+    const host = entry.host.getBoundingClientRect();
+    entry.bar.style.top = box.top - host.top + "px";
+    entry.bar.style.height = view + "px";
+    if (total <= view + 1) {
+      entry.bar.hidden = true;
+      return;
+    }
+    entry.bar.hidden = false;
+    const height = Math.max(MIN_THUMB, (view * view) / total);
+    entry.thumb.style.height = height + "px";
+    entry.thumb.style.transform =
+      "translateY(" + ((view - height) * pane.scrollTop) / (total - view) + "px)";
+  }
+
+  function refreshBars() {
+    for (const entry of bars) {
+      drawBar(entry);
+    }
+  }
+
+  addBar(treeEl, sideEl);
+  addBar(tocEl, sideEl);
+  addBar(bodyEl, paneEl);
+
   splitter.addEventListener("pointerdown", (event) => {
     splitter.setPointerCapture(event.pointerId);
     const move = (moveEvent) => setSplit(moveEvent.clientX);
@@ -349,7 +737,27 @@
     event.preventDefault();
   });
 
+  sideSplitter.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    openMenu(event.clientX, event.clientY, [
+      {
+        label: "Auto size the contents",
+        checked: tocAuto,
+        run: () => {
+          tocAuto = !tocAuto;
+          fitToc();
+          persist();
+        }
+      }
+    ]);
+  });
+
+  // Dragging the seam is a size chosen by hand, so the automatic one steps aside.
   sideSplitter.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    tocAuto = false;
     sideSplitter.setPointerCapture(event.pointerId);
     const box = sideBodyEl.getBoundingClientRect();
     const move = (moveEvent) => setSideSplit((moveEvent.clientY - box.top) / box.height);
@@ -368,7 +776,7 @@
 
   window.addEventListener("resize", () => {
     setSplit(split);
-    setSideSplit(sideSplit);
+    fitToc();
     fitEditor();
   });
 
@@ -442,8 +850,7 @@
 
   titleEl.addEventListener("click", () => {
     if (current) {
-      copyText(current.path);
-      toast("copied to clipboard: " + current.path);
+      copyPath(current.path);
     }
   });
 
@@ -479,6 +886,11 @@
   }
 
   document.addEventListener("keydown", (event) => {
+    if (!menuEl.hidden && event.key === "Escape") {
+      event.preventDefault();
+      closeMenu();
+      return;
+    }
     if (!lightboxEl.hidden) {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -496,11 +908,46 @@
         return;
       }
     }
+    if (event.key === "PageUp" || event.key === "PageDown") {
+      if (jumpSection(event.key === "PageDown" ? 1 : -1, event.target)) {
+        event.preventDefault();
+      }
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
       save();
     }
   });
+
+  // Paging moves by heading, which is the unit the contents list is written in. The tree
+  // and an open editor keep the plain paging they already have.
+  function jumpSection(delta, target) {
+    if (mode === "edit" || !sections.length || (target && target.closest && target.closest("#tree"))) {
+      return false;
+    }
+    const top = bodyEl.getBoundingClientRect().top;
+    const offsets = sections.map((section) => section.heading.getBoundingClientRect().top - top);
+    let index = -1;
+    if (delta > 0) {
+      index = offsets.findIndex((offset) => offset > 1);
+    } else {
+      // The heading above the top edge, so the first press lands on the section being read.
+      for (let i = 0; i < offsets.length; i++) {
+        if (offsets[i] < -1) {
+          index = i;
+        }
+      }
+    }
+    if (index < 0) {
+      bodyEl.scrollTop = delta > 0 ? bodyEl.scrollHeight : 0;
+      return true;
+    }
+    bodyEl.scrollTop += offsets[index];
+    flash(sections[index].own);
+    scheduleActive();
+    return true;
+  }
 
   function openLightbox(src, alt) {
     lightboxImageEl.alt = alt || "";
@@ -610,7 +1057,15 @@
     if (message.type === "tree") {
       nodes = message.nodes || [];
       trashNodes = message.trash || [];
+      rootPrefix = typeof message.root === "string" ? message.root : "";
       drawTree(message.notice || "");
+      if (current) {
+        titleEl.title = "Copy the path (" + fullPath(current.path) + ")";
+      }
+    } else if (message.type === "select") {
+      selected = message.path;
+      drawTree();
+      persist();
     } else if (message.type === "content") {
       // A save fires the watcher, which sends this back. Redrawing then would drop the
       // caret, so an echo of what is already on screen only refreshes the stored copy.
@@ -699,7 +1154,7 @@
 
     headerEl.hidden = false;
     titleEl.textContent = current.path.split("/").pop();
-    titleEl.title = "Copy the path (" + current.path + ")";
+    titleEl.title = "Copy the path (" + fullPath(current.path) + ")";
     drawStamps();
     showStatus(statuses[current.path]);
     toggleEl.hidden = !editable(current);
@@ -819,29 +1274,29 @@
   }
 
   function buildToc() {
-    const headings = article.querySelectorAll("h1, h2, h3, h4, h5, h6");
-    if (headings.length < 2) {
+    const entries = tocEntries();
+    if (entries.length < 2) {
       return;
     }
     const list = document.createElement("ul");
-    let index = 0;
-    for (const heading of headings) {
-      if (!heading.id) {
-        heading.id = "docs-panel-heading-" + index;
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (!entry.el.id) {
+        entry.el.id = "docs-panel-heading-" + i;
       }
-      index += 1;
       const li = document.createElement("li");
-      li.className = "toc-" + heading.tagName.toLowerCase();
+      li.className = "toc-h" + entry.level;
       const link = document.createElement("a");
       link.href = "#";
-      link.textContent = heading.textContent;
-      const section = { heading: heading, li: li, own: [heading, ...ownedBy(heading)] };
+      link.textContent = entry.text;
+      link.title = entry.text;
+      const next = entries[i + 1];
+      const section = { heading: entry.el, li: li, own: ownedBy(entry.el, next && next.el) };
       link.addEventListener("click", (event) => {
         event.preventDefault();
-        heading.scrollIntoView({ block: "start" });
+        entry.el.scrollIntoView({ block: "start" });
         flash(section.own);
       });
-      link.title = heading.textContent;
       li.appendChild(link);
       list.appendChild(li);
       sections.push(section);
@@ -849,29 +1304,94 @@
     tocEl.appendChild(list);
     tocEl.hidden = false;
     sideBodyEl.classList.remove("no-toc");
-    setSideSplit(sideSplit);
+    fitToc();
     scheduleActive();
   }
 
-  // A heading owns everything down to the next heading, whatever its level.
-  function ownedBy(heading) {
-    const own = [];
-    let node = heading.nextElementSibling;
-    while (node && !/^H[1-6]$/.test(node.tagName)) {
+  // A block that opens in bold is a heading the author never marked up as one, so it is
+  // listed too: a paragraph, or a list item, which is the same habit written as a list.
+  function tocEntries() {
+    const found = [];
+    let level = 1;
+    for (const el of article.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li")) {
+      if (/^H[1-6]$/.test(el.tagName)) {
+        level = Number(el.tagName[1]);
+        found.push({ el: el, level: level, text: el.textContent });
+        continue;
+      }
+      // A paragraph inside a list is that item's own opening, and is counted as the item.
+      if (el.tagName === "P" && el.parentElement !== article) {
+        continue;
+      }
+      const text = leadBold(el);
+      if (text) {
+        found.push({ el: el, level: Math.min(level + 1 + listDepth(el), 6), text: text });
+      }
+    }
+    return found;
+  }
+
+  // The bold run a block opens with, if that is how it opens. A loose list item wraps its
+  // text in a paragraph first, so one step inward is allowed before giving up.
+  function leadBold(el) {
+    let node = firstNode(el);
+    if (node && node.nodeName === "P") {
+      node = firstNode(node);
+    }
+    return node && node.nodeName === "STRONG" ? node.textContent.trim() : "";
+  }
+
+  function firstNode(el) {
+    let node = el.firstChild;
+    while (node && node.nodeType === 3 && !node.textContent.trim()) {
+      node = node.nextSibling;
+    }
+    return node;
+  }
+
+  // The list an item sits in costs it no level of its own; only nesting inside it does.
+  function listDepth(el) {
+    let depth = 0;
+    for (let node = el.parentElement; node && node !== article; node = node.parentElement) {
+      if (node.tagName === "UL" || node.tagName === "OL") {
+        depth += 1;
+      }
+    }
+    return Math.max(0, depth - 1);
+  }
+
+  // An entry owns everything down to the next one.
+  function ownedBy(from, stop) {
+    const own = [from];
+    let node = from.nextElementSibling;
+    while (node && node !== stop) {
       own.push(node);
       node = node.nextElementSibling;
     }
     return own;
   }
 
-  function flash(elements) {
-    for (const element of elements) {
+  let flashTimer = 0;
+  let flashed = [];
+
+  function clearFlash() {
+    for (const element of flashed) {
       element.classList.remove("flash");
     }
-    void elements[0].offsetWidth; // restart the animation on a repeated click
-    for (const element of elements) {
+    flashed = [];
+  }
+
+  // The mark is taken off when it has faded, so a class never outlives its animation and
+  // the next flash has nothing of the last one still on the page to argue with.
+  function flash(elements) {
+    clearTimeout(flashTimer);
+    clearFlash();
+    flashed = [...elements];
+    void flashed[0].offsetWidth; // restart the animation on a repeated click
+    for (const element of flashed) {
       element.classList.add("flash");
     }
+    flashTimer = setTimeout(clearFlash, FLASH_MS);
   }
 
   function scheduleActive() {
@@ -913,8 +1433,10 @@
   }
 
   // Scrolled by hand, not by scrollIntoView: that one drags the reading pane along too.
+  // The offset is measured off the list itself, because offsetTop answers to whichever
+  // ancestor happens to be positioned, and that is not the pane being scrolled.
   function revealInToc(li) {
-    const top = li.offsetTop;
+    const top = li.getBoundingClientRect().top - tocEl.getBoundingClientRect().top + tocEl.scrollTop;
     const bottom = top + li.offsetHeight;
     if (top < tocEl.scrollTop) {
       tocEl.scrollTop = top;

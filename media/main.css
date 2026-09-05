@@ -176,7 +176,7 @@ body.dragging-rows {
 #tree {
   min-height: 0;
   overflow: auto;
-  padding: 8px 4px;
+  padding: 8px 10px 8px 4px;
   user-select: none;
 }
 
@@ -329,6 +329,7 @@ body.dragging {
 }
 
 #pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -438,6 +439,7 @@ body.dragging {
 
 /* One size for the whole reading pane; everything below it is sized in em. */
 #body {
+  position: relative;
   flex: 1;
   min-width: 0;
   overflow: auto;
@@ -455,11 +457,17 @@ body.dragging {
   margin-bottom: 0;
 }
 
-/* An em keeps the marker clear of the text edge at every text scale. */
+/* An em keeps the marker clear of the text edge at every text scale. A number is set
+   outside the text, so a wide one hangs left; an ordered list is given the room for it
+   rather than letting "10." reach back past the paragraph the list sits under. */
 .markdown-body :is(ul, ol) {
   padding-left: 1.8em;
   margin-left: 0;
   list-style-position: outside;
+}
+
+.markdown-body ol {
+  padding-left: 2.4em;
 }
 
 /* A title and its sections need a seam; the deeper levels read from weight alone. */
@@ -476,7 +484,7 @@ body.dragging {
   min-height: 0;
   overflow: auto;
   user-select: none;
-  padding: 8px 4px;
+  padding: 8px 10px 8px 4px;
   font-size: 1em;
 }
 
@@ -496,14 +504,19 @@ body.dragging {
 }
 
 #toc li {
-  padding: 1px 4px;
+  --depth: 0;
+  padding: 1px 4px 1px calc(4px + var(--depth) * 11px);
   overflow-wrap: anywhere;
 }
 
+/* The tint spans the whole row, so the pulled-in padding is given back as a margin. */
 #toc a {
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  padding: 0 4px;
+  margin: 0 -4px;
+  border-radius: 3px;
   color: var(--vscode-foreground);
   text-decoration: none;
   opacity: 0.85;
@@ -521,7 +534,7 @@ body.dragging {
 }
 
 #toc a:hover {
-  color: var(--vscode-textLink-activeForeground);
+  background: var(--vscode-list-hoverBackground);
   opacity: 1;
 }
 
@@ -541,26 +554,69 @@ body.dragging {
   to { background: transparent; }
 }
 
+/* The animation and nothing else: a mark that set the box would move the text it points
+   at, and one that set a corner would overrule whatever the element had chosen. */
 .markdown-body .flash {
   animation: headingFlash 1.1s ease-out;
+}
+
+/* Laid over what it marks, so the page beneath is never rewritten. Filled for a run of
+   text, which is shaped line by line; ringed for a whole element, which is one box. */
+.flash-mark {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  animation: copiedFlash 1.1s ease-out forwards;
+}
+
+.flash-fill {
+  border-radius: 2px;
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(88, 166, 255, 0.45));
+}
+
+.flash-outline {
   border-radius: 3px;
-  padding-inline: 4px;
-  margin-inline: -4px;
+  outline: 1px solid var(--vscode-focusBorder, #58a6ff);
+  outline-offset: 2px;
+}
+
+@keyframes copiedFlash {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .markdown-body .flash {
+  .markdown-body .flash,
+  .flash-mark {
     animation: none;
   }
 }
 
-/* Depth reads from the indent; weight and fade separate a title from its sections. */
-.toc-h1 { font-weight: 600; }
-.toc-h2 { padding-left: 12px; }
-.toc-h3 { padding-left: 20px; font-size: 0.95em; }
-.toc-h4 { padding-left: 28px; font-size: 0.95em; opacity: 0.8; }
-.toc-h5 { padding-left: 36px; font-size: 0.9em; opacity: 0.7; }
-.toc-h6 { padding-left: 44px; font-size: 0.9em; opacity: 0.6; }
+/* Depth reads from the indent, then from size, weight and fade together, so a level is
+   still told apart when the list is scrolled past a heading of the level above it. The
+   rules are scoped to the pane: "#toc li" outranks a bare class and would keep its own
+   padding, which left every level flush against the edge. */
+#toc .toc-h1 { --depth: 0; font-size: 1.06em; font-weight: 700; }
+#toc .toc-h2 { --depth: 1; font-size: 1em; font-weight: 600; }
+#toc .toc-h3 { --depth: 2; font-size: 0.94em; font-weight: 500; }
+#toc .toc-h4 { --depth: 3; font-size: 0.9em; opacity: 0.85; }
+#toc .toc-h5 { --depth: 4; font-size: 0.86em; opacity: 0.75; }
+#toc .toc-h6 { --depth: 5; font-size: 0.82em; opacity: 0.68; }
+
+/* A top level entry opens a block, the same seam its heading is given in the page. */
+#toc .toc-h1:not(:first-child) {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+/* The marker shrinks with the level, so depth reads even from the left edge alone. */
+#toc .toc-h4 a::before,
+#toc .toc-h5 a::before,
+#toc .toc-h6 a::before {
+  opacity: 0.4;
+  transform: scale(0.8);
+}
 
 /* Sized to its own text and scrolled by the pane, so editing is the same page, not a box in it. */
 #body textarea {
@@ -631,18 +687,20 @@ body.dragging {
   cursor: pointer;
 }
 
-/* The box occupies exactly the 20px of list indent, so its text lines up with the text
-   of an ordinary list and the box itself sits where a bullet would. */
+/* The box hangs in the marker gutter and its own margins cancel its width, so it takes no
+   inline room: the item's text starts where any other item's text does. Pulling the whole
+   item left instead cost a fixed 20px against an indent in em, so at some text scales the
+   item ended up further left than the paragraph above the list. */
 .markdown-body li:has(> input[type="checkbox"]),
 .markdown-body li:has(> p > input[type="checkbox"]) {
   list-style: none;
-  margin-left: -20px;
 }
 
 .markdown-body li input[type="checkbox"] {
   width: 13px;
   height: 13px;
-  margin: 0 7px 0 0;
+  font-size: inherit;
+  margin: 0 calc(1.4em - 13px) 0 -1.4em;
   vertical-align: middle;
 }
 
@@ -712,4 +770,103 @@ img.single {
   color: #ddd;
   font-size: 0.85em;
   pointer-events: none;
+}
+
+#menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35)));
+  border-radius: 4px;
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+#menu[hidden] {
+  display: none;
+}
+
+#menu button {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#menu button:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+}
+
+#menu button.danger {
+  color: var(--vscode-errorForeground, #f85149);
+}
+
+#menu hr {
+  border: none;
+  border-top: 1px solid rgba(128, 128, 128, 0.3);
+  margin: 4px 2px;
+}
+
+#menu .tick {
+  display: inline-block;
+  width: 14px;
+  opacity: 0.9;
+}
+
+/* The pane scrolls itself but shows nothing for it; the bar over it is drawn by hand. */
+#tree,
+#toc,
+#body {
+  scrollbar-width: none;
+}
+
+#tree::-webkit-scrollbar,
+#toc::-webkit-scrollbar,
+#body::-webkit-scrollbar {
+  display: none;
+}
+
+.bar {
+  position: absolute;
+  right: 2px;
+  width: 5px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.bar[hidden] {
+  display: none;
+}
+
+.bar .thumb {
+  width: 100%;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.45);
+  pointer-events: auto;
+  cursor: default;
+}
+
+.bar .thumb:hover,
+.bar.held .thumb {
+  background: rgba(128, 128, 128, 0.75);
+}
+
+.row.dragged {
+  opacity: 0.45;
+}
+
+/* The folder taking the drop is outlined; the tree itself is the docs root. */
+.row.drop,
+#tree.drop {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+  border-radius: 3px;
 }
