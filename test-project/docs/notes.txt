@@ -1,4 +1,0 @@
-Plain text file.
-
-It must show inside a <pre> block, with the angle brackets escaped
-and not treated as HTML: <script>ignored</script>
