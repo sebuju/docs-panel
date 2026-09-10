@@ -16,9 +16,11 @@ import {
   READ,
   STATUSES
 } from "./ledger";
+import { match, refresh, sessionsDir } from "./mentions";
 
 export const VIEW_TYPE = "docsPanel";
 export const TRASH_DIR = ".trash";
+const SESSION_DEBOUNCE_MS = 500;
 
 export interface PanelState {
   split: number;
@@ -28,6 +30,7 @@ export interface PanelState {
   mono: boolean;
   tocAuto: boolean;
   expanded: string[];
+  pinned: string[];
   selected: string | null;
 }
 
@@ -39,6 +42,7 @@ const DEFAULT_STATE: PanelState = {
   mono: false,
   tocAuto: false,
   expanded: [],
+  pinned: [],
   selected: null
 };
 
@@ -83,6 +87,10 @@ const COG_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="t
 d="M6.6 1.9h2.8l.3 1.7 1.3.8 1.6-.7 1.4 2.4-1.3 1.1v1.6l1.3 1.1-1.4 2.4-1.6-.7-1.3.8-.3 1.7H6.6l-.3-1.7-1.3-.8-1.6.7-1.4-2.4 1.3-1.1V7.2L2 6.1l1.4-2.4 1.6.7 1.3-.8z"/>
 <circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
 
+const GLASS_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+<circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2"/>
+<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" d="M10.2 10.2 13.5 13.5"/></svg>`;
+
 const EYE_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
 d="M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8z"/>
@@ -99,6 +107,8 @@ export class DocsPanel {
 
   private readonly disposables: vscode.Disposable[] = [];
   private watcher: vscode.Disposable | undefined;
+  private sessions: vscode.Disposable | undefined;
+  private sessionsTimer: NodeJS.Timeout | undefined;
   private root: Root | undefined;
   private state: PanelState;
   private ready = false;
@@ -148,6 +158,9 @@ export class DocsPanel {
         if (event.affectsConfiguration("docsPanel.folder")) {
           this.reroot();
         }
+        if (event.affectsConfiguration("docsPanel.copyPrefix")) {
+          this.sendPrefixes();
+        }
       })
     );
     this.disposables.push(
@@ -156,6 +169,7 @@ export class DocsPanel {
 
     this.panel.onDidDispose(() => this.dispose());
     this.startWatcher();
+    this.startSessionWatcher();
   }
 
   private get base(): vscode.Uri | undefined {
@@ -181,6 +195,7 @@ export class DocsPanel {
       localResourceRoots: this.resourceRoots()
     };
     this.startWatcher();
+    this.startSessionWatcher();
     void this.sendTree();
     if (this.state.selected) {
       void this.sendContent(this.state.selected);
@@ -207,11 +222,57 @@ export class DocsPanel {
     });
   }
 
+  // A live session appends to its log constantly, so the writes are let settle before the
+  // scan: the pass itself is cheap, but it is worth nothing until a line is complete.
+  private startSessionWatcher(): void {
+    this.sessions?.dispose();
+    this.sessions = undefined;
+    if (!this.root) {
+      return;
+    }
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(sessionsDir(this.root.workspace)), "*.jsonl")
+    );
+    const schedule = () => {
+      if (this.sessionsTimer) {
+        clearTimeout(this.sessionsTimer);
+      }
+      this.sessionsTimer = setTimeout(() => void this.sendMentions(), SESSION_DEBOUNCE_MS);
+    };
+    watcher.onDidCreate(schedule);
+    watcher.onDidChange(schedule);
+    watcher.onDidDelete(schedule);
+    this.sessions = watcher;
+  }
+
+  // Extensions are lower-cased on the way out so the setting can be written either way.
+  private sendPrefixes(): void {
+    const setting = vscode.workspace
+      .getConfiguration("docsPanel", this.root?.workspace)
+      .get<Record<string, unknown>>("copyPrefix", {});
+    const prefixes: Record<string, string> = {};
+    for (const [type, value] of Object.entries(setting ?? {})) {
+      if (typeof value === "string") {
+        prefixes[type.replace(/^\./, "").toLowerCase()] = value;
+      }
+    }
+    this.post({ type: "prefixes", prefixes });
+  }
+
+  private async sendMentions(): Promise<void> {
+    if (!this.ready || !this.root) {
+      return;
+    }
+    const hits = await refresh(this.root.workspace);
+    this.post({ type: "mentions", mentions: match(hits, await listFiles(this.root.uri)) });
+  }
+
   private async onMessage(message: any): Promise<void> {
     switch (message?.type) {
       case "ready":
         this.ready = true;
         this.post({ type: "state", ...this.state });
+        this.sendPrefixes();
         await this.sendTree();
         if (this.state.selected) {
           await this.sendContent(this.state.selected);
@@ -242,6 +303,9 @@ export class DocsPanel {
         return;
       case "create":
         await this.create(message.kind === "folder" ? "folder" : "file", String(message.at ?? ""));
+        return;
+      case "clone":
+        await this.clone(String(message.path), !!message.dir);
         return;
       case "relocate":
         await this.relocate(String(message.from), String(message.to), !!message.dir);
@@ -354,6 +418,7 @@ export class DocsPanel {
           await rekey(spec, `${relPath}/${inner}`, `${toPath}/${inner}`);
         }
       }
+      this.repin(relPath, toPath);
       // Renaming a folder from the tree leaves the reading pane alone unless the open
       // file was inside it, in which case its path is gone and the pane is cleared.
       const reopen = this.state.selected === relPath;
@@ -492,6 +557,37 @@ export class DocsPanel {
     }
   }
 
+  // The copy keeps the folder it came from and takes the next free name beside it.
+  private async clone(relPath: string, dir: boolean): Promise<void> {
+    const base = this.base;
+    if (!base) {
+      return;
+    }
+    const parts = relPath.split("/");
+    const name = parts.pop() ?? relPath;
+    const folder = parts.length ? vscode.Uri.joinPath(base, ...parts) : base;
+    try {
+      const to = await freeName(folder, name);
+      await vscode.workspace.fs.copy(
+        vscode.Uri.joinPath(base, ...relPath.split("/")),
+        to,
+        { overwrite: false }
+      );
+      const path = relativeTo(base, to);
+      if (!dir) {
+        this.state.selected = path;
+      }
+      await this.sendTree();
+      if (!dir) {
+        this.post({ type: "select", path });
+        await this.markRead(path);
+        await this.sendContent(path);
+      }
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Docs Panel could not clone ${relPath}: ${error}`);
+    }
+  }
+
   // A drag drops one entry into one folder; "" is the root. The ledger keys of a folder's
   // files are read before the move, because afterwards the old paths are gone.
   private async relocate(from: string, to: string, dir: boolean): Promise<void> {
@@ -518,6 +614,7 @@ export class DocsPanel {
           await rekey(spec, from, toPath);
         }
       }
+      this.repin(from, toPath);
       this.dropSelection(from);
       await this.sendTree();
     } catch (error) {
@@ -533,6 +630,14 @@ export class DocsPanel {
     await vscode.commands.executeCommand(
       "revealFileInOS",
       vscode.Uri.joinPath(base, ...relPath.split("/"))
+    );
+  }
+
+  // A pin names a path, and a renamed or moved file no longer answers to the one it was
+  // pinned under, so the pins follow it the way the ledgers do.
+  private repin(from: string, to: string): void {
+    this.state.pinned = this.state.pinned.map((path) =>
+      path === from ? to : path.startsWith(`${from}/`) ? to + path.slice(from.length) : path
     );
   }
 
@@ -571,11 +676,13 @@ export class DocsPanel {
       type: "tree",
       nodes: await buildTree(base),
       trash,
+      pinned: this.state.pinned,
       root: this.root ? relativeTo(this.root.workspace, base) : ""
     });
     if (this.root) {
       this.postStatuses(await prune(statusLedger(this.root.uri)));
       this.postReads(await prune(readsLedger(this.root.workspace, this.root.uri)));
+      await this.sendMentions();
     }
     await this.dropMissingSelection();
   }
@@ -652,14 +759,15 @@ export class DocsPanel {
       <span id="stamps">
         <span id="created"></span>
         <span id="modified"></span>
+        <span id="ago"></span>
       </span>
-      <span id="dirty" hidden>&#9679;</span>
       <span id="typeSettings" hidden>
         <button id="textSmaller" class="icon" type="button" title="Smaller text">${MINUS_ICON}</button>
         <button id="textBigger" class="icon" type="button" title="Bigger text">${PLUS_ICON}</button>
         <button id="lineHeight" class="icon" type="button" title="Line spacing">${LINES_ICONS}</button>
         <button id="font" class="icon" type="button" title="Font"><span class="glyph">Aa</span></button>
       </span>
+      <button id="find" class="icon" type="button" title="Find (Ctrl+F)">${GLASS_ICON}</button>
       <button id="typeToggle" class="icon" type="button" title="Text settings" aria-expanded="false">${COG_ICON}</button>
       <button id="toggle" class="icon" type="button" title="Edit"><span class="pen">${PEN_ICON}</span><span class="eye">${EYE_ICON}</span></button>
       <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
@@ -671,6 +779,16 @@ export class DocsPanel {
           (value) => `<option value="${value}" class="opt-${value.replace(/ /g, "-")}">${value}</option>`
         ).join("")}
       </select>
+    </div>
+    <div id="search" hidden>
+      <input id="searchText" type="text" placeholder="Find" spellcheck="false">
+      <span id="searchCount"></span>
+      <button id="searchCase" class="icon" type="button" title="Match case"><span class="glyph">Aa</span></button>
+      <button id="searchWord" class="icon" type="button" title="Whole word"><span class="glyph">ab</span></button>
+      <button id="searchRegex" class="icon" type="button" title="Regular expression"><span class="glyph">.*</span></button>
+      <button id="searchPrev" class="icon" type="button" title="Previous (PageUp)"><span class="glyph">&#8593;</span></button>
+      <button id="searchNext" class="icon" type="button" title="Next (PageDown)"><span class="glyph">&#8595;</span></button>
+      <button id="searchClose" class="icon" type="button" title="Close (Escape)"><span class="glyph">&#10005;</span></button>
     </div>
     <div id="body"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
   </div>
@@ -689,6 +807,10 @@ export class DocsPanel {
   private dispose(): void {
     DocsPanel.current = undefined;
     this.watcher?.dispose();
+    this.sessions?.dispose();
+    if (this.sessionsTimer) {
+      clearTimeout(this.sessionsTimer);
+    }
     for (const item of this.disposables) {
       item.dispose();
     }
@@ -773,6 +895,7 @@ function normalizeState(value: any): PanelState {
     mono: typeof value?.mono === "boolean" ? value.mono : DEFAULT_STATE.mono,
     tocAuto: typeof value?.tocAuto === "boolean" ? value.tocAuto : DEFAULT_STATE.tocAuto,
     expanded: Array.isArray(value?.expanded) ? value.expanded.map(String) : [],
+    pinned: Array.isArray(value?.pinned) ? value.pinned.map(String) : [],
     selected: typeof value?.selected === "string" ? value.selected : null
   };
 }

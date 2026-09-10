@@ -32,6 +32,15 @@
           "default": "docs",
           "scope": "resource",
           "description": "Folder, relative to the workspace root, that Docs Panel shows."
+        },
+        "docsPanel.copyPrefix": {
+          "type": "object",
+          "default": {},
+          "scope": "resource",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Text put in front of the path when the header title is clicked, keyed by file extension without the dot. Trailing spaces are kept: `{ \"md\": \"/execute-plan \" }`."
         }
       }
     }

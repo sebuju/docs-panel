@@ -59,6 +59,8 @@ html, body {
   height: 32px;
   box-sizing: border-box;
   padding: 0 8px;
+  /* One line box for every child, so name, dates and pill share the buttons' 20px height. */
+  line-height: 20px;
   margin-left: -4px;
   /* The overlay lifts the theme's own bar colour, so the bar tracks the theme and still
      reads lighter than both the side and the page. */
@@ -75,6 +77,7 @@ button.icon {
   color: var(--vscode-foreground);
   cursor: pointer;
   border-radius: 3px;
+  flex: none;
   width: 20px;
   height: 20px;
   padding: 0;
@@ -99,6 +102,14 @@ button.icon[hidden] {
 
 button.icon span {
   display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Blockified, or the SVG sits on a text baseline and rides high in the button. */
+button.icon svg {
+  display: block;
+  flex: none;
 }
 
 button.icon .glyph {
@@ -196,7 +207,7 @@ body.dragging-rows {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px;
+  padding: 2px 10px;
   border-radius: 3px;
   cursor: pointer;
   white-space: nowrap;
@@ -221,6 +232,13 @@ body.dragging-rows {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.row .pin {
+  display: flex;
+  align-items: center;
+  flex: none;
+  opacity: 0.7;
 }
 
 /* Fixed and shorter than the label's line box, so adding a pill never moves a row. */
@@ -262,7 +280,13 @@ body.dragging-rows {
   visibility: hidden;
 }
 
+/* Talked about but not opened yet: the same dot in the same slot, told apart by colour. */
+.unread.noted {
+  color: var(--vscode-textLink-foreground, #4c8eda);
+}
+
 #status {
+  flex: none;
   height: 20px;
   box-sizing: border-box;
   border: 1px solid transparent;
@@ -347,7 +371,7 @@ body.dragging {
   background: transparent;
   color: inherit;
   font: inherit;
-  padding: 0 2px;
+  padding: 0 6px;
   border-radius: 3px;
   cursor: pointer;
   text-align: left;
@@ -363,15 +387,22 @@ body.dragging {
   outline: none;
 }
 
-/* The dates sit with the name but never crowd it out: the name shrinks first. */
+/* The dates give up their room long before the name does, so the file being read stays
+   readable and the dates are the ones cut to an ellipsis. */
 #stamps {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 100 auto;
   gap: 8px;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   opacity: 0.55;
+}
+
+#stamps > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* A trailing space inside content collapses, so the gap is a margin. */
@@ -433,8 +464,51 @@ body.dragging {
   opacity: 0;
 }
 
-#dirty {
-  color: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vscode-foreground));
+#search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+#search[hidden] {
+  display: none;
+}
+
+#searchText {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--vscode-input-border, transparent);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+#searchText:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+#searchText.bad {
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+#searchCount {
+  flex: none;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Painted over the text, so the document keeps the shape everything else measured. */
+::highlight(docs-find) {
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+}
+
+::highlight(docs-find-on) {
+  background: var(--vscode-editor-findMatchBackground, rgba(157, 92, 0, 0.5));
 }
 
 /* One size for the whole reading pane; everything below it is sized in em. */
@@ -447,6 +521,55 @@ body.dragging {
   font-family: var(--body-font);
   font-size: calc(var(--vscode-font-size, 13px) * var(--text-scale));
   line-height: var(--line-height);
+}
+
+/* Sized in px, not em: the log is not the document and does not follow its reading size. */
+.log {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* One line each: the log is a reminder of what was said, not a transcript to read. */
+.log-row {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+/* A distance is a short string of its own length, so a floor keeps the excerpts in line. */
+.log-when {
+  flex: 0 0 auto;
+  min-width: 3.4em;
+  color: var(--vscode-descriptionForeground, #8b949e);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-said {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-more {
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #4daafc);
+  font: inherit;
+  padding: 2px 0 0;
+  cursor: pointer;
+}
+
+.log-more:hover {
+  text-decoration: underline;
+}
+
+.log-you .log-said {
+  color: var(--vscode-editor-foreground);
+}
+
+.log-them .log-said {
+  color: var(--vscode-descriptionForeground, #8b949e);
 }
 
 .markdown-body > [data-line="0"] { margin-top: 0em; }
@@ -545,7 +668,7 @@ body.dragging {
 
 /* An entry is active while more than a tenth of its own section is on screen. */
 #toc li.active > a {
-  color: var(--vscode-textLink-activeForeground);
+  color: #fff;
   opacity: 1;
 }
 

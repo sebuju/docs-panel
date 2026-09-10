@@ -16,7 +16,7 @@
   const titleEl = document.getElementById("title");
   const createdEl = document.getElementById("created");
   const modifiedEl = document.getElementById("modified");
-  const dirtyEl = document.getElementById("dirty");
+  const agoEl = document.getElementById("ago");
   const toastsEl = document.getElementById("toasts");
   const textSmallerEl = document.getElementById("textSmaller");
   const textBiggerEl = document.getElementById("textBigger");
@@ -31,6 +31,21 @@
   const lightboxImageEl = document.getElementById("lightboxImage");
   const lightboxHintEl = document.getElementById("lightboxHint");
   const menuEl = document.getElementById("menu");
+  const findEl = document.getElementById("find");
+  const searchEl = document.getElementById("search");
+  const searchTextEl = document.getElementById("searchText");
+  const searchCountEl = document.getElementById("searchCount");
+  const searchCaseEl = document.getElementById("searchCase");
+  const searchWordEl = document.getElementById("searchWord");
+  const searchRegexEl = document.getElementById("searchRegex");
+  const searchPrevEl = document.getElementById("searchPrev");
+  const searchNextEl = document.getElementById("searchNext");
+  const searchCloseEl = document.getElementById("searchClose");
+
+  const PIN_ICON =
+    '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">' +
+    '<path fill="currentColor" d="M6.2 2H9.8L9.1 3.1 9.6 6 11.2 7.6V8.7H8.5L8 13.8 7.5 8.7H4.8V7.6L6.4 6 6.9 3.1Z"/>' +
+    "</svg>";
 
   const MIN_SPLIT = 120;
   const MIN_ROW = 60;
@@ -66,6 +81,10 @@
   const drafts = new Map();
   let statuses = {};
   let reads = new Set();
+  let mentions = {};
+  let logOpen = false;
+  let pinned = new Set();
+  let prefixes = {};
   let notice = "";
   let flashModified = false;
   let rootPrefix = "";
@@ -105,6 +124,9 @@
     if (Array.isArray(state.expanded)) {
       expanded = new Set(state.expanded);
     }
+    if (Array.isArray(state.pinned)) {
+      pinned = new Set(state.pinned);
+    }
     selected = typeof state.selected === "string" ? state.selected : null;
   }
 
@@ -117,6 +139,7 @@
       mono: mono,
       tocAuto: tocAuto,
       expanded: [...expanded],
+      pinned: [...pinned],
       selected: selected
     };
   }
@@ -235,6 +258,31 @@
     );
   }
 
+  const AGO_UNITS = [["y", 31536000000], ["w", 604800000], ["d", 86400000], ["h", 3600000], ["m", 60000]];
+  const AGO_MS = 30000;
+
+  // Two units at most, counted from the largest one that fits, and never seconds: below a
+  // minute the number would change while it is being read.
+  function formatAgo(ms) {
+    if (!ms) {
+      return "";
+    }
+    let rest = Math.max(0, Date.now() - ms);
+    const first = AGO_UNITS.findIndex((unit) => rest >= unit[1]);
+    if (first < 0) {
+      return "<1m";
+    }
+    const parts = [];
+    for (let i = first; i < AGO_UNITS.length && i < first + 2; i++) {
+      const value = Math.floor(rest / AGO_UNITS[i][1]);
+      rest -= value * AGO_UNITS[i][1];
+      if (value) {
+        parts.push(value + AGO_UNITS[i][0]);
+      }
+    }
+    return parts.join(" ");
+  }
+
   function drawTree(text) {
     if (text !== undefined) {
       notice = text;
@@ -285,7 +333,7 @@
       ul.appendChild(li);
       return ul;
     }
-    for (const node of items) {
+    for (const node of sortPinned(items)) {
       const li = document.createElement("li");
       const row = document.createElement("div");
       row.className = "row";
@@ -301,8 +349,10 @@
         row.appendChild(twisty);
       } else {
         const dot = document.createElement("span");
-        dot.className = reads.has(node.path) ? "unread read" : "unread";
-        dot.title = reads.has(node.path) ? "" : "Not read yet";
+        const noted = (mentions[node.path] || []).length;
+        const seen = reads.has(node.path);
+        dot.className = seen ? "unread read" : noted ? "unread noted" : "unread";
+        dot.title = seen ? "" : noted ? "Talked about " + noted + " times" : "Not read yet";
         row.appendChild(dot);
       }
 
@@ -310,6 +360,14 @@
       label.className = "label";
       label.textContent = node.name;
       row.appendChild(label);
+
+      if (!node.dir && pinned.has(node.path)) {
+        const pin = document.createElement("span");
+        pin.className = "pin";
+        pin.title = "Pinned";
+        pin.innerHTML = PIN_ICON;
+        row.appendChild(pin);
+      }
 
       if (!node.dir && node.path === selected) {
         row.classList.add("selected");
@@ -366,11 +424,30 @@
     return ul;
   }
 
+  // A pin puts its file above everything the folder holds, folders included; several of
+  // them are read as one short list of their own, so they are named in order.
+  function sortPinned(items) {
+    const up = items.filter((node) => !node.dir && pinned.has(node.path));
+    if (!up.length) {
+      return items;
+    }
+    up.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return [...up, ...items.filter((node) => node.dir || !pinned.has(node.path))];
+  }
+
+  function togglePin(path) {
+    if (!pinned.delete(path)) {
+      pinned.add(path);
+    }
+    drawTree();
+    persist();
+  }
+
   function openFile(path) {
     if (path === selected) {
       return;
     }
-    stashDraft();
+    save();
     selected = path;
     drawTree();
     persist();
@@ -393,9 +470,18 @@
     return rootPrefix ? rootPrefix + "/" + path : path;
   }
 
-  function copyPath(path) {
-    copyText(fullPath(path));
-    toast("copied to clipboard: " + fullPath(path));
+  function copyPath(path, prefixed) {
+    const text = (prefixed ? prefixFor(path) : "") + fullPath(path);
+    copyText(text);
+    toast("copied to clipboard: " + text);
+  }
+
+  // The setting is keyed by extension, and its value is taken exactly as written: a
+  // trailing space is what separates the command from the path, so nothing is trimmed.
+  function prefixFor(path) {
+    const name = path.split("/").pop() || "";
+    const dot = name.lastIndexOf(".");
+    return (dot > 0 && prefixes[name.slice(dot + 1).toLowerCase()]) || "";
   }
 
   // One menu for the whole panel: a list of items in, a placed menu out.
@@ -443,7 +529,14 @@
     }
     items.push({ label: "Reveal in file explorer", run: () => send("reveal", node) });
     items.push({ label: "Rename…", run: () => send("rename", node) });
+    items.push({ label: "Clone", run: () => send("clone", node) });
     items.push({ label: "Copy path", run: () => copyPath(node.path) });
+    if (!node.dir && !trashed) {
+      items.push({
+        label: pinned.has(node.path) ? "Unpin" : "Pin to top",
+        run: () => togglePin(node.path)
+      });
+    }
     items.push({ separator: true });
     if (trashed) {
       items.push({ label: "Put back", run: () => send("restore", node) });
@@ -511,7 +604,7 @@
       items.push({
         label: "Copy text block",
         run: () => {
-          copyBlock(block.innerText);
+          copyBlock(blockText(block));
           flashOutline(block);
         }
       });
@@ -521,6 +614,55 @@
 
   function blockAt(el) {
     return el && el.closest && article.contains(el) ? el.closest(BLOCKS) : null;
+  }
+
+  // Lifted out of its list an item loses the mark that made it one, so the mark is written
+  // back in front of the text the way it is read aloud.
+  function blockText(block) {
+    const item = itemOf(block);
+    const mark = item ? marker(item) : "";
+    return mark ? mark + " " + block.innerText : block.innerText;
+  }
+
+  // A loose list wraps an item's text in a paragraph, and that paragraph is the item.
+  function itemOf(block) {
+    if (block.tagName === "LI") {
+      return block;
+    }
+    const parent = block.parentElement;
+    const loose = block.tagName === "P" && parent && parent.tagName === "LI";
+    return loose && parent.firstElementChild === block ? parent : null;
+  }
+
+  const ALPHA = { a: 97, A: 65 };
+
+  // A bullet reads as a dash; a count keeps the number or letter the browser drew, and the
+  // dot that goes with it.
+  function marker(item) {
+    const list = item.parentElement;
+    if (!list) {
+      return "";
+    }
+    if (list.tagName === "UL") {
+      return "-";
+    }
+    if (list.tagName !== "OL") {
+      return "";
+    }
+    const items = [...list.children].filter((el) => el.tagName === "LI");
+    const start = Number(list.getAttribute("start")) || 1;
+    const value = Number(item.getAttribute("value")) || start + items.indexOf(item);
+    const base = ALPHA[list.getAttribute("type")];
+    return (base === undefined ? String(value) : letters(value, base)) + ".";
+  }
+
+  // Past z the count carries, the way a spreadsheet names its columns.
+  function letters(value, base) {
+    let out = "";
+    for (let n = Math.max(1, value); n > 0; n = Math.floor((n - 1) / 26)) {
+      out = String.fromCharCode(base + ((n - 1) % 26)) + out;
+    }
+    return out;
   }
 
   function copyBlock(text) {
@@ -817,7 +959,7 @@
     if (!current || !editable(current)) {
       return;
     }
-    stashDraft();
+    save();
     const ratio = scrollRatio();
     mode = mode === "edit" ? "preview" : "edit";
     draw();
@@ -850,7 +992,7 @@
 
   titleEl.addEventListener("click", () => {
     if (current) {
-      copyPath(current.path);
+      copyPath(current.path, true);
     }
   });
 
@@ -908,10 +1050,28 @@
         return;
       }
     }
+    if (searchOpen && event.key === "Escape") {
+      event.preventDefault();
+      closeSearch();
+      return;
+    }
+    // While the search is up the pages belong to it; closing it gives them back to the
+    // headings, which is where they go when there is nothing to step through.
     if (event.key === "PageUp" || event.key === "PageDown") {
-      if (jumpSection(event.key === "PageDown" ? 1 : -1, event.target)) {
+      const delta = event.key === "PageDown" ? 1 : -1;
+      if (searchOpen && matches.length) {
+        event.preventDefault();
+        step(delta);
+        return;
+      }
+      if (jumpSection(delta, event.target)) {
         event.preventDefault();
       }
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f" && article) {
+      event.preventDefault();
+      openSearch();
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
@@ -1058,6 +1218,10 @@
       nodes = message.nodes || [];
       trashNodes = message.trash || [];
       rootPrefix = typeof message.root === "string" ? message.root : "";
+      // A rename or a move rewrites the pins, so the tree carries the list that is true now.
+      if (Array.isArray(message.pinned)) {
+        pinned = new Set(message.pinned);
+      }
       drawTree(message.notice || "");
       if (current) {
         titleEl.title = "Copy the path (" + fullPath(current.path) + ")";
@@ -1079,6 +1243,7 @@
       }
       // A file rewritten under the reader is the same page, so the place in it is kept.
       const reopened = !!current && current.path === message.path;
+      logOpen = logOpen && reopened;
       const anchor = reopened ? captureAnchor() : null;
       flashModified = reopened && !!current.modified && current.modified !== message.modified;
       current = message;
@@ -1099,7 +1264,6 @@
       drawTree();
     } else if (message.type === "saved") {
       drafts.delete(message.path);
-      markDirty(false);
       drawTree();
     } else if (message.type === "renamed") {
       if (drafts.has(message.from)) {
@@ -1126,6 +1290,12 @@
     } else if (message.type === "reads") {
       reads = new Set(message.reads || []);
       drawTree();
+    } else if (message.type === "mentions") {
+      mentions = message.mentions || {};
+      drawTree();
+      drawLog();
+    } else if (message.type === "prefixes") {
+      prefixes = message.prefixes || {};
     }
   });
 
@@ -1133,11 +1303,205 @@
     return content.kind !== "img" && typeof content.text === "string";
   }
 
-  function markDirty(value) {
-    dirtyEl.hidden = !value;
+  const HIGHLIGHT_ALL = "docs-find";
+  const HIGHLIGHT_ONE = "docs-find-on";
+  const MAX_MATCHES = 5000;
+
+  let searchOpen = false;
+  let searchCase = false;
+  let searchWord = false;
+  let searchRegex = false;
+  let matches = [];
+  let matchIndex = -1;
+
+  function openSearch() {
+    if (!article) {
+      return;
+    }
+    searchOpen = true;
+    searchEl.hidden = false;
+    findEl.classList.add("active");
+    searchTextEl.focus();
+    searchTextEl.select();
+    runSearch();
   }
 
+  function closeSearch() {
+    searchOpen = false;
+    searchEl.hidden = true;
+    findEl.classList.remove("active");
+    clearMatches();
+  }
+
+  function clearMatches() {
+    matches = [];
+    matchIndex = -1;
+    if (window.CSS && CSS.highlights) {
+      CSS.highlights.delete(HIGHLIGHT_ALL);
+      CSS.highlights.delete(HIGHLIGHT_ONE);
+    }
+  }
+
+  // The page is searched as one long run of text, so a phrase that crosses a bold or a
+  // link is still found; each hit is mapped back onto the nodes it actually covers.
+  function runSearch() {
+    clearMatches();
+    const pattern = searchPattern();
+    if (article && pattern) {
+      const nodes = [];
+      let text = "";
+      const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        nodes.push({ node: node, from: text.length });
+        text += node.nodeValue;
+      }
+      for (const hit of text.matchAll(pattern)) {
+        if (hit[0]) {
+          matches.push(spanRange(nodes, hit.index, hit.index + hit[0].length));
+        }
+        if (matches.length >= MAX_MATCHES) {
+          break;
+        }
+      }
+    }
+    if (matches.length) {
+      matchIndex = 0;
+      reveal(matches[0]);
+    }
+    paint();
+    showCount();
+  }
+
+  // A regular expression the reader wrote is used as it stands; anything else is matched
+  // letter for letter.
+  function searchPattern() {
+    const term = searchTextEl.value;
+    searchTextEl.classList.remove("bad");
+    if (!term) {
+      return null;
+    }
+    const body = searchRegex ? term : term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const source = searchWord ? "\\b(?:" + body + ")\\b" : body;
+    try {
+      return new RegExp(source, searchCase ? "g" : "gi");
+    } catch {
+      searchTextEl.classList.add("bad");
+      return null;
+    }
+  }
+
+  function spanRange(nodes, from, to) {
+    const start = locate(nodes, from);
+    const end = locate(nodes, to);
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    return range;
+  }
+
+  // The nodes are in order and there can be thousands of them, so the one holding an index
+  // is halved down to rather than walked to.
+  function locate(nodes, index) {
+    let low = 0;
+    let high = nodes.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (nodes[mid].from <= index) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return { node: nodes[low].node, offset: Math.min(index - nodes[low].from, nodes[low].node.length) };
+  }
+
+  // Highlights are painted over the text rather than wrapped around it, so the document
+  // keeps the shape the contents list, the anchors and the scroll were measured against.
+  function paint() {
+    if (!window.CSS || !CSS.highlights || !window.Highlight) {
+      return;
+    }
+    CSS.highlights.set(HIGHLIGHT_ALL, new Highlight(...matches));
+    const one = matches[matchIndex];
+    if (one) {
+      CSS.highlights.set(HIGHLIGHT_ONE, new Highlight(one));
+    } else {
+      CSS.highlights.delete(HIGHLIGHT_ONE);
+    }
+  }
+
+  function showCount() {
+    searchCountEl.textContent = !searchTextEl.value
+      ? ""
+      : matches.length
+        ? matchIndex + 1 + "/" + matches.length
+        : "no results";
+  }
+
+  function step(delta) {
+    if (!matches.length) {
+      return;
+    }
+    matchIndex = (matchIndex + delta + matches.length) % matches.length;
+    reveal(matches[matchIndex]);
+    paint();
+    showCount();
+  }
+
+  // Scrolled by hand so only the reading pane moves, and the hit lands a third of the way
+  // down the pane instead of hard against its top edge.
+  function reveal(range) {
+    const rect = range.getBoundingClientRect();
+    const view = bodyEl.getBoundingClientRect();
+    if (rect.height) {
+      bodyEl.scrollTop += rect.top - view.top - view.height / 3;
+    }
+  }
+
+  function toggleOption(el, value) {
+    el.classList.toggle("active", value);
+    runSearch();
+    return value;
+  }
+
+  findEl.addEventListener("click", () => (searchOpen ? closeSearch() : openSearch()));
+  searchCloseEl.addEventListener("click", closeSearch);
+  searchPrevEl.addEventListener("click", () => step(-1));
+  searchNextEl.addEventListener("click", () => step(1));
+  searchTextEl.addEventListener("input", runSearch);
+  searchCaseEl.addEventListener("click", () => {
+    searchCase = toggleOption(searchCaseEl, !searchCase);
+  });
+  searchWordEl.addEventListener("click", () => {
+    searchWord = toggleOption(searchWordEl, !searchWord);
+  });
+  searchRegexEl.addEventListener("click", () => {
+    searchRegex = toggleOption(searchRegexEl, !searchRegex);
+  });
+
+  searchTextEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      step(event.shiftKey ? -1 : 1);
+    }
+  });
+
+  // Every hit points at text that a redraw has just thrown away, so the search is dropped
+  // and then run again over whatever the pane now holds.
   function draw() {
+    clearMatches();
+    drawPane();
+    if (!searchOpen) {
+      return;
+    }
+    if (article) {
+      runSearch();
+    } else {
+      closeSearch();
+    }
+  }
+
+  function drawPane() {
     bodyEl.textContent = "";
     tocEl.textContent = "";
     tocEl.hidden = true;
@@ -1160,8 +1524,8 @@
     toggleEl.hidden = !editable(current);
     toggleEl.classList.toggle("editing", mode === "edit");
     toggleEl.title = mode === "edit" ? "Preview" : "Edit";
-    markDirty(drafts.has(current.path));
     applyView();
+    drawLog();
 
     if (mode === "edit") {
       drawEditor();
@@ -1208,6 +1572,7 @@
     createdEl.title = created ? "Created " + created : "";
     modifiedEl.textContent = modified;
     modifiedEl.title = modified ? "Updated " + modified : "";
+    drawTimes();
     modifiedEl.classList.remove("flash");
     if (flashModified && modified) {
       void modifiedEl.offsetWidth; // restart the animation on a second update
@@ -1215,6 +1580,25 @@
     }
     flashModified = false;
   }
+
+  // One clock for the whole panel: the header's distance, and the log rows on screen. The
+  // rows the log is not showing are not in the page at all, so none of them is counted.
+  function drawTimes(root) {
+    const ago = current ? formatAgo(current.modified) : "";
+    agoEl.textContent = ago;
+    agoEl.title = ago ? "Updated " + formatStamp(current.modified) : "";
+    const log = root || document.getElementById("log");
+    if (!log) {
+      return;
+    }
+    for (const when of log.querySelectorAll(".log-when")) {
+      const at = Number(when.dataset.at);
+      when.textContent = formatAgo(at);
+      when.title = formatStamp(at);
+    }
+  }
+
+  setInterval(() => drawTimes(), AGO_MS);
 
   // The heading the reader is on is the anchor: after a redraw the same heading is put
   // back the same distance down the pane, so the page does not jump.
@@ -1243,21 +1627,90 @@
     scheduleActive();
   }
 
+  // The log sits above the file it belongs to, so anything added to it pushes the reading
+  // line down. Whatever the growth was is given back to the scroll, and the words the eye
+  // is on stay where they are.
+  function drawLog() {
+    const old = document.getElementById("log");
+    const before = old ? old.offsetHeight : 0;
+    if (old) {
+      old.remove();
+    }
+    const log = current ? buildLog(mentions[current.path]) : null;
+    if (log) {
+      bodyEl.insertBefore(log, bodyEl.firstChild);
+    }
+    const after = log ? log.offsetHeight : 0;
+    if (bodyEl.scrollTop > 0 && after !== before) {
+      bodyEl.scrollTop += after - before;
+    }
+  }
+
+  const LOG_SHOWN = 5;
+
+  function buildLog(items) {
+    if (!items || !items.length) {
+      return null;
+    }
+    const log = document.createElement("div");
+    log.id = "log";
+    log.className = "log";
+
+    // What was said last is what the reader came for, so the log runs backwards, and the
+    // older lines wait behind one button rather than pushing the file down the pane.
+    const rows = items.slice().reverse();
+    for (const item of logOpen ? rows : rows.slice(0, LOG_SHOWN)) {
+      const row = document.createElement("div");
+      row.className = "log-row " + (item.role === "user" ? "log-you" : "log-them");
+
+      const when = document.createElement("span");
+      when.className = "log-when";
+      when.dataset.at = String(Date.parse(item.at) || 0);
+      row.appendChild(when);
+
+      const said = document.createElement("span");
+      said.className = "log-said";
+      said.textContent = item.excerpt;
+      said.title = item.excerpt;
+      row.appendChild(said);
+
+      log.appendChild(row);
+    }
+
+    if (rows.length > LOG_SHOWN) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "log-more";
+      more.textContent = logOpen ? "Show fewer" : "Show " + (rows.length - LOG_SHOWN) + " more";
+      more.addEventListener("click", () => {
+        logOpen = !logOpen;
+        drawLog();
+      });
+      log.appendChild(more);
+    }
+    drawTimes(log);
+    return log;
+  }
+
   function drawEditor() {
     const area = document.createElement("textarea");
     area.spellcheck = false;
     area.value = drafts.has(current.path) ? drafts.get(current.path) : current.text;
     bodyEl.appendChild(area);
     fitEditor(area);
-    markDirty(area.value !== current.text);
+    // The italic name is all a keystroke can change in the tree, so the tree is only
+    // rebuilt on the stroke that turns the draft on or off.
     area.addEventListener("input", () => {
       fitEditor(area);
       const dirty = area.value !== current.text;
-      markDirty(dirty);
+      const was = drafts.has(current.path);
       if (dirty) {
         drafts.set(current.path, area.value);
       } else {
         drafts.delete(current.path);
+      }
+      if (dirty !== was) {
+        drawTree();
       }
     });
     area.focus();
@@ -1312,6 +1765,7 @@
   // listed too: a paragraph, or a list item, which is the same habit written as a list.
   function tocEntries() {
     const found = [];
+    const bold = [];
     let level = 1;
     for (const el of article.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li")) {
       if (/^H[1-6]$/.test(el.tagName)) {
@@ -1323,22 +1777,72 @@
       if (el.tagName === "P" && el.parentElement !== article) {
         continue;
       }
-      const text = leadBold(el);
-      if (text) {
-        found.push({ el: el, level: Math.min(level + 1 + listDepth(el), 6), text: text });
+      const lead = leadBold(el);
+      if (lead) {
+        const entry = {
+          el: el,
+          level: Math.min(level + 1 + listDepth(el), 6),
+          text: lead.text,
+          tail: lead.tail
+        };
+        found.push(entry);
+        bold.push(entry);
       }
     }
+    // One bold block on its own is an emphasis, not a habit of writing headings.
+    if (bold.length < 2) {
+      return found.filter((entry) => entry.tail === undefined);
+    }
+    widenDuplicates(bold);
     return found;
   }
 
-  // The bold run a block opens with, if that is how it opens. A loose list item wraps its
-  // text in a paragraph first, so one step inward is allowed before giving up.
+  // The same bold opening on several blocks names none of them, so every one of those
+  // takes the words after it as well and they tell each other apart again.
+  function widenDuplicates(entries) {
+    const groups = new Map();
+    for (const entry of entries) {
+      const group = groups.get(entry.text) || [];
+      group.push(entry);
+      groups.set(entry.text, group);
+    }
+    for (const group of groups.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+      for (const entry of group) {
+        if (entry.tail) {
+          entry.text += " " + entry.tail;
+        }
+      }
+    }
+  }
+
+  // A name runs on through letters, digits, spaces and commas, and stops at the first
+  // mark that ends a phrase.
+  const NAME_TAIL = /^[\p{L}\p{N} ,]*/u;
+
+  // The bold run a block opens with, if that is how it opens, and the plain text after it.
+  // A loose list item wraps its text in a paragraph first, so one step inward is allowed
+  // before giving up.
   function leadBold(el) {
     let node = firstNode(el);
     if (node && node.nodeName === "P") {
       node = firstNode(node);
     }
-    return node && node.nodeName === "STRONG" ? node.textContent.trim() : "";
+    if (!node || node.nodeName !== "STRONG") {
+      return null;
+    }
+    const text = node.textContent.trim();
+    if (!text) {
+      return null;
+    }
+    let rest = "";
+    for (let next = node.nextSibling; next; next = next.nextSibling) {
+      rest += next.textContent;
+    }
+    const tail = NAME_TAIL.exec(rest)[0].replace(/\s+/g, " ").replace(/^[\s,]+|[\s,]+$/g, "");
+    return { text: text, tail: tail };
   }
 
   function firstNode(el) {
