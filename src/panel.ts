@@ -1126,7 +1126,7 @@ export class DocsPanel {
       <button id="searchNext" class="icon" type="button" title="Next (PageDown)"><span class="glyph">&#8595;</span></button>
       <button id="searchClose" class="icon" type="button" title="Close (Escape)"><span class="glyph">&#10005;</span></button>
     </div>
-    <div id="body"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
+    <div id="body" tabindex="-1"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
     <div id="finder" hidden>
       <div id="finderBar">
         <input id="finderText" type="text" placeholder="Search all docs: names, folders and text" spellcheck="false">

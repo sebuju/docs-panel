@@ -257,6 +257,12 @@ body.dragging-rows {
   color: var(--vscode-list-activeSelectionForeground);
 }
 
+/* The row the keys are on, shown while the tree has the focus. */
+#tree:focus .row.cursor {
+  outline: 1px solid var(--vscode-list-focusOutline, var(--vscode-focusBorder));
+  outline-offset: -1px;
+}
+
 /* The name gives way in step with the pills after it, and never all the way. */
 .row .label {
   flex: 1 1 auto;
@@ -774,6 +780,11 @@ body.dragging {
   to { background: transparent; }
 }
 
+/* The keys can bring the focus to the page; the lit block is what shows it. */
+#body:focus {
+  outline: none;
+}
+
 /* The block under the pointer, or the one the arrow keys are on. The light is an image
    over the block's own background, so a code block keeps its colour beneath it, and a
    shadow carries it a little past the text without moving anything. */
@@ -1036,7 +1047,8 @@ img.single {
   cursor: pointer;
 }
 
-#menu button:hover {
+/* Lit by the pointer or by the arrow keys, one entry at a time. */
+#menu button.on {
   background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
 }
 

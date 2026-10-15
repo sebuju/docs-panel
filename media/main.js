@@ -97,6 +97,10 @@
   let nodes = [];
   let expanded = new Set();
   let selected = null;
+  // The row the keys are on in the tree: a file, a folder or a bin. On a file it is the
+  // file that is open; it is kept apart from that because a folder can hold it too.
+  let cursor = null;
+  let cursorIndex = 0;
   let split = 240;
   let sideSplit = 0.5;
   let textScale = 1;
@@ -362,6 +366,7 @@
     list.appendChild(trashItem(""));
     treeEl.appendChild(list);
     treeEl.scrollTop = top;
+    markCursor(document.activeElement === treeEl ? cursorRow() : null);
     if (autoSize === "tree") {
       fitSide();
     }
@@ -402,6 +407,7 @@
     row.className = "row bin";
     row.dataset.path = at ? TRASH_PREFIX + at : ".trash";
     row.dataset.dir = "1";
+    row.dataset.open = trashOpen.has(at) ? "1" : "";
 
     const twisty = document.createElement("span");
     twisty.className = "twisty";
@@ -464,6 +470,7 @@
       row.className = "row";
       row.dataset.path = node.path;
       row.dataset.dir = node.dir ? "1" : "";
+      row.dataset.open = node.dir && expanded.has(node.path) ? "1" : "";
       row.draggable = true;
 
       // A file has no twisty, so the dot takes that slot and costs the row no width.
@@ -602,6 +609,7 @@
     if (finderOpen) {
       closeFinder(true);
     }
+    cursor = path;
     if (path === selected) {
       return;
     }
@@ -666,14 +674,68 @@
         button.appendChild(swatch);
       }
       button.appendChild(document.createTextNode(item.label));
-      button.addEventListener("click", () => {
-        closeMenu();
-        item.run();
-      });
+      button.addEventListener("click", () => runMenuItem(item));
+      button.addEventListener("pointerenter", () => lightMenuItem(button.disabled ? null : button));
       menuEl.appendChild(button);
     }
     menuEl.hidden = false;
+    menuOn = null;
     place(menuEl, x, y);
+    if (menuKeys) {
+      stepMenu(1);
+    }
+  }
+
+  // The menu is walked with a light, not with the focus, so whatever opened it keeps the
+  // focus throughout and has it still when the menu is closed again.
+  let menuOn = null;
+  // Where the focus goes once a menu opened from the keyboard is done with, and whether
+  // the menu being opened now is one of those, so it comes up with its first entry lit.
+  let menuReturn = null;
+  let pickerReturn = null;
+  let menuKeys = false;
+
+  function lightMenuItem(button) {
+    if (menuOn) {
+      menuOn.classList.remove("on");
+    }
+    menuOn = button;
+    if (menuOn) {
+      menuOn.classList.add("on");
+    }
+  }
+
+  function stepMenu(delta) {
+    const buttons = [...menuEl.querySelectorAll("button")].filter((button) => !button.disabled);
+    if (!buttons.length) {
+      return;
+    }
+    const index = buttons.indexOf(menuOn);
+    lightMenuItem(
+      index < 0
+        ? buttons[delta > 0 ? 0 : buttons.length - 1]
+        : buttons[(index + delta + buttons.length) % buttons.length]
+    );
+  }
+
+  // An entry that leads on to another menu or to the tag picker hands the way back along,
+  // so the focus returns only when the whole errand is over.
+  function runMenuItem(item) {
+    const back = menuReturn;
+    closeMenu();
+    menuKeys = !!back;
+    item.run();
+    menuKeys = false;
+    if (!back) {
+      return;
+    }
+    if (!menuEl.hidden) {
+      menuReturn = back;
+    } else if (!tagPickerEl.hidden) {
+      pickerReturn = back;
+    } else {
+      back.focus({ preventScroll: true });
+    }
   }
 
   // A floating box opens at the point asked for, pulled back inside the window.
@@ -709,9 +771,16 @@
     vscode.postMessage({ type: "color", path: node.path, dir: !!node.dir, color: color });
   }
 
-  function closeMenu() {
+  // It is also a listener, so only a plain true sends the focus back.
+  function closeMenu(refocus) {
     menuEl.hidden = true;
     menuEl.textContent = "";
+    menuOn = null;
+    const back = menuReturn;
+    menuReturn = null;
+    if (refocus === true && back) {
+      back.focus({ preventScroll: true });
+    }
   }
 
   function nodeMenu(node, x, y) {
@@ -939,6 +1008,34 @@
     }
   }
 
+  // The block lit when the keys left for the tree, so coming back carries on from it.
+  let blockLeft = null;
+
+  // Coming in from the tree lights the first block, or the one the keys were on when
+  // they last left this page.
+  function enterText() {
+    const blocks = readableBlocks();
+    const block = blocks.includes(blockLeft) ? blockLeft : blocks[0];
+    blockLeft = null;
+    bodyEl.focus({ preventScroll: true });
+    if (block) {
+      lightBlock(block, true);
+      keepInView(block);
+    }
+  }
+
+  // Only a page being read gives the focus back, not one being edited, and only while the
+  // focus is on the page itself rather than in a box laid over it.
+  function leaveText(target) {
+    if (!readingMarkdown() || !(target === document.body || bodyEl.contains(target))) {
+      return false;
+    }
+    blockLeft = blockByKey ? blockOn : null;
+    lightBlock(null);
+    treeEl.focus({ preventScroll: true });
+    return true;
+  }
+
   // While the find in the page has hits the arrows step through them, wherever the focus
   // is; otherwise they walk the blocks, unless something else is taking the typing.
   function arrowKey(delta, target) {
@@ -1092,6 +1189,159 @@
     event.preventDefault();
     openMenu(event.clientX, event.clientY, makeItems(""));
   });
+
+  // The rows on screen, top to bottom, which is the order the keys walk them in.
+  function treeRows() {
+    return [...treeEl.querySelectorAll(".row")];
+  }
+
+  // The keys start on the open file. A row they were on that has gone, trashed or folded
+  // away, leaves them on whatever row now stands where it stood.
+  function cursorRow(rows) {
+    rows = rows || treeRows();
+    const own = (path) => rows.find((row) => row.dataset.path === path);
+    return (
+      (cursor !== null && own(cursor)) ||
+      (cursor === null && own(selected)) ||
+      rows[Math.min(cursorIndex, rows.length - 1)] ||
+      null
+    );
+  }
+
+  function markCursor(row) {
+    if (row) {
+      cursor = row.dataset.path;
+    }
+    for (const el of treeEl.querySelectorAll(".row.cursor")) {
+      el.classList.remove("cursor");
+    }
+    const rows = treeRows();
+    const index = rows.findIndex((el) => el.dataset.path === cursor);
+    if (index >= 0) {
+      rows[index].classList.add("cursor");
+      cursorIndex = index;
+    }
+  }
+
+  const OPEN_DELAY_MS = 150;
+  let openTimer = 0;
+  // A file the keys asked to step into before it had arrived; it is stepped into when it does.
+  let pendingEnter = null;
+
+  // A file the keys land on opens, as a click would; held down, the key runs past the
+  // files on the way without opening each of them.
+  function moveCursor(row) {
+    clearTimeout(openTimer);
+    pendingEnter = null;
+    markCursor(row);
+    const rect = row.getBoundingClientRect();
+    const view = treeEl.getBoundingClientRect();
+    if (rect.top < view.top) {
+      treeEl.scrollTop += rect.top - view.top;
+    } else if (rect.bottom > view.bottom) {
+      treeEl.scrollTop += rect.bottom - view.bottom;
+    }
+    if (!row.dataset.dir) {
+      const path = row.dataset.path;
+      openTimer = setTimeout(() => openFile(path), OPEN_DELAY_MS);
+    }
+  }
+
+  function parentRow(row) {
+    const li = row.parentElement.parentElement.parentElement;
+    return li && li.tagName === "LI" ? li.querySelector(":scope > .row") : null;
+  }
+
+  function enterFile(path) {
+    clearTimeout(openTimer);
+    if (current && current.path === path) {
+      if (readingMarkdown()) {
+        enterText();
+      }
+      return;
+    }
+    pendingEnter = path;
+    openFile(path);
+  }
+
+  // The row's own right click, so a menu opened from the keys is the very same menu.
+  function openRowMenu(row) {
+    const anchor = row ? row.querySelector(".label") || row : treeEl;
+    const box = anchor.getBoundingClientRect();
+    menuReturn = treeEl;
+    menuKeys = true;
+    (row || treeEl).dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: box.left,
+        clientY: row ? box.bottom : box.top
+      })
+    );
+    menuKeys = false;
+    if (menuEl.hidden) {
+      menuReturn = null;
+    }
+  }
+
+  // Up and Down walk the rows. Right opens a folder, then goes into it; on a Markdown file
+  // it goes into the page. Left closes a folder, then goes up to the one holding it.
+  // Space opens the row's menu.
+  function treeKey(key) {
+    const rows = treeRows();
+    const row = cursorRow(rows);
+    if (key === " ") {
+      openRowMenu(row);
+      return true;
+    }
+    if (!row) {
+      return false;
+    }
+    const index = rows.indexOf(row);
+    if (key === "ArrowDown" || key === "ArrowUp") {
+      const next = index + (key === "ArrowDown" ? 1 : -1);
+      moveCursor(rows[Math.min(Math.max(next, 0), rows.length - 1)]);
+      return true;
+    }
+    if (key === "ArrowRight") {
+      if (!row.dataset.dir) {
+        markCursor(row);
+        enterFile(row.dataset.path);
+      } else if (!row.dataset.open) {
+        markCursor(row);
+        row.click();
+      } else {
+        const child = row.parentElement.querySelector(":scope > ul .row");
+        if (child) {
+          moveCursor(child);
+        }
+      }
+      return true;
+    }
+    if (key === "ArrowLeft") {
+      if (row.dataset.dir && row.dataset.open) {
+        markCursor(row);
+        row.click();
+      } else {
+        const parent = parentRow(row);
+        if (parent) {
+          moveCursor(parent);
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // A click puts the keys on the row clicked, so they carry on from there.
+  treeEl.addEventListener("pointerdown", (event) => {
+    const row = event.target.closest(".row");
+    if (row) {
+      markCursor(row);
+    }
+  });
+
+  treeEl.addEventListener("focus", () => markCursor(cursorRow()));
 
   // A drop lands in a folder, and the tree's own background is the docs root. A file row
   // stands for the folder holding it, so the whole list is a target and nothing is dead.
@@ -1385,8 +1635,24 @@
     const key = event.key.toLowerCase();
     if (!menuEl.hidden && event.key === "Escape") {
       event.preventDefault();
-      closeMenu();
+      closeMenu(true);
       return;
+    }
+    // A box being typed in keeps its keys, as the tag picker's does under a colour menu
+    // opened from it.
+    if (!menuEl.hidden && !event.target.closest("input, textarea")) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        stepMenu(event.key === "ArrowDown" ? 1 : -1);
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        if (event.key === "Enter" && menuOn) {
+          menuOn.click();
+        }
+        return;
+      }
     }
     if (ctrl && key === "f") {
       event.preventDefault();
@@ -1439,8 +1705,17 @@
       closeSearch();
       return;
     }
+    const plain = !ctrl && !event.altKey && !event.shiftKey;
+    if (plain && lightboxEl.hidden && menuEl.hidden && event.target === treeEl && treeKey(event.key)) {
+      event.preventDefault();
+      return;
+    }
+    if (plain && lightboxEl.hidden && menuEl.hidden && event.key === "ArrowLeft" && leaveText(event.target)) {
+      event.preventDefault();
+      return;
+    }
     const arrow = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
-    if (arrow && !ctrl && !event.altKey && !event.shiftKey) {
+    if (arrow && plain) {
       if (arrowKey(arrow, event.target)) {
         event.preventDefault();
       }
@@ -1656,6 +1931,7 @@
       }
     } else if (message.type === "select") {
       selected = message.path;
+      cursor = message.path;
       drawTree();
       persist();
     } else if (message.type === "content") {
@@ -1685,6 +1961,12 @@
       if (pendingFind && pendingFind.path === message.path) {
         applyPendingFind();
       }
+      if (pendingEnter === message.path) {
+        pendingEnter = null;
+        if (readingMarkdown() && document.activeElement === treeEl) {
+          enterText();
+        }
+      }
     } else if (message.type === "state") {
       applyState(message);
       setSplit(split);
@@ -1703,6 +1985,9 @@
         drafts.delete(message.from);
       }
       selected = message.to;
+      if (cursor === message.from) {
+        cursor = message.to;
+      }
       if (current) {
         current.path = message.to;
       }
@@ -1968,6 +2253,7 @@
     article = null;
     blockOn = null;
     blockByKey = false;
+    blockLeft = null;
 
     if (!current) {
       headerEl.hidden = true;
@@ -2456,6 +2742,11 @@
     tagPickerEl.hidden = true;
     pickerPath = null;
     tagListEl.textContent = "";
+    const back = pickerReturn;
+    pickerReturn = null;
+    if (back) {
+      back.focus({ preventScroll: true });
+    }
   }
 
   // Every tag there is, narrowed to what has been typed; a name no tag has yet is offered

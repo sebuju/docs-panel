@@ -38,6 +38,20 @@ Then run **Docs Panel: Open** from the command palette.
 | Move the divider | Drag it; the position is remembered |
 | Size a list to fit | Right click the divider between the files and the contents: auto size the files, the contents, or neither |
 
+## Keys in the tree
+
+With the tree focused (click it, or `Tab` to it):
+
+| Key | Does |
+|---|---|
+| `Up` / `Down` | Move to the previous or next row; a file you stop on opens |
+| `Right` | On a closed folder, open it; on an open one, go to its first entry; on a Markdown file, go into the page at its first block |
+| `Left` | On an open folder, close it; otherwise go up to the folder holding the row |
+| `Space` | Open the row's menu: `Up` / `Down` pick, `Enter` runs, `Escape` closes; the focus comes back to the tree either way |
+
+In a Markdown page being read (not edited), `Left` goes back to the tree at the row you
+left, and `Right` from there comes back to the block you were on.
+
 ## Search all docs
 
 The search looks at the names of files and folders and at the text of every file, and
