@@ -1,0 +1,66 @@
+# Publishes a release for the version in package.json the first time that version
+# reaches master: the .vsix is built, the tag is made at that commit, and the notes are
+# read from .github/releases/v<version>.md, or written by GitHub when there is none.
+# A version that already has a release is left alone, so every other push is a no-op.
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "v$version is already released."
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.version.outputs.released == 'false'
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build the package
+        if: steps.version.outputs.released == 'false'
+        run: |
+          npm ci
+          npm run typecheck
+          npm run package
+
+      - name: Publish the release
+        if: steps.version.outputs.released == 'false'
+        run: |
+          tag=${{ steps.version.outputs.tag }}
+          notes=.github/releases/$tag.md
+          if [ -f "$notes" ]; then
+            set -- --notes-file "$notes"
+          else
+            set -- --generate-notes
+          fi
+          gh release create "$tag" "docs-panel-${{ steps.version.outputs.version }}.vsix" \
+            --target "$GITHUB_SHA" \
+            --title "Docs Panel ${{ steps.version.outputs.version }}" \
+            "$@"

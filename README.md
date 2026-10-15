@@ -70,6 +70,13 @@ carries a content hash: a file moved outside the panel keeps its tags and colour
 ambiguous match is dropped rather than guessed, and a trashed file keeps its entry until
 it is deleted for good.
 
+## Releasing
+
+Raise the version in `package.json` (`npm version <x.y.z> --no-git-tag-version`), write
+the notes to `.github/releases/v<x.y.z>.md`, and merge to `master`. The release workflow
+builds the `.vsix`, tags the commit, and publishes the release with the notes; without a
+notes file GitHub writes them from the commits.
+
 ## Limits
 
 - Markdown is rendered by VS Code's built-in renderer. Extensions that add drawing to the
