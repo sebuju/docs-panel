@@ -11,7 +11,6 @@
   const renameEl = document.getElementById("rename");
   const trashEl = document.getElementById("trash");
   const restoreEl = document.getElementById("restore");
-  const statusEl = document.getElementById("status");
   const headerEl = document.getElementById("header");
   const titleEl = document.getElementById("title");
   const createdEl = document.getElementById("created");
@@ -119,7 +118,6 @@
   let panX = 0;
   let panY = 0;
   const drafts = new Map();
-  let statuses = {};
   let tags = {};
   let colors = {};
   let tagColors = {};
@@ -457,17 +455,13 @@
       if (!node.dir && drafts.has(node.path)) {
         row.classList.add("unsaved");
       }
-      if (!node.dir && statuses[node.path]) {
-        const badge = document.createElement("span");
-        badge.className = "status status-" + statuses[node.path].replace(/ /g, "-");
-        badge.textContent = statuses[node.path];
-        badge.title = statuses[node.path];
-        row.appendChild(badge);
-      }
-      if (!node.dir) {
-        for (const tag of tags[node.path] || []) {
-          row.appendChild(tagPill(tag));
+      if (!node.dir && (tags[node.path] || []).length) {
+        const box = document.createElement("span");
+        box.className = "tags";
+        for (const tag of tags[node.path]) {
+          box.appendChild(tagPill(tag));
         }
+        row.appendChild(box);
       }
 
       row.addEventListener("click", () => {
@@ -534,10 +528,10 @@
     return [...up, ...items.filter((node) => !pinned.has(node.path))];
   }
 
-  // A tag is drawn the way a status is, in the colour it was given.
+  // A tag is drawn as a pill in the colour it was given.
   function tagPill(name) {
     const pill = document.createElement("span");
-    pill.className = "status tag c-" + tagColor(name);
+    pill.className = "tag c-" + tagColor(name);
     pill.textContent = name;
     pill.title = name;
     return pill;
@@ -1146,19 +1140,6 @@
     bodyEl.scrollTop = range > 0 ? Math.round(ratio * range) : 0;
   }
 
-  statusEl.addEventListener("change", () => {
-    showStatus(statusEl.value);
-    if (current) {
-      vscode.postMessage({ type: "status", path: current.path, status: statusEl.value });
-    }
-  });
-
-  // The pill colour follows the value, so the class list is the single place it is named.
-  function showStatus(value) {
-    statusEl.value = value || "";
-    statusEl.className = "pill-" + (value || "none").replace(/ /g, "-");
-  }
-
   titleEl.addEventListener("click", () => {
     if (current) {
       copyPath(current.path, true);
@@ -1525,15 +1506,11 @@
       mode = "preview";
       draw();
       persist();
-    } else if (message.type === "statuses") {
-      statuses = message.statuses || {};
+    } else if (message.type === "marks") {
       tags = message.tags || {};
       colors = message.colors || {};
       tagColors = message.tagColors || {};
       drawTree();
-      if (current) {
-        showStatus(statuses[current.path]);
-      }
       drawHeaderTags();
       drawTagPicker();
       drawOptions();
@@ -1789,7 +1766,6 @@
     titleEl.textContent = current.path.split("/").pop();
     titleEl.title = "Copy the path (" + fullPath(current.path) + ")";
     drawStamps();
-    showStatus(statuses[current.path]);
     drawHeaderTags();
     toggleEl.hidden = !editable(current);
     toggleEl.classList.toggle("editing", mode === "edit");
@@ -2219,7 +2195,7 @@
     }
   }
 
-  // The file's tags sit after its status, and any of them opens the picker.
+  // The file's tags close the file bar, and any of them opens the picker.
   function drawHeaderTags() {
     headerTagsEl.textContent = "";
     if (!current) {

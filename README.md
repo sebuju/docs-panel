@@ -25,7 +25,6 @@ Then run **Docs Panel: Open** from the command palette.
 | Jump to a heading | Click it in the contents list on the right |
 | Zoom a picture | Click it; scroll to zoom, drag to pan, `0` to fit, `Escape` to close |
 | Edit a file | Pen button in the file bar, then `Ctrl+S` |
-| Set a status | The pill in the file bar: planned, in progress, done, stale |
 | Tag a file | `+` in the file bar, or **Tags…** in the tree's menu; type to find or add a tag |
 | Colour a file or folder | **Colour…** in the tree's menu |
 | Pin a file or folder | **Pin to top** in the tree's menu |
@@ -63,12 +62,13 @@ files the panel writes, each with its size and a button to purge it.
 The setting has resource scope, so a project can override it in its own
 `.vscode/settings.json`.
 
-## Statuses, tags and colours
+## Tags and colours
 
-Statuses, tags and colours are stored in `<docs folder>/.docs-panel.json`, so they travel
-with the documents. The colours are the theme's own, so they follow the theme in use. Each entry carries a content hash: a file moved outside the panel keeps its
-status, an ambiguous match is dropped rather than guessed, and a trashed file keeps its
-entry until it is deleted for good.
+Tags and colours are stored in `<docs folder>/.docs-panel.json`, so they travel with the
+documents. The colours are the theme's own, so they follow the theme in use. Each entry
+carries a content hash: a file moved outside the panel keeps its tags and colour, an
+ambiguous match is dropped rather than guessed, and a trashed file keeps its entry until
+it is deleted for good.
 
 ## Limits
 

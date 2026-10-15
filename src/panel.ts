@@ -18,12 +18,10 @@ import {
   setStatus,
   setTagColor,
   setTags,
-  statusLedger,
+  marksLedger,
   Ledger,
   LedgerSpec,
-  Status,
-  READ,
-  STATUSES
+  READ
 } from "./ledger";
 import { cacheUri, match, refresh, sessionsDir } from "./mentions";
 import { openInBrowser } from "./browser";
@@ -207,7 +205,7 @@ export class DocsPanel {
   }
 
   private get ledgers(): LedgerSpec[] {
-    return this.root ? [statusLedger(this.root.uri), readsLedger(this.root.workspace, this.root.uri)] : [];
+    return this.root ? [marksLedger(this.root.uri), readsLedger(this.root.workspace, this.root.uri)] : [];
   }
 
   private resourceRoots(): vscode.Uri[] {
@@ -343,9 +341,6 @@ export class DocsPanel {
       case "reveal":
         await this.reveal(String(message.path));
         return;
-      case "status":
-        await this.status(String(message.path), message.status);
-        return;
       case "tags":
         await this.tags(String(message.path), message.tags);
         return;
@@ -379,19 +374,11 @@ export class DocsPanel {
     }
   }
 
-  private async status(relPath: string, value: unknown): Promise<void> {
-    if (!this.root) {
-      return;
-    }
-    const status = STATUSES.includes(value as Status) ? (value as Status) : null;
-    this.postStatuses(await setStatus(statusLedger(this.root.uri), relPath, status));
-  }
-
   private async tags(relPath: string, value: unknown): Promise<void> {
     if (!this.root || !Array.isArray(value)) {
       return;
     }
-    this.postStatuses(await setTags(statusLedger(this.root.uri), relPath, value));
+    this.postMarks(await setTags(marksLedger(this.root.uri), relPath, value));
   }
 
   private async color(relPath: string, value: unknown, dir: boolean): Promise<void> {
@@ -399,14 +386,14 @@ export class DocsPanel {
       return;
     }
     const color = isColor(value) ? value : null;
-    this.postStatuses(await setColor(statusLedger(this.root.uri), relPath, color, dir));
+    this.postMarks(await setColor(marksLedger(this.root.uri), relPath, color, dir));
   }
 
   private async tagColor(name: string, value: unknown): Promise<void> {
     if (!this.root || !isColor(value)) {
       return;
     }
-    this.postStatuses(await setTagColor(statusLedger(this.root.uri), name, value));
+    this.postMarks(await setTagColor(marksLedger(this.root.uri), name, value));
   }
 
   private async renameTag(name: string): Promise<void> {
@@ -421,14 +408,14 @@ export class DocsPanel {
     if (next === undefined || cleanTag(next) === name) {
       return;
     }
-    this.postStatuses(await renameTag(statusLedger(this.root.uri), name, next));
+    this.postMarks(await renameTag(marksLedger(this.root.uri), name, next));
   }
 
   private async deleteTag(name: string): Promise<void> {
     if (!this.root) {
       return;
     }
-    const spec = statusLedger(this.root.uri);
+    const spec = marksLedger(this.root.uri);
     const used = Object.values((await load(spec)).files).filter((entry) =>
       entry.tags.includes(name)
     ).length;
@@ -442,19 +429,15 @@ export class DocsPanel {
         return;
       }
     }
-    this.postStatuses(await deleteTag(spec, name));
+    this.postMarks(await deleteTag(spec, name));
   }
 
-  // One message carries everything the status ledger holds, since the tree draws it all
-  // at once: a file's status, tags and colour, a folder's colour, and each tag's colour.
-  private postStatuses(ledger: Ledger): void {
-    const statuses: Record<string, string> = {};
+  // One message carries everything the marks ledger holds, since the tree draws it all
+  // at once: a file's tags and colour, a folder's colour, and each tag's colour.
+  private postMarks(ledger: Ledger): void {
     const tags: Record<string, string[]> = {};
     const colors: Record<string, string> = {};
     for (const [path, entry] of Object.entries(ledger.files)) {
-      if (entry.status) {
-        statuses[path] = entry.status;
-      }
       if (entry.tags.length) {
         tags[path] = entry.tags;
       }
@@ -469,7 +452,7 @@ export class DocsPanel {
     for (const [name, mark] of Object.entries(ledger.tags)) {
       tagColors[name] = mark.color;
     }
-    this.post({ type: "statuses", statuses, tags, colors, tagColors });
+    this.post({ type: "marks", tags, colors, tagColors });
   }
 
   private postReads(ledger: Ledger): void {
@@ -810,9 +793,9 @@ export class DocsPanel {
     return [
       {
         id: "ledger",
-        label: "Statuses, tags and colours",
-        note: "every status, tag and colour is lost",
-        uri: statusLedger(this.root.uri).store
+        label: "Tags and colours",
+        note: "every tag and colour is lost",
+        uri: marksLedger(this.root.uri).store
       },
       {
         id: "reads",
@@ -883,7 +866,7 @@ export class DocsPanel {
         void vscode.window.showErrorMessage(`Docs Panel could not purge ${file.uri.fsPath}: ${error}`);
       }
     }
-    this.postStatuses(await load(statusLedger(this.root.uri)));
+    this.postMarks(await load(marksLedger(this.root.uri)));
     this.postReads(await load(readsLedger(this.root.workspace, this.root.uri)));
     await this.sendMentions();
     await this.sendDataFiles();
@@ -937,7 +920,7 @@ export class DocsPanel {
       name: base.path.split("/").pop() ?? ""
     });
     if (this.root) {
-      this.postStatuses(await prune(statusLedger(this.root.uri)));
+      this.postMarks(await prune(marksLedger(this.root.uri)));
       this.postReads(await prune(readsLedger(this.root.workspace, this.root.uri)));
       await this.sendMentions();
     }
@@ -1035,12 +1018,6 @@ export class DocsPanel {
       <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
       <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
       <button id="restore" class="icon" type="button" title="Put back" hidden>${RESTORE_ICON}</button>
-      <select id="status" title="Status">
-        <option value="" class="opt-none">no status</option>
-        ${STATUSES.map(
-          (value) => `<option value="${value}" class="opt-${value.replace(/ /g, "-")}">${value}</option>`
-        ).join("")}
-      </select>
       <span id="tags"></span>
       <button id="addTag" type="button" title="Tags">+</button>
     </div>

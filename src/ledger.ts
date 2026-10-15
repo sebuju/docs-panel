@@ -1,16 +1,6 @@
 import * as vscode from "vscode";
 import { createHash } from "crypto";
 
-export const STATUSES = [
-  "planned",
-  "in progress",
-  "testing",
-  "done",
-  "refused",
-  "stale"
-] as const;
-export type Status = (typeof STATUSES)[number];
-
 // Names of colours the theme itself defines, so a mark follows whatever theme the editor
 // wears. The webview maps each name onto the theme variable it stands for.
 export const COLORS = [
@@ -50,8 +40,8 @@ export interface Ledger {
 }
 
 // Two ledgers share every operation below; only the file they live in, the values they
-// accept, and the meaning of an entry differ. Only the status ledger carries marks: the
-// tags and colours travel with the documents the way the statuses do.
+// accept, and the meaning of an entry differ. The reads ledger holds a status per file;
+// the marks ledger holds tags and colours, which travel with the documents.
 export interface LedgerSpec {
   store: vscode.Uri;
   root: vscode.Uri;
@@ -59,13 +49,13 @@ export interface LedgerSpec {
   marks: boolean;
 }
 
-const STATUS_FILE = ".docs-panel.json";
+const MARKS_FILE = ".docs-panel.json";
 const READS_FILE = "docs-panel-reads.json";
 const TRASH_DIR = ".trash";
 const MAX_DEPTH = 12;
 
-export function statusLedger(root: vscode.Uri): LedgerSpec {
-  return { store: vscode.Uri.joinPath(root, STATUS_FILE), root, statuses: STATUSES, marks: true };
+export function marksLedger(root: vscode.Uri): LedgerSpec {
+  return { store: vscode.Uri.joinPath(root, MARKS_FILE), root, statuses: [], marks: true };
 }
 
 export function readsLedger(workspace: vscode.Uri, root: vscode.Uri): LedgerSpec {
@@ -173,8 +163,8 @@ export async function save(spec: LedgerSpec, ledger: Ledger): Promise<void> {
       updated: entry.updated
     };
   }
-  // The marks are written only once there are some, so a ledger that holds statuses alone
-  // keeps the shape it always had.
+  // The marks are written only once there are some, so the reads ledger keeps the shape it
+  // always had.
   const out: Record<string, unknown> = { version: ledger.version, files };
   if (spec.marks && Object.keys(ledger.folders).length) {
     out.folders = sorted(ledger.folders);
@@ -371,7 +361,7 @@ export async function rekeyFolders(spec: LedgerSpec, from: string, to: string): 
 
 // Files can also be moved from outside this panel. An entry whose path is gone is matched
 // against the paths that appeared, by content first and by name second, so a rename keeps
-// its status and two files sharing a name cannot be confused for one another. A folder
+// its marks and two files sharing a name cannot be confused for one another. A folder
 // has nothing to match by, so one that is gone takes its colour with it.
 export async function prune(spec: LedgerSpec): Promise<Ledger> {
   const ledger = await load(spec);
