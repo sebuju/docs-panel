@@ -58,6 +58,7 @@
   const finderRegexEl = document.getElementById("finderRegex");
   const finderCloseEl = document.getElementById("finderClose");
   const finderResultsEl = document.getElementById("finderResults");
+  const treeToolsEl = document.getElementById("treeTools");
 
   const PIN_ICON =
     '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">' +
@@ -130,7 +131,12 @@
   let rootPrefix = "";
   const bars = [];
   let dragging = null;
-  let tocAuto = false;
+  // "tree" or "toc" gives that list the height its entries need; "none" leaves the
+  // divider where it was put.
+  let autoSize = "none";
+  const AUTO_SIZES = ["none", "tree", "toc"];
+  const AUTO_LABELS = ["off", "files", "contents"];
+  let hoverStrength = 40;
 
   const saved = vscode.getState();
   if (saved) {
@@ -141,6 +147,7 @@
   setTextScale(textScale);
   setLineHeight(lineHeight);
   setMono(mono);
+  setHoverStrength(hoverStrength);
 
   function applyState(state) {
     if (typeof state.split === "number") {
@@ -158,8 +165,13 @@
     if (typeof state.mono === "boolean") {
       mono = state.mono;
     }
-    if (typeof state.tocAuto === "boolean") {
-      tocAuto = state.tocAuto;
+    if (AUTO_SIZES.includes(state.autoSize)) {
+      autoSize = state.autoSize;
+    } else if (state.tocAuto === true) {
+      autoSize = "toc";
+    }
+    if (typeof state.hoverStrength === "number") {
+      hoverStrength = state.hoverStrength;
     }
     if (Array.isArray(state.expanded)) {
       expanded = new Set(state.expanded);
@@ -177,7 +189,8 @@
       textScale: textScale,
       lineHeight: lineHeight,
       mono: mono,
-      tocAuto: tocAuto,
+      autoSize: autoSize,
+      hoverStrength: hoverStrength,
       expanded: [...expanded],
       pinned: [...pinned],
       selected: selected
@@ -204,23 +217,30 @@
     refreshBars();
   }
 
-  const TOC_MAX_SHARE = 0.75;
+  const FIT_MAX_SHARE = 0.75;
 
-  // Auto size gives the contents list exactly the height its entries need, so it never
-  // scrolls; past three quarters of the side the tree would be squeezed out, so it stops.
-  function fitToc() {
-    const list = tocEl.firstElementChild;
-    if (!tocAuto || tocEl.hidden || !list) {
+  // Auto size gives one list, the files or the contents, exactly the height its entries
+  // need, so it never scrolls; past three quarters of the side the other one would be
+  // squeezed out, so it stops there.
+  function fitSide() {
+    const pane = autoSize === "tree" ? treeEl : autoSize === "toc" ? tocEl : null;
+    const list = pane && pane.querySelector(":scope > ul");
+    if (!list || tocEl.hidden) {
       setSideSplit(sideSplit);
       return;
     }
     // The pane's own scrollHeight is never less than the pane, so it can only ever grow.
     // The list inside it is not a scroller, and its height is the height actually wanted.
-    const style = getComputedStyle(tocEl);
+    const style = getComputedStyle(pane);
     const pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-    const wanted = list.getBoundingClientRect().height + pad + 3;
-    const total = sideBodyEl.clientHeight || 1;
-    setSideSplit(1 - Math.min(TOC_MAX_SHARE, wanted / total));
+    const wanted = Math.min(FIT_MAX_SHARE, (list.getBoundingClientRect().height + pad + 3) / (sideBodyEl.clientHeight || 1));
+    setSideSplit(autoSize === "tree" ? wanted : 1 - wanted);
+  }
+
+  function setAutoSize(value) {
+    autoSize = AUTO_SIZES.includes(value) ? value : "none";
+    fitSide();
+    persist();
   }
 
   // One scale for every file, so the reading size is a property of the panel.
@@ -239,6 +259,13 @@
     layout.style.setProperty("--line-height", LINE_HEIGHTS[lineHeight]);
     lineHeightEl.dataset.step = String(lineHeight);
     lineHeightEl.title = "Line spacing (" + LINE_LABELS[lineHeight] + ")";
+  }
+
+  // How strongly the block under the pointer, or the one the arrow keys are on, is lit;
+  // nought switches the light off.
+  function setHoverStrength(value) {
+    hoverStrength = Math.min(Math.max(Math.round(value) || 0, 0), 100);
+    layout.style.setProperty("--block-light", String(hoverStrength / 100));
   }
 
   function setMono(value) {
@@ -335,6 +362,9 @@
     list.appendChild(trashItem(""));
     treeEl.appendChild(list);
     treeEl.scrollTop = top;
+    if (autoSize === "tree") {
+      fitSide();
+    }
   }
 
   // The trash keeps the folders its files came from, so every folder has a bin of its
@@ -394,7 +424,27 @@
       }
       drawTree();
     });
+
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      const empty = !(at ? trashFor(at) : trashNodes).length;
+      openMenu(event.clientX, event.clientY, [
+        { label: "Restore all", disabled: empty, run: () => emptyBin("restoreAll", at) },
+        { label: "Delete all", danger: true, disabled: empty, run: () => emptyBin("emptyTrash", at) }
+      ]);
+    });
     return row;
+  }
+
+  // Whatever leaves the bin takes its unsaved drafts along, as a single file would.
+  function emptyBin(type, at) {
+    const bin = at ? TRASH_PREFIX + at : ".trash";
+    for (const path of [...drafts.keys()]) {
+      if (path.startsWith(bin + "/")) {
+        drafts.delete(path);
+      }
+    }
+    vscode.postMessage({ type: type, at: at });
   }
 
   function buildList(items, text) {
@@ -603,6 +653,7 @@
       const button = document.createElement("button");
       button.type = "button";
       button.className = item.danger ? "danger" : "";
+      button.disabled = !!item.disabled;
       if (item.checked !== undefined) {
         const tick = document.createElement("span");
         tick.className = "tick";
@@ -692,7 +743,7 @@
     }
     items.push({ separator: true });
     if (trashed) {
-      items.push({ label: "Put back", run: () => send("restore", node) });
+      items.push({ label: "Restore", run: () => send("restore", node) });
     } else {
       items.push({ label: "Move to the trash", run: () => send("trash", node) });
     }
@@ -767,6 +818,142 @@
 
   function blockAt(el) {
     return el && el.closest && article.contains(el) ? el.closest(BLOCKS) : null;
+  }
+
+  // Anything that only holds other blocks - a quote, a loose list item, a table - is
+  // passed over, so the light always lands on a block whose own text it is.
+  const HOLDERS = BLOCKS + ", ul, ol, table, thead, tbody, tfoot, tr, div, hr, details, figure";
+
+  function ownsText(el) {
+    for (const node of el.childNodes) {
+      if (node.nodeType === 3 ? node.nodeValue.trim() : node.nodeType === 1 && !node.matches(HOLDERS)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function lightableAt(el) {
+    let block = blockAt(el);
+    while (block && !ownsText(block)) {
+      block = block.parentElement && article.contains(block.parentElement)
+        ? block.parentElement.closest(BLOCKS)
+        : null;
+    }
+    return block;
+  }
+
+  // Only a Markdown page is read block by block; the other kinds are one block of code
+  // or someone else's layout.
+  function readingMarkdown() {
+    return !!article && mode !== "edit" && !!current && current.kind === "md";
+  }
+
+  let blockOn = null;
+  let blockByKey = false;
+  let pointerAt = null;
+
+  // One block is lit at a time: the one under the pointer, or the one the arrow keys
+  // moved to. It is marked by a class that paints and moves nothing.
+  function lightBlock(block, byKey) {
+    if (blockOn !== block) {
+      if (blockOn) {
+        blockOn.classList.remove("block-on");
+      }
+      blockOn = block;
+      if (blockOn) {
+        blockOn.classList.add("block-on");
+      }
+    }
+    blockByKey = !!block && byKey;
+  }
+
+  bodyEl.addEventListener("pointermove", (event) => {
+    // A scroll slides the page under a pointer that stays put, and that is reported as a
+    // move too; only a pointer that went somewhere takes the light from the keys.
+    if (pointerAt && pointerAt.x === event.clientX && pointerAt.y === event.clientY) {
+      return;
+    }
+    pointerAt = { x: event.clientX, y: event.clientY };
+    if (readingMarkdown()) {
+      lightBlock(lightableAt(event.target), false);
+    }
+  });
+
+  bodyEl.addEventListener("pointerleave", () => {
+    pointerAt = null;
+    if (!blockByKey) {
+      lightBlock(null);
+    }
+  });
+
+  function readableBlocks() {
+    return [...article.querySelectorAll(BLOCKS)].filter(
+      (el) => ownsText(el) && el.getClientRects().length
+    );
+  }
+
+  // The keys walk on from the lit block while it is on screen. With none, or after the
+  // page was scrolled away from it, the walk starts again at the edge of what is shown.
+  function stepBlock(delta) {
+    const blocks = readableBlocks();
+    const view = bodyEl.getBoundingClientRect();
+    let index = blockOn ? blocks.indexOf(blockOn) : -1;
+    if (index >= 0 && onScreen(blockOn, view)) {
+      index += delta;
+    } else if (delta > 0) {
+      index = blocks.findIndex((el) => el.getBoundingClientRect().top >= view.top - 1);
+    } else {
+      index = -1;
+      blocks.forEach((el, i) => {
+        if (el.getBoundingClientRect().bottom <= view.bottom + 1) {
+          index = i;
+        }
+      });
+    }
+    // Past the first or the last block there is still the page's own margin to show.
+    if (index < 0 || index >= blocks.length) {
+      bodyEl.scrollTop = delta > 0 ? bodyEl.scrollHeight : 0;
+      return;
+    }
+    lightBlock(blocks[index], true);
+    keepInView(blocks[index]);
+  }
+
+  function onScreen(el, view) {
+    const rect = el.getBoundingClientRect();
+    return rect.bottom > view.top && rect.top < view.bottom;
+  }
+
+  const BLOCK_MARGIN = 32;
+
+  // The pane moves only as far as it must, the way a caret pulls a page along; a block
+  // taller than the pane is shown from its top.
+  function keepInView(el) {
+    const rect = el.getBoundingClientRect();
+    const view = bodyEl.getBoundingClientRect();
+    if (rect.top < view.top + BLOCK_MARGIN || rect.height > view.height - 2 * BLOCK_MARGIN) {
+      bodyEl.scrollTop += rect.top - view.top - BLOCK_MARGIN;
+    } else if (rect.bottom > view.bottom - BLOCK_MARGIN) {
+      bodyEl.scrollTop += rect.bottom - view.bottom + BLOCK_MARGIN;
+    }
+  }
+
+  // While the find in the page has hits the arrows step through them, wherever the focus
+  // is; otherwise they walk the blocks, unless something else is taking the typing.
+  function arrowKey(delta, target) {
+    if (!menuEl.hidden || !tagPickerEl.hidden) {
+      return false;
+    }
+    if (searchOpen && matches.length) {
+      step(delta);
+      return true;
+    }
+    if (!readingMarkdown() || (target && target.closest && target.closest("input, textarea, select, #tree"))) {
+      return false;
+    }
+    stepBlock(delta);
+    return true;
   }
 
   // Lifted out of its list an item loses the mark that made it one, so the mark is written
@@ -874,6 +1061,25 @@
       closeTagPicker();
     }
   }, true);
+
+  const CORNER_WIDTH = 72;
+  const CORNER_HEIGHT = 40;
+
+  // The tree's buttons come up only while the pointer is in the corner they sit in, so
+  // crossing the rows on the way to a file does not keep throwing them over the names.
+  // The side is listened to rather than the tree, because the scrollbar lies over the
+  // tree's right edge and takes the pointer there.
+  sideEl.addEventListener("pointermove", (event) => {
+    const box = treeEl.getBoundingClientRect();
+    const near =
+      event.clientX >= box.right - CORNER_WIDTH &&
+      event.clientX <= box.right &&
+      event.clientY >= box.top &&
+      event.clientY <= box.top + CORNER_HEIGHT;
+    treeToolsEl.classList.toggle("near", near);
+  });
+
+  sideEl.addEventListener("pointerleave", () => treeToolsEl.classList.remove("near"));
 
   window.addEventListener("blur", closeMenu);
   bodyEl.addEventListener("scroll", closeMenu);
@@ -1047,15 +1253,9 @@
   sideSplitter.addEventListener("contextmenu", (event) => {
     event.preventDefault();
     openMenu(event.clientX, event.clientY, [
-      {
-        label: "Auto size the contents",
-        checked: tocAuto,
-        run: () => {
-          tocAuto = !tocAuto;
-          fitToc();
-          persist();
-        }
-      }
+      { label: "Auto size the files", checked: autoSize === "tree", run: () => setAutoSize("tree") },
+      { label: "Auto size the contents", checked: autoSize === "toc", run: () => setAutoSize("toc") },
+      { label: "No auto size", checked: autoSize === "none", run: () => setAutoSize("none") }
     ]);
   });
 
@@ -1064,7 +1264,7 @@
     if (event.button !== 0) {
       return;
     }
-    tocAuto = false;
+    autoSize = "none";
     sideSplitter.setPointerCapture(event.pointerId);
     const box = sideBodyEl.getBoundingClientRect();
     const move = (moveEvent) => setSideSplit((moveEvent.clientY - box.top) / box.height);
@@ -1083,7 +1283,7 @@
 
   window.addEventListener("resize", () => {
     setSplit(split);
-    fitToc();
+    fitSide();
     fitEditor();
   });
 
@@ -1237,6 +1437,13 @@
     if (searchOpen && event.key === "Escape") {
       event.preventDefault();
       closeSearch();
+      return;
+    }
+    const arrow = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+    if (arrow && !ctrl && !event.altKey && !event.shiftKey) {
+      if (arrowKey(arrow, event.target)) {
+        event.preventDefault();
+      }
       return;
     }
     // While the search is up the pages belong to it; closing it gives them back to the
@@ -1485,6 +1692,7 @@
       setTextScale(textScale);
       setLineHeight(lineHeight);
       setMono(mono);
+      setHoverStrength(hoverStrength);
       drawTree();
     } else if (message.type === "saved") {
       drafts.delete(message.path);
@@ -1758,6 +1966,8 @@
     sections = [];
     activeSection = null;
     article = null;
+    blockOn = null;
+    blockByKey = false;
 
     if (!current) {
       headerEl.hidden = true;
@@ -2006,7 +2216,7 @@
     tocEl.appendChild(list);
     tocEl.hidden = false;
     sideBodyEl.classList.remove("no-toc");
-    fitToc();
+    fitSide();
     scheduleActive();
   }
 
@@ -2525,13 +2735,23 @@
         scheduleActive();
       })
     ]);
-    optionRow(reading, "Contents list", [
-      optionChoice(["sized by hand", "sized to fit"], tocAuto ? 1 : 0, (choice) => {
-        tocAuto = choice === 1;
-        fitToc();
-        persist();
-      })
+    optionRow(reading, "Auto size", [
+      optionChoice(AUTO_LABELS, AUTO_SIZES.indexOf(autoSize), (choice) => setAutoSize(AUTO_SIZES[choice]))
     ]);
+    const light = make("input", "opt-range");
+    light.type = "range";
+    light.min = "0";
+    light.max = "100";
+    light.step = "5";
+    light.value = String(hoverStrength);
+    const lightValue = make("span", "opt-value", hoverStrength ? hoverStrength + "%" : "off");
+    // Dragged, the page answers at once; the stored value waits for the thumb to settle.
+    light.addEventListener("input", () => {
+      setHoverStrength(Number(light.value));
+      lightValue.textContent = hoverStrength ? hoverStrength + "%" : "off";
+    });
+    light.addEventListener("change", persist);
+    optionRow(reading, "Block highlight", [light, lightValue]);
 
     const folder = optionSection("Folder");
     optionRow(folder, [make("span", "opt-path", rootPrefix || "the workspace root")], [

@@ -31,13 +31,18 @@ export const VIEW_TYPE = "docsPanel";
 export const TRASH_DIR = ".trash";
 const SESSION_DEBOUNCE_MS = 500;
 
+// Which of the side's two lists, if either, is given the height its entries need.
+export type AutoSize = "none" | "tree" | "toc";
+const AUTO_SIZES: AutoSize[] = ["none", "tree", "toc"];
+
 export interface PanelState {
   split: number;
   sideSplit: number;
   textScale: number;
   lineHeight: number;
   mono: boolean;
-  tocAuto: boolean;
+  autoSize: AutoSize;
+  hoverStrength: number;
   expanded: string[];
   pinned: string[];
   selected: string | null;
@@ -49,7 +54,8 @@ const DEFAULT_STATE: PanelState = {
   textScale: 1,
   lineHeight: 1,
   mono: false,
-  tocAuto: false,
+  autoSize: "none",
+  hoverStrength: 40,
   expanded: [],
   pinned: [],
   selected: null
@@ -333,6 +339,12 @@ export class DocsPanel {
       case "delete":
         await this.remove(String(message.path), !!message.dir);
         return;
+      case "restoreAll":
+        await this.restoreAll(String(message.at ?? ""));
+        return;
+      case "emptyTrash":
+        await this.emptyTrash(String(message.at ?? ""));
+        return;
       case "create":
         await this.create(message.kind === "folder" ? "folder" : "file", String(message.at ?? ""));
         return;
@@ -594,28 +606,108 @@ export class DocsPanel {
     if (!root || relPath.startsWith(`${TRASH_DIR}/`) !== (direction === "restore")) {
       return;
     }
-    const uri = vscode.Uri.joinPath(root, ...relPath.split("/"));
     try {
-      if (dir) {
-        for (const inner of await listFiles(uri)) {
-          await this.shift(`${relPath}/${inner}`, direction);
-        }
-        await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
-        // The files land at the same path on the other side of the trash, and the
-        // folders they make there answer to the colours the originals had.
-        const to =
-          direction === "trash" ? `${TRASH_DIR}/${relPath}` : relPath.slice(TRASH_DIR.length + 1);
-        for (const spec of this.ledgers) {
-          await rekeyFolders(spec, relPath, to);
-        }
-      } else {
-        await this.shift(relPath, direction);
-      }
+      await this.transfer(relPath, direction, dir);
       this.dropSelection(relPath);
       await this.sendTree();
     } catch (error) {
       void vscode.window.showErrorMessage(`Docs Panel could not ${direction} ${relPath}: ${error}`);
     }
+  }
+
+  private async transfer(
+    relPath: string,
+    direction: "trash" | "restore",
+    dir: boolean
+  ): Promise<void> {
+    const root = this.root!.uri;
+    if (!dir) {
+      await this.shift(relPath, direction);
+      return;
+    }
+    const uri = vscode.Uri.joinPath(root, ...relPath.split("/"));
+    for (const inner of await listFiles(uri)) {
+      await this.shift(`${relPath}/${inner}`, direction);
+    }
+    await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
+    // The files land at the same path on the other side of the trash, and the
+    // folders they make there answer to the colours the originals had.
+    const to =
+      direction === "trash" ? `${TRASH_DIR}/${relPath}` : relPath.slice(TRASH_DIR.length + 1);
+    for (const spec of this.ledgers) {
+      await rekeyFolders(spec, relPath, to);
+    }
+  }
+
+  // "at" names a bin: the folder its files were trashed from, and "" for the whole trash.
+  private async binEntries(at: string): Promise<{ bin: string; entries: [string, boolean][] }> {
+    const bin = at ? `${TRASH_DIR}/${at}` : TRASH_DIR;
+    try {
+      const listed = await vscode.workspace.fs.readDirectory(
+        vscode.Uri.joinPath(this.root!.uri, ...bin.split("/"))
+      );
+      return {
+        bin,
+        entries: listed.map(([name, type]) => [name, (type & vscode.FileType.Directory) !== 0])
+      };
+    } catch {
+      return { bin, entries: [] };
+    }
+  }
+
+  // Everything in a bin goes back where it came from, and a folder's bin, emptied, goes
+  // with it; the trash itself stays for the next file.
+  private async restoreAll(at: string): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const { bin, entries } = await this.binEntries(at);
+    try {
+      for (const [name, dir] of entries) {
+        await this.transfer(`${bin}/${name}`, "restore", dir);
+      }
+      if (at) {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.root.uri, ...bin.split("/")), {
+          recursive: true,
+          useTrash: false
+        });
+      }
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Docs Panel could not restore ${bin}: ${error}`);
+    }
+    this.dropSelection(bin);
+    await this.sendTree();
+  }
+
+  private async emptyTrash(at: string): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const { bin, entries } = await this.binEntries(at);
+    if (!entries.length) {
+      return;
+    }
+    const answer = await vscode.window.showWarningMessage(
+      at ? `Delete everything trashed from ${at} for good?` : "Delete everything in the trash for good?",
+      { modal: true, detail: "This cannot be undone." },
+      "Delete all"
+    );
+    if (answer !== "Delete all") {
+      return;
+    }
+    try {
+      const target = at ? [bin] : entries.map(([name]) => `${bin}/${name}`);
+      for (const path of target) {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.root.uri, ...path.split("/")), {
+          recursive: true,
+          useTrash: false
+        });
+      }
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Docs Panel could not empty ${bin}: ${error}`);
+    }
+    this.dropSelection(bin);
+    await this.sendTree();
   }
 
   private async remove(relPath: string, dir: boolean): Promise<void> {
@@ -1020,7 +1112,7 @@ export class DocsPanel {
       <button id="toggle" class="icon" type="button" title="Edit"><span class="pen">${PEN_ICON}</span><span class="eye">${EYE_ICON}</span></button>
       <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
       <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
-      <button id="restore" class="icon" type="button" title="Put back" hidden>${RESTORE_ICON}</button>
+      <button id="restore" class="icon" type="button" title="Restore" hidden>${RESTORE_ICON}</button>
       <span id="tags"></span>
       <button id="addTag" type="button" title="Tags">${ADD_TAG_ICON}</button>
     </div>
@@ -1159,13 +1251,22 @@ function normalizeState(value: any): PanelState {
   const sideSplit = Number(value?.sideSplit);
   const textScale = Number(value?.textScale);
   const lineHeight = Number(value?.lineHeight);
+  const hoverStrength = Number(value?.hoverStrength);
   return {
     split: Number.isFinite(split) ? split : DEFAULT_STATE.split,
     sideSplit: Number.isFinite(sideSplit) ? sideSplit : DEFAULT_STATE.sideSplit,
     textScale: Number.isFinite(textScale) ? textScale : DEFAULT_STATE.textScale,
     lineHeight: Number.isFinite(lineHeight) ? lineHeight : DEFAULT_STATE.lineHeight,
     mono: typeof value?.mono === "boolean" ? value.mono : DEFAULT_STATE.mono,
-    tocAuto: typeof value?.tocAuto === "boolean" ? value.tocAuto : DEFAULT_STATE.tocAuto,
+    // Before there were two lists to size, one switch sized the contents.
+    autoSize: AUTO_SIZES.includes(value?.autoSize)
+      ? value.autoSize
+      : value?.tocAuto === true
+        ? "toc"
+        : DEFAULT_STATE.autoSize,
+    hoverStrength: Number.isFinite(hoverStrength)
+      ? Math.min(Math.max(hoverStrength, 0), 100)
+      : DEFAULT_STATE.hoverStrength,
     expanded: Array.isArray(value?.expanded) ? value.expanded.map(String) : [],
     pinned: Array.isArray(value?.pinned) ? value.pinned.map(String) : [],
     selected: typeof value?.selected === "string" ? value.selected : null

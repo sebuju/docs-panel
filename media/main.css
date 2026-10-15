@@ -71,13 +71,14 @@ html, body {
   margin-left: -4px;
 }
 
-/* The tree's own buttons sit in its top right corner and only show while the tree is
-   pointed at, so the list keeps its whole height. Hidden, they let the pointer through to
-   the rows beneath; that hover is what brings them up, and their own keeps them up. */
+/* The tree's own buttons sit in its top right corner and only show while the pointer is
+   in that corner, so the list keeps its whole height. Hidden, they let the pointer
+   through to the rows beneath; the script marks the corner, and their own hover keeps
+   them up. */
 #treeTools {
   position: absolute;
   top: 6px;
-  right: 12px;
+  right: 10px;
   z-index: 5;
   display: flex;
   gap: 2px;
@@ -90,7 +91,7 @@ html, body {
   transition: opacity 120ms ease-out;
 }
 
-#tree:hover + #treeTools,
+#treeTools.near,
 #treeTools:hover,
 #treeTools:focus-within {
   opacity: 1;
@@ -773,6 +774,20 @@ body.dragging {
   to { background: transparent; }
 }
 
+/* The block under the pointer, or the one the arrow keys are on. The light is an image
+   over the block's own background, so a code block keeps its colour beneath it, and a
+   shadow carries it a little past the text without moving anything. */
+.markdown-body .block-on {
+  --block-light-colour: color-mix(
+    in srgb,
+    var(--vscode-foreground, currentColor) calc(var(--block-light, 0.4) * 16%),
+    transparent
+  );
+  border-radius: 3px;
+  background-image: linear-gradient(var(--block-light-colour), var(--block-light-colour));
+  box-shadow: 0 0 0 4px var(--block-light-colour);
+}
+
 /* The animation and nothing else: a mark that set the box would move the text it points
    at, and one that set a corner would overrule whatever the element had chosen. */
 .markdown-body .flash {
@@ -1029,6 +1044,12 @@ img.single {
   color: var(--vscode-errorForeground, #f85149);
 }
 
+#menu button:disabled {
+  background: transparent;
+  cursor: default;
+  opacity: 0.45;
+}
+
 #menu hr {
   border: none;
   border-top: 1px solid rgba(128, 128, 128, 0.3);
@@ -1280,6 +1301,12 @@ img.single {
   color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
   background: var(--vscode-dropdown-background, var(--vscode-input-background));
   font: inherit;
+}
+
+.opt-range {
+  width: 120px;
+  margin: 0;
+  accent-color: var(--vscode-button-background, var(--vscode-focusBorder));
 }
 
 .opt-value {

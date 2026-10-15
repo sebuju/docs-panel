@@ -29,11 +29,14 @@ Then run **Docs Panel: Open** from the command palette.
 | Colour a file or folder | **Colour…** in the tree's menu |
 | Pin a file or folder | **Pin to top** in the tree's menu |
 | Open in a browser | **Open in browser** in a file's menu in the tree |
-| Find in the page | `Ctrl+F` |
-| Search all docs | `Ctrl+F` twice with `Ctrl` held, or the search button in the tree's top right corner (shown while pointing at the tree) |
+| Find in the page | `Ctrl+F`; `Up` / `Down` or `Enter` / `Shift+Enter` step through the hits |
+| Step through a Markdown file | `Up` / `Down` light the next or previous block and scroll it into view |
+| Search all docs | `Ctrl+F` twice with `Ctrl` held, or the search button in the tree's top right corner (shown while the pointer is in that corner) |
 | Options | The sliders button in the tree's top right corner |
 | Trash a file | Bin button in the file bar; the trash shows at the foot of the tree, and each folder lists what was trashed from it |
+| Empty the trash | Right click a trash folder: **Restore all** or **Delete all** |
 | Move the divider | Drag it; the position is remembered |
+| Size a list to fit | Right click the divider between the files and the contents: auto size the files, the contents, or neither |
 
 ## Search all docs
 
@@ -50,7 +53,9 @@ listed even when nothing inside it does.
 
 ## Options
 
-The options hold the reading settings, the tags (colour, rename, delete), and the data
+The options hold the reading settings (text size, line spacing, font, which list is
+auto sized, and how strongly the Markdown block under the pointer is lit, where 0 turns
+the light off), the tags (colour, rename, delete), and the data
 files the panel writes, each with its size and a button to purge it.
 
 ## Settings
