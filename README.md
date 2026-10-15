@@ -45,12 +45,12 @@ With the tree focused (click it, or `Tab` to it):
 | Key | Does |
 |---|---|
 | `Up` / `Down` | Move to the previous or next row; a file you stop on opens |
-| `Right` | On a closed folder, open it; on an open one, go to its first entry; on a Markdown file, go into the page at its first block |
+| `Right` | On a closed folder, open it; on an open one, go to its first entry; on a Markdown file, go into the page at its first block; on any other file, go into the page so `Up` / `Down` scroll it |
 | `Left` | On an open folder, close it; otherwise go up to the folder holding the row |
 | `Space` | Open the row's menu: `Up` / `Down` pick, `Enter` runs, `Escape` closes; the focus comes back to the tree either way |
 
-In a Markdown page being read (not edited), `Left` goes back to the tree at the row you
-left, and `Right` from there comes back to the block you were on.
+In a file being read (not edited), `Left` goes back to the tree at the row you left. In
+a Markdown file, `Right` from there comes back to the block you were on.
 
 ## Search all docs
 

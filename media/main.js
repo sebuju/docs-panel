@@ -918,6 +918,12 @@
     return !!article && mode !== "edit" && !!current && current.kind === "md";
   }
 
+  // Any file shown rather than edited can take the focus, so the keys can at least scroll
+  // it; only Markdown has blocks to walk.
+  function readingFile() {
+    return mode !== "edit" && !!current;
+  }
+
   let blockOn = null;
   let blockByKey = false;
   let pointerAt = null;
@@ -1012,8 +1018,14 @@
   let blockLeft = null;
 
   // Coming in from the tree lights the first block, or the one the keys were on when
-  // they last left this page.
+  // they last left this page. Any other file only takes the focus, and the arrows then
+  // scroll it the way they scroll any box.
   function enterText() {
+    if (!readingMarkdown()) {
+      blockLeft = null;
+      bodyEl.focus({ preventScroll: true });
+      return;
+    }
     const blocks = readableBlocks();
     const block = blocks.includes(blockLeft) ? blockLeft : blocks[0];
     blockLeft = null;
@@ -1024,10 +1036,10 @@
     }
   }
 
-  // Only a page being read gives the focus back, not one being edited, and only while the
+  // Only a file being read gives the focus back, not one being edited, and only while the
   // focus is on the page itself rather than in a box laid over it.
   function leaveText(target) {
-    if (!readingMarkdown() || !(target === document.body || bodyEl.contains(target))) {
+    if (!readingFile() || !(target === document.body || bodyEl.contains(target))) {
       return false;
     }
     blockLeft = blockByKey ? blockOn : null;
@@ -1255,7 +1267,7 @@
   function enterFile(path) {
     clearTimeout(openTimer);
     if (current && current.path === path) {
-      if (readingMarkdown()) {
+      if (readingFile()) {
         enterText();
       }
       return;
@@ -1284,8 +1296,8 @@
     }
   }
 
-  // Up and Down walk the rows. Right opens a folder, then goes into it; on a Markdown file
-  // it goes into the page. Left closes a folder, then goes up to the one holding it.
+  // Up and Down walk the rows. Right opens a folder, then goes into it; on a file it goes
+  // into the page, where the arrows walk a Markdown file's blocks and scroll any other. Left closes a folder, then goes up to the one holding it.
   // Space opens the row's menu.
   function treeKey(key) {
     const rows = treeRows();
@@ -1963,7 +1975,7 @@
       }
       if (pendingEnter === message.path) {
         pendingEnter = null;
-        if (readingMarkdown() && document.activeElement === treeEl) {
+        if (readingFile() && document.activeElement === treeEl) {
           enterText();
         }
       }
