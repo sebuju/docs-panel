@@ -30,8 +30,8 @@ Then run **Docs Panel: Open** from the command palette.
 | Pin a file or folder | **Pin to top** in the tree's menu |
 | Open in a browser | **Open in browser** in a file's menu in the tree |
 | Find in the page | `Ctrl+F` |
-| Search all docs | `Ctrl+F` twice with `Ctrl` held, or the search button above the tree |
-| Options | The sliders button above the tree |
+| Search all docs | `Ctrl+F` twice with `Ctrl` held, or the search button in the tree's top right corner (shown while pointing at the tree) |
+| Options | The sliders button in the tree's top right corner |
 | Trash a file | Bin button in the file bar; the trash shows at the foot of the tree, and each folder lists what was trashed from it |
 | Move the divider | Drag it; the position is remembered |
 

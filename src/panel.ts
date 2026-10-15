@@ -111,6 +111,9 @@ d="M2.5 4.5h2M7.5 4.5h6M2.5 11.5h6M11.5 11.5h2"/>
 <circle cx="6" cy="4.5" r="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/>
 <circle cx="10" cy="11.5" r="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
 
+const ADD_TAG_ICON = `<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M5 1.5v7M1.5 5h7"/></svg>`;
+
 const EYE_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
 d="M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8z"/>
@@ -300,6 +303,7 @@ export class DocsPanel {
       case "ready":
         this.ready = true;
         this.post({ type: "state", ...this.state });
+        this.post({ type: "version", version: String(this.context.extension.packageJSON.version ?? "") });
         this.sendPrefixes();
         await this.sendTree();
         if (this.state.selected) {
@@ -986,13 +990,12 @@ export class DocsPanel {
 <body>
 <div id="layout">
   <div id="side">
-    <div id="sideBar">
-      <span id="rootName"></span>
-      <button id="findAll" class="icon" type="button" title="Search all docs (Ctrl+F F)">${DOCS_SEARCH_ICON}</button>
-      <button id="openOptions" class="icon" type="button" title="Docs Panel options">${SLIDERS_ICON}</button>
-    </div>
     <div id="sideBody" class="no-toc">
       <div id="tree" tabindex="0"></div>
+      <div id="treeTools">
+        <button id="findAll" class="icon" type="button" title="Search all docs (Ctrl+F F)">${DOCS_SEARCH_ICON}</button>
+        <button id="openOptions" class="icon" type="button" title="Docs Panel options">${SLIDERS_ICON}</button>
+      </div>
       <div id="sideSplitter"></div>
       <div id="toc" hidden></div>
     </div>
@@ -1019,7 +1022,7 @@ export class DocsPanel {
       <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
       <button id="restore" class="icon" type="button" title="Put back" hidden>${RESTORE_ICON}</button>
       <span id="tags"></span>
-      <button id="addTag" type="button" title="Tags">+</button>
+      <button id="addTag" type="button" title="Tags">${ADD_TAG_ICON}</button>
     </div>
     <div id="search" hidden>
       <input id="searchText" type="text" placeholder="Find" spellcheck="false">

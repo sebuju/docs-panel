@@ -52,8 +52,7 @@ html, body {
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
 }
 
-#header,
-#sideBar {
+#header {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -72,20 +71,30 @@ html, body {
   margin-left: -4px;
 }
 
-/* The side's bar lines up with the header, so the two read as one bar across the panel. */
-#sideBar {
-  flex: none;
-  padding-left: 14px;
+/* The tree's own buttons sit in its top right corner and only show while the tree is
+   pointed at, so the list keeps its whole height. Hidden, they let the pointer through to
+   the rows beneath; that hover is what brings them up, and their own keeps them up. */
+#treeTools {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 4px;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
 }
 
-#rootName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  opacity: 0.8;
+#tree:hover + #treeTools,
+#treeTools:hover,
+#treeTools:focus-within {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 button.icon {
@@ -384,19 +393,26 @@ body.dragging-rows {
   cursor: pointer;
 }
 
+/* A circle, with the plus drawn rather than typed so it sits dead centre in any font. */
 #addTag {
+  display: flex;
   flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
   height: 20px;
   box-sizing: border-box;
-  padding: 0 7px;
+  padding: 0;
   border: 1px dashed rgba(128, 128, 128, 0.55);
-  border-radius: 999px;
+  border-radius: 50%;
   background: transparent;
   color: var(--vscode-foreground);
-  font: inherit;
-  line-height: 18px;
   cursor: pointer;
   opacity: 0.6;
+}
+
+#addTag svg {
+  display: block;
 }
 
 #addTag:hover {
@@ -1166,6 +1182,13 @@ img.single {
   font-weight: 600;
 }
 
+.opt-version {
+  margin-left: 8px;
+  font-size: 0.8em;
+  font-weight: normal;
+  opacity: 0.6;
+}
+
 .opt-section h3 {
   margin: 14px 0 4px;
   font-size: 0.8em;
@@ -1217,10 +1240,18 @@ img.single {
   gap: 6px;
 }
 
+/* A fixed height with the label centred in it, not left to the font's own line box,
+   which sits the text low in some fonts. */
 .opt-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  box-sizing: border-box;
   border: 1px solid var(--vscode-button-border, transparent);
   border-radius: 3px;
-  padding: 1px 10px;
+  padding: 0 10px;
+  line-height: 1;
   color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
   background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
   font: inherit;
@@ -1241,9 +1272,11 @@ img.single {
 }
 
 .opt-select {
+  height: 22px;
+  box-sizing: border-box;
   border: 1px solid var(--vscode-dropdown-border, transparent);
   border-radius: 2px;
-  padding: 1px 4px;
+  padding: 0 4px;
   color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
   background: var(--vscode-dropdown-background, var(--vscode-input-background));
   font: inherit;

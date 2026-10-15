@@ -40,7 +40,6 @@
   const searchPrevEl = document.getElementById("searchPrev");
   const searchNextEl = document.getElementById("searchNext");
   const searchCloseEl = document.getElementById("searchClose");
-  const rootNameEl = document.getElementById("rootName");
   const findAllEl = document.getElementById("findAll");
   const openOptionsEl = document.getElementById("openOptions");
   const headerTagsEl = document.getElementById("tags");
@@ -550,6 +549,9 @@
   }
 
   function openFile(path) {
+    if (finderOpen) {
+      closeFinder(true);
+    }
     if (path === selected) {
       return;
     }
@@ -1434,8 +1436,6 @@
       nodes = message.nodes || [];
       trashNodes = message.trash || [];
       rootPrefix = typeof message.root === "string" ? message.root : "";
-      rootNameEl.textContent = message.name || "";
-      rootNameEl.title = rootPrefix;
       if (finderOpen) {
         vscode.postMessage({ type: "corpus" });
       }
@@ -1524,6 +1524,9 @@
       if (finderOpen) {
         runFinder(true);
       }
+    } else if (message.type === "version") {
+      version = message.version || "";
+      drawOptions();
     } else if (message.type === "dataFiles") {
       dataFiles = message.files || [];
       drawOptions();
@@ -2374,6 +2377,7 @@
 
   let optionsOpen = false;
   let dataFiles = null;
+  let version = "";
 
   function openOptions() {
     closeMenu();
@@ -2478,7 +2482,11 @@
     optionsDialogEl.textContent = "";
 
     const head = make("div", "opt-head");
-    head.appendChild(make("h2", "", "Docs Panel options"));
+    const title = make("h2", "", "Docs Panel options");
+    if (version) {
+      title.appendChild(make("span", "opt-version", "v" + version));
+    }
+    head.appendChild(title);
     const close = makeButton("", closeOptions, "icon");
     close.title = "Close (Escape)";
     close.appendChild(make("span", "glyph", "✕"));
@@ -2628,18 +2636,21 @@
     runFinder();
   }
 
-  function closeFinder() {
+  // A file opened while the search is up takes the pane back, and the focus goes where the
+  // click that opened it left it rather than to where it was before the search.
+  function closeFinder(keepFocus) {
     finderOpen = false;
     finderEl.hidden = true;
     clearTimeout(finderTimer);
     const back = finderReturn;
     finderReturn = null;
-    if (back && back !== document.body && back.isConnected && back.offsetParent !== null) {
+    if (!keepFocus && back && back !== document.body && back.isConnected && back.offsetParent !== null) {
       back.focus();
     }
   }
 
-  findAllEl.addEventListener("click", () => openFinder());
+  // The button toggles: pressed again it puts the search away, back to the file it covered.
+  findAllEl.addEventListener("click", () => (finderOpen ? closeFinder() : openFinder()));
   finderCloseEl.addEventListener("click", closeFinder);
   finderTextEl.addEventListener("input", () => {
     clearTimeout(finderTimer);
