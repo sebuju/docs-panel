@@ -12,9 +12,9 @@ export interface Content {
   modified?: number;
 }
 
-const MARKDOWN = new Set([".md", ".markdown"]);
-const IMAGES = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]);
-const HTML = new Set([".html", ".htm"]);
+export const MARKDOWN = new Set([".md", ".markdown"]);
+export const IMAGES = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]);
+export const HTML = new Set([".html", ".htm"]);
 
 export async function renderFile(
   root: vscode.Uri,
@@ -83,7 +83,7 @@ function bodyOf(html: string): string {
   return inner.replace(/<\/?(?:html|body|head)\b[^>]*>/gi, "");
 }
 
-async function renderMarkdown(text: string): Promise<string | undefined> {
+export async function renderMarkdown(text: string): Promise<string | undefined> {
   try {
     await vscode.extensions.getExtension("vscode.markdown-language-features")?.activate();
     const html = await vscode.commands.executeCommand<string>("markdown.api.render", text);
@@ -97,7 +97,7 @@ async function renderMarkdown(text: string): Promise<string | undefined> {
 // preview's head - mermaid, katex, and whatever ships next - arrives inline in the
 // rendered string. This panel renders document text only, so every asset element is
 // dropped wherever it sits. The content elements are then the whole of the output.
-function stripAssets(html: string): string {
+export function stripAssets(html: string): string {
   return html
     .replace(/<(style|script|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
     .replace(/<(?:link|meta|base)\b[^>]*>/gi, "")
@@ -105,7 +105,7 @@ function stripAssets(html: string): string {
 }
 
 // The built-in renderer leaves "[x]" as literal text, so the checkbox is added here.
-function addTaskBoxes(html: string): string {
+export function addTaskBoxes(html: string): string {
   return html.replace(
     /<li([^>]*)>(\s*(?:<p>)?\s*)\[([ xX])\]\s+/g,
     (_match, attrs: string, lead: string, mark: string) =>
@@ -161,7 +161,7 @@ function resolveRelative(dir: string[], value: string): string[] | undefined {
   return resolved.length ? resolved : undefined;
 }
 
-function extensionOf(path: string): string {
+export function extensionOf(path: string): string {
   const name = path.split("/").pop() ?? "";
   const dot = name.lastIndexOf(".");
   return dot < 0 ? "" : name.slice(dot).toLowerCase();

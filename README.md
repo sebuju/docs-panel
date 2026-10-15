@@ -26,8 +26,33 @@ Then run **Docs Panel: Open** from the command palette.
 | Zoom a picture | Click it; scroll to zoom, drag to pan, `0` to fit, `Escape` to close |
 | Edit a file | Pen button in the file bar, then `Ctrl+S` |
 | Set a status | The pill in the file bar: planned, in progress, done, stale |
-| Trash a file | Bin button in the file bar; the bin above the tree shows the trash |
+| Tag a file | `+` in the file bar, or **Tags…** in the tree's menu; type to find or add a tag |
+| Colour a file or folder | **Colour…** in the tree's menu |
+| Pin a file or folder | **Pin to top** in the tree's menu |
+| Open in a browser | **Open in browser** in a file's menu in the tree |
+| Find in the page | `Ctrl+F` |
+| Search all docs | `Ctrl+F` twice with `Ctrl` held, or the search button above the tree |
+| Options | The sliders button above the tree |
+| Trash a file | Bin button in the file bar; the trash shows at the foot of the tree, and each folder lists what was trashed from it |
 | Move the divider | Drag it; the position is remembered |
+
+## Search all docs
+
+The search looks at the names of files and folders and at the text of every file, and
+lists what it finds by file, one line per row. A file or folder whose name matches is
+listed even when nothing inside it does.
+
+| Key | Does |
+|---|---|
+| `Up` / `Down` | Pick the previous or next row |
+| `Ctrl+Up` / `Ctrl+Down` | Jump to the previous or next file |
+| `Enter` | Open the file at that line, or show the folder in the tree |
+| `Escape` | Close the search and go back to the file that was open |
+
+## Options
+
+The options hold the reading settings, the tags (colour, rename, delete), and the data
+files the panel writes, each with its size and a button to purge it.
 
 ## Settings
 
@@ -38,10 +63,10 @@ Then run **Docs Panel: Open** from the command palette.
 The setting has resource scope, so a project can override it in its own
 `.vscode/settings.json`.
 
-## Statuses
+## Statuses, tags and colours
 
-Statuses are stored in `<docs folder>/.docs-panel.json`, so they travel with the
-documents. Each entry carries a content hash: a file moved outside the panel keeps its
+Statuses, tags and colours are stored in `<docs folder>/.docs-panel.json`, so they travel
+with the documents. The colours are the theme's own, so they follow the theme in use. Each entry carries a content hash: a file moved outside the panel keeps its
 status, an ambiguous match is dropped rather than guessed, and a trashed file keeps its
 entry until it is deleted for good.
 
@@ -50,3 +75,4 @@ entry until it is deleted for good.
 - Markdown is rendered by VS Code's built-in renderer. Extensions that add drawing to the
   preview, such as mermaid and katex, do not run here.
 - Links to files outside the docs folder are inert.
+- **Open in browser** works for files on the local machine only, not in a remote window.

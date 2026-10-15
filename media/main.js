@@ -41,11 +41,49 @@
   const searchPrevEl = document.getElementById("searchPrev");
   const searchNextEl = document.getElementById("searchNext");
   const searchCloseEl = document.getElementById("searchClose");
+  const rootNameEl = document.getElementById("rootName");
+  const findAllEl = document.getElementById("findAll");
+  const openOptionsEl = document.getElementById("openOptions");
+  const headerTagsEl = document.getElementById("tags");
+  const addTagEl = document.getElementById("addTag");
+  const tagPickerEl = document.getElementById("tagPicker");
+  const tagPickerTitleEl = document.getElementById("tagPickerTitle");
+  const tagInputEl = document.getElementById("tagInput");
+  const tagListEl = document.getElementById("tagList");
+  const optionsLayerEl = document.getElementById("optionsLayer");
+  const optionsDialogEl = document.getElementById("optionsDialog");
+  const finderEl = document.getElementById("finder");
+  const finderTextEl = document.getElementById("finderText");
+  const finderCountEl = document.getElementById("finderCount");
+  const finderCaseEl = document.getElementById("finderCase");
+  const finderWordEl = document.getElementById("finderWord");
+  const finderRegexEl = document.getElementById("finderRegex");
+  const finderCloseEl = document.getElementById("finderClose");
+  const finderResultsEl = document.getElementById("finderResults");
 
   const PIN_ICON =
     '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">' +
     '<path fill="currentColor" d="M6.2 2H9.8L9.1 3.1 9.6 6 11.2 7.6V8.7H8.5L8 13.8 7.5 8.7H4.8V7.6L6.4 6 6.9 3.1Z"/>' +
     "</svg>";
+
+  const CAN_ICON =
+    '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" ' +
+    'd="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9h6.6l.7-9M6.6 6.5v4M9.4 6.5v4"/></svg>';
+
+  const FOLDER_ICON =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" ' +
+    'd="M1.8 3.5h4.4l1.4 1.6h6.6v7.4H1.8z"/></svg>';
+
+  const FILE_ICON =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" ' +
+    'd="M3.5 1.8h6l3 3v9.4h-9zM9.5 1.8v3h3"/></svg>';
+
+  // The names the extension accepts; each stands for a colour the theme itself defines,
+  // and the stylesheet says which.
+  const COLORS = ["red", "orange", "yellow", "green", "blue", "purple", "cyan", "magenta", "grey"];
 
   const MIN_SPLIT = 120;
   const MIN_ROW = 60;
@@ -72,7 +110,9 @@
 
   let current = null;
   let mode = "preview";
-  let trashOpen = false;
+  // The bins that are open, by the folder they belong to; "" is the root's, which holds
+  // the whole of the trash.
+  const trashOpen = new Set();
   let trashNodes = [];
   let zoom = 1;
   let fitScale = 1;
@@ -80,6 +120,9 @@
   let panY = 0;
   const drafts = new Map();
   let statuses = {};
+  let tags = {};
+  let colors = {};
+  let tagColors = {};
   let reads = new Set();
   let mentions = {};
   let logOpen = false;
@@ -287,28 +330,61 @@
     if (text !== undefined) {
       notice = text;
     }
+    // Emptying the tree collapses it, and the browser pulls the scroll back to the top
+    // with it; the place is put back once the rows are in again.
+    const top = treeEl.scrollTop;
     treeEl.textContent = "";
     const list = buildList(nodes, notice);
-    const li = document.createElement("li");
-    li.appendChild(trashRow());
-    if (trashOpen) {
-      li.appendChild(buildList(trashNodes, trashNodes.length ? "" : "The trash is empty."));
-    }
-    list.appendChild(li);
+    list.appendChild(trashItem(""));
     treeEl.appendChild(list);
+    treeEl.scrollTop = top;
+  }
+
+  // The trash keeps the folders its files came from, so every folder has a bin of its
+  // own: the root's holds the whole trash, a folder's the part that left that folder.
+  function trashItem(at) {
+    const items = at ? trashFor(at) : trashNodes;
+    const li = document.createElement("li");
+    li.appendChild(trashRow(at));
+    if (trashOpen.has(at)) {
+      li.appendChild(buildList(items, items.length ? "" : "The trash is empty."));
+    }
+    return li;
+  }
+
+  function trashFor(at) {
+    const node = findNode(trashNodes, TRASH_PREFIX + at);
+    return node && node.children ? node.children : [];
+  }
+
+  function findNode(items, path) {
+    for (const node of items) {
+      if (node.path === path) {
+        return node;
+      }
+      if (node.dir && node.children && path.startsWith(node.path + "/")) {
+        return findNode(node.children, path);
+      }
+    }
+    return null;
   }
 
   // The trash is a folder in the list, below the docs it came from and opening in place.
-  function trashRow() {
+  function trashRow(at) {
     const row = document.createElement("div");
-    row.className = "row";
-    row.dataset.path = ".trash";
+    row.className = "row bin";
+    row.dataset.path = at ? TRASH_PREFIX + at : ".trash";
     row.dataset.dir = "1";
 
     const twisty = document.createElement("span");
     twisty.className = "twisty";
-    twisty.textContent = trashOpen ? "▾" : "▸";
+    twisty.textContent = trashOpen.has(at) ? "▾" : "▸";
     row.appendChild(twisty);
+
+    const can = document.createElement("span");
+    can.className = "can";
+    can.innerHTML = CAN_ICON;
+    row.appendChild(can);
 
     const label = document.createElement("span");
     label.className = "label";
@@ -316,7 +392,9 @@
     row.appendChild(label);
 
     row.addEventListener("click", () => {
-      trashOpen = !trashOpen;
+      if (!trashOpen.delete(at)) {
+        trashOpen.add(at);
+      }
       drawTree();
     });
     return row;
@@ -351,8 +429,8 @@
         const dot = document.createElement("span");
         const noted = (mentions[node.path] || []).length;
         const seen = reads.has(node.path);
-        dot.className = seen ? "unread read" : noted ? "unread noted" : "unread";
-        dot.title = seen ? "" : noted ? "Talked about " + noted + " times" : "Not read yet";
+        dot.className = seen ? "dot read" : noted ? "dot noted" : "dot";
+        dot.title = seen ? "Read" : noted ? "Talked about " + noted + " times" : "Not read yet";
         row.appendChild(dot);
       }
 
@@ -361,7 +439,11 @@
       label.textContent = node.name;
       row.appendChild(label);
 
-      if (!node.dir && pinned.has(node.path)) {
+      if (colors[node.path]) {
+        row.classList.add("colored", "c-" + colors[node.path]);
+      }
+
+      if (pinned.has(node.path)) {
         const pin = document.createElement("span");
         pin.className = "pin";
         pin.title = "Pinned";
@@ -382,6 +464,11 @@
         badge.title = statuses[node.path];
         row.appendChild(badge);
       }
+      if (!node.dir) {
+        for (const tag of tags[node.path] || []) {
+          row.appendChild(tagPill(tag));
+        }
+      }
 
       row.addEventListener("click", () => {
         if (node.dir) {
@@ -399,7 +486,7 @@
 
       row.addEventListener("contextmenu", (event) => {
         event.preventDefault();
-        openMenu(event.clientX, event.clientY, nodeMenu(node));
+        openMenu(event.clientX, event.clientY, nodeMenu(node, event.clientX, event.clientY));
       });
 
       row.addEventListener("dragstart", (event) => {
@@ -416,23 +503,48 @@
       });
 
       li.appendChild(row);
-      if (node.dir && expanded.has(node.path) && node.children && node.children.length) {
-        li.appendChild(buildList(node.children));
+      if (node.dir && expanded.has(node.path)) {
+        const children = node.children || [];
+        const binned = inTrash(node.path) ? [] : trashFor(node.path);
+        if (children.length || binned.length) {
+          const inner = buildList(children);
+          if (binned.length) {
+            inner.appendChild(trashItem(node.path));
+          }
+          li.appendChild(inner);
+        }
       }
       ul.appendChild(li);
     }
     return ul;
   }
 
-  // A pin puts its file above everything the folder holds, folders included; several of
-  // them are read as one short list of their own, so they are named in order.
+  // A pin puts its entry above everything else the folder holds; several of them are read
+  // as one short list of their own, so they are named in order, folders first.
   function sortPinned(items) {
-    const up = items.filter((node) => !node.dir && pinned.has(node.path));
+    const up = items.filter((node) => pinned.has(node.path));
     if (!up.length) {
       return items;
     }
-    up.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-    return [...up, ...items.filter((node) => node.dir || !pinned.has(node.path))];
+    up.sort((a, b) =>
+      !!a.dir !== !!b.dir
+        ? (a.dir ? -1 : 1)
+        : a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
+    return [...up, ...items.filter((node) => !pinned.has(node.path))];
+  }
+
+  // A tag is drawn the way a status is, in the colour it was given.
+  function tagPill(name) {
+    const pill = document.createElement("span");
+    pill.className = "status tag c-" + tagColor(name);
+    pill.textContent = name;
+    pill.title = name;
+    return pill;
+  }
+
+  function tagColor(name) {
+    return tagColors[name] || "grey";
   }
 
   function togglePin(path) {
@@ -501,6 +613,11 @@
         tick.textContent = item.checked ? "✓" : "";
         button.appendChild(tick);
       }
+      if (item.swatch) {
+        const swatch = document.createElement("span");
+        swatch.className = "swatch c-" + item.swatch;
+        button.appendChild(swatch);
+      }
       button.appendChild(document.createTextNode(item.label));
       button.addEventListener("click", () => {
         closeMenu();
@@ -508,12 +625,41 @@
       });
       menuEl.appendChild(button);
     }
-    menuEl.style.left = "0px";
-    menuEl.style.top = "0px";
     menuEl.hidden = false;
-    const box = menuEl.getBoundingClientRect();
-    menuEl.style.left = Math.max(0, Math.min(x, window.innerWidth - box.width - 4)) + "px";
-    menuEl.style.top = Math.max(0, Math.min(y, window.innerHeight - box.height - 4)) + "px";
+    place(menuEl, x, y);
+  }
+
+  // A floating box opens at the point asked for, pulled back inside the window.
+  function place(el, x, y) {
+    el.style.left = "0px";
+    el.style.top = "0px";
+    const box = el.getBoundingClientRect();
+    el.style.left = Math.max(0, Math.min(x, window.innerWidth - box.width - 4)) + "px";
+    el.style.top = Math.max(0, Math.min(y, window.innerHeight - box.height - 4)) + "px";
+  }
+
+  // "none" is offered only where having no colour at all is a choice; a tag always has one.
+  function openColorMenu(x, y, chosen, none, apply) {
+    const items = COLORS.map((color) => ({
+      label: color,
+      swatch: color,
+      checked: chosen === color,
+      run: () => apply(color)
+    }));
+    if (none) {
+      items.unshift({ label: "no colour", checked: !chosen, run: () => apply(null) }, { separator: true });
+    }
+    openMenu(x, y, items);
+  }
+
+  function setColor(node, color) {
+    if (color) {
+      colors[node.path] = color;
+    } else {
+      delete colors[node.path];
+    }
+    drawTree();
+    vscode.postMessage({ type: "color", path: node.path, dir: !!node.dir, color: color });
   }
 
   function closeMenu() {
@@ -521,21 +667,32 @@
     menuEl.textContent = "";
   }
 
-  function nodeMenu(node) {
+  function nodeMenu(node, x, y) {
     const trashed = inTrash(node.path);
     const items = [];
     if (node.dir && !trashed) {
       items.push(...makeItems(node.path), { separator: true });
     }
     items.push({ label: "Reveal in file explorer", run: () => send("reveal", node) });
+    if (!node.dir) {
+      items.push({ label: "Open in browser", run: () => send("browser", node) });
+    }
     items.push({ label: "Rename…", run: () => send("rename", node) });
     items.push({ label: "Clone", run: () => send("clone", node) });
     items.push({ label: "Copy path", run: () => copyPath(node.path) });
-    if (!node.dir && !trashed) {
+    if (!trashed) {
+      items.push({ separator: true });
       items.push({
         label: pinned.has(node.path) ? "Unpin" : "Pin to top",
         run: () => togglePin(node.path)
       });
+      items.push({
+        label: "Colour…",
+        run: () => openColorMenu(x, y, colors[node.path], true, (color) => setColor(node, color))
+      });
+      if (!node.dir) {
+        items.push({ label: "Tags…", run: () => openTagPicker(node.path, x, y) });
+      }
     }
     items.push({ separator: true });
     if (trashed) {
@@ -707,6 +864,18 @@
   document.addEventListener("pointerdown", (event) => {
     if (!menuEl.hidden && !menuEl.contains(event.target)) {
       closeMenu();
+    }
+    // The colour menu opens over the picker, and the header's own tag buttons toggle it,
+    // so neither counts as a click away from it.
+    const target = event.target;
+    if (
+      !tagPickerEl.hidden &&
+      !tagPickerEl.contains(target) &&
+      !menuEl.contains(target) &&
+      !addTagEl.contains(target) &&
+      !headerTagsEl.contains(target)
+    ) {
+      closeTagPicker();
     }
   }, true);
 
@@ -1025,13 +1194,45 @@
     const trashed = !!current && inTrash(current.path);
     trashEl.hidden = trashed || !current;
     restoreEl.hidden = !trashed || !current;
+    addTagEl.hidden = trashed || !current;
   }
 
   document.addEventListener("keydown", (event) => {
+    const ctrl = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
     if (!menuEl.hidden && event.key === "Escape") {
       event.preventDefault();
       closeMenu();
       return;
+    }
+    if (ctrl && key === "f") {
+      event.preventDefault();
+      findKey(event);
+      return;
+    }
+    if (!tagPickerEl.hidden && event.key === "Escape") {
+      event.preventDefault();
+      closeTagPicker();
+      return;
+    }
+    if (optionsOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeOptions();
+      }
+      return;
+    }
+    // The search across the docs covers the reading pane, so the pane's own keys wait
+    // until it is closed again; only saving goes through.
+    if (finderOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeFinder();
+        return;
+      }
+      if (!(ctrl && key === "s")) {
+        return;
+      }
     }
     if (!lightboxEl.hidden) {
       if (event.key === "Escape") {
@@ -1069,14 +1270,48 @@
       }
       return;
     }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f" && article) {
-      event.preventDefault();
-      openSearch();
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    if (ctrl && key === "s") {
       event.preventDefault();
       save();
+    }
+  });
+
+  const FIND_TWICE_MS = 500;
+  let findAt = 0;
+  let findFocus = null;
+  let findWasOpen = false;
+
+  // Ctrl+F finds in the page. A second F soon after, with Ctrl held down the whole time,
+  // searches every doc instead, and the find the first press opened is put away again.
+  function findKey(event) {
+    if (event.repeat) {
+      return;
+    }
+    const now = Date.now();
+    if (findAt && now - findAt < FIND_TWICE_MS) {
+      findAt = 0;
+      if (!findWasOpen) {
+        closeSearch();
+      }
+      openFinder(findFocus);
+      return;
+    }
+    findAt = now;
+    findFocus = document.activeElement;
+    findWasOpen = searchOpen;
+    if (finderOpen) {
+      finderTextEl.focus();
+      finderTextEl.select();
+      return;
+    }
+    if (!optionsOpen && article) {
+      openSearch();
+    }
+  }
+
+  document.addEventListener("keyup", (event) => {
+    if (event.key === "Control" || event.key === "Meta") {
+      findAt = 0;
     }
   });
 
@@ -1218,6 +1453,11 @@
       nodes = message.nodes || [];
       trashNodes = message.trash || [];
       rootPrefix = typeof message.root === "string" ? message.root : "";
+      rootNameEl.textContent = message.name || "";
+      rootNameEl.title = rootPrefix;
+      if (finderOpen) {
+        vscode.postMessage({ type: "corpus" });
+      }
       // A rename or a move rewrites the pins, so the tree carries the list that is true now.
       if (Array.isArray(message.pinned)) {
         pinned = new Set(message.pinned);
@@ -1254,6 +1494,9 @@
       if (anchor) {
         restoreAnchor(anchor);
       }
+      if (pendingFind && pendingFind.path === message.path) {
+        applyPendingFind();
+      }
     } else if (message.type === "state") {
       applyState(message);
       setSplit(split);
@@ -1275,6 +1518,7 @@
         current.path = message.to;
       }
       persist();
+      drawHeaderTags();
     } else if (message.type === "moved") {
       selected = null;
       current = null;
@@ -1283,10 +1527,29 @@
       persist();
     } else if (message.type === "statuses") {
       statuses = message.statuses || {};
+      tags = message.tags || {};
+      colors = message.colors || {};
+      tagColors = message.tagColors || {};
       drawTree();
       if (current) {
         showStatus(statuses[current.path]);
       }
+      drawHeaderTags();
+      drawTagPicker();
+      drawOptions();
+    } else if (message.type === "corpus") {
+      corpus = (message.entries || []).map((entry) => ({
+        path: entry.path,
+        name: entry.name,
+        dir: !!entry.dir,
+        lines: typeof entry.text === "string" ? entry.text.split(/\r?\n/) : null
+      }));
+      if (finderOpen) {
+        runFinder(true);
+      }
+    } else if (message.type === "dataFiles") {
+      dataFiles = message.files || [];
+      drawOptions();
     } else if (message.type === "reads") {
       reads = new Set(message.reads || []);
       drawTree();
@@ -1375,17 +1638,23 @@
   // A regular expression the reader wrote is used as it stands; anything else is matched
   // letter for letter.
   function searchPattern() {
-    const term = searchTextEl.value;
-    searchTextEl.classList.remove("bad");
+    return makePattern(searchTextEl, searchCase, searchWord, searchRegex);
+  }
+
+  // Both searches read their term the same way; a term that is no expression marks the
+  // box it was typed in.
+  function makePattern(input, matchCase, word, regex) {
+    const term = input.value;
+    input.classList.remove("bad");
     if (!term) {
       return null;
     }
-    const body = searchRegex ? term : term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const source = searchWord ? "\\b(?:" + body + ")\\b" : body;
+    const body = regex ? term : term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const source = word ? "\\b(?:" + body + ")\\b" : body;
     try {
-      return new RegExp(source, searchCase ? "g" : "gi");
+      return new RegExp(source, matchCase ? "g" : "gi");
     } catch {
-      searchTextEl.classList.add("bad");
+      input.classList.add("bad");
       return null;
     }
   }
@@ -1521,6 +1790,7 @@
     titleEl.title = "Copy the path (" + fullPath(current.path) + ")";
     drawStamps();
     showStatus(statuses[current.path]);
+    drawHeaderTags();
     toggleEl.hidden = !editable(current);
     toggleEl.classList.toggle("editing", mode === "edit");
     toggleEl.title = mode === "edit" ? "Preview" : "Edit";
@@ -1946,6 +2216,796 @@
       tocEl.scrollTop = top;
     } else if (bottom > tocEl.scrollTop + tocEl.clientHeight) {
       tocEl.scrollTop = bottom - tocEl.clientHeight;
+    }
+  }
+
+  // The file's tags sit after its status, and any of them opens the picker.
+  function drawHeaderTags() {
+    headerTagsEl.textContent = "";
+    if (!current) {
+      return;
+    }
+    for (const tag of tags[current.path] || []) {
+      const pill = tagPill(tag);
+      pill.addEventListener("click", () => toggleTagPicker(pill));
+      headerTagsEl.appendChild(pill);
+    }
+  }
+
+  addTagEl.addEventListener("click", () => toggleTagPicker(addTagEl));
+
+  function toggleTagPicker(anchor) {
+    if (!tagPickerEl.hidden) {
+      closeTagPicker();
+      return;
+    }
+    if (current && !inTrash(current.path)) {
+      const box = anchor.getBoundingClientRect();
+      openTagPicker(current.path, box.right - 220, box.bottom + 4);
+    }
+  }
+
+  let pickerPath = null;
+  let pickerIndex = 0;
+
+  function openTagPicker(path, x, y) {
+    closeMenu();
+    pickerPath = path;
+    pickerIndex = 0;
+    tagPickerTitleEl.textContent = "Tags of " + path.split("/").pop();
+    tagInputEl.value = "";
+    tagPickerEl.hidden = false;
+    drawTagPicker();
+    place(tagPickerEl, x, y);
+    tagInputEl.focus();
+  }
+
+  function closeTagPicker() {
+    if (tagPickerEl.hidden) {
+      return;
+    }
+    tagPickerEl.hidden = true;
+    pickerPath = null;
+    tagListEl.textContent = "";
+  }
+
+  // Every tag there is, narrowed to what has been typed; a name no tag has yet is offered
+  // last, as the tag it would make, so Enter on part of a name picks the tag it names.
+  function pickerChoices() {
+    const text = tagInputEl.value.replace(/\s+/g, " ").trim();
+    const lower = text.toLowerCase();
+    const names = [...new Set(Object.keys(tagColors).concat(tags[pickerPath] || []))].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+    const choices = names
+      .filter((name) => name.toLowerCase().includes(lower))
+      .map((name) => ({ name: name }));
+    if (text && !names.some((name) => name.toLowerCase() === lower)) {
+      choices.push({ name: text, fresh: true });
+    }
+    return choices;
+  }
+
+  function drawTagPicker() {
+    if (tagPickerEl.hidden || !pickerPath) {
+      return;
+    }
+    const choices = pickerChoices();
+    pickerIndex = Math.min(Math.max(pickerIndex, 0), Math.max(choices.length - 1, 0));
+    const own = new Set(tags[pickerPath] || []);
+    tagListEl.textContent = "";
+    if (!choices.length) {
+      const empty = document.createElement("p");
+      empty.className = "notice";
+      empty.textContent = "Type a name to make a tag.";
+      tagListEl.appendChild(empty);
+      return;
+    }
+    choices.forEach((choice, index) => {
+      const row = document.createElement("div");
+      row.className = "tag-choice" + (index === pickerIndex ? " on" : "");
+
+      const tick = document.createElement("span");
+      tick.className = "tick";
+      tick.textContent = own.has(choice.name) ? "✓" : "";
+      row.appendChild(tick);
+
+      const swatch = document.createElement("span");
+      swatch.className = "swatch pick c-" + tagColor(choice.name);
+      if (!choice.fresh) {
+        swatch.title = "Colour";
+        swatch.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const box = swatch.getBoundingClientRect();
+          pickTagColor(choice.name, box.left, box.bottom + 4);
+        });
+      }
+      row.appendChild(swatch);
+
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = choice.fresh ? "Add “" + choice.name + "”" : choice.name;
+      row.appendChild(name);
+
+      // The input keeps the focus, so typing carries on after a click.
+      row.addEventListener("pointerdown", (event) => event.preventDefault());
+      row.addEventListener("click", () => {
+        pickerIndex = index;
+        toggleTag(choice);
+      });
+      tagListEl.appendChild(row);
+    });
+    const on = tagListEl.children[pickerIndex];
+    if (on) {
+      on.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function toggleTag(choice) {
+    if (!pickerPath) {
+      return;
+    }
+    const own = tags[pickerPath] || [];
+    const next = own.includes(choice.name)
+      ? own.filter((name) => name !== choice.name)
+      : own.concat(choice.name);
+    tags = Object.assign({}, tags, { [pickerPath]: next });
+    if (choice.fresh) {
+      tagInputEl.value = "";
+    }
+    vscode.postMessage({ type: "tags", path: pickerPath, tags: next });
+    drawTagPicker();
+    drawTree();
+    drawHeaderTags();
+  }
+
+  function pickTagColor(name, x, y) {
+    openColorMenu(x, y, tagColor(name), false, (color) => {
+      tagColors = Object.assign({}, tagColors, { [name]: color });
+      vscode.postMessage({ type: "tagColor", name: name, color: color });
+      drawTree();
+      drawHeaderTags();
+      drawTagPicker();
+      drawOptions();
+      if (!tagPickerEl.hidden) {
+        tagInputEl.focus();
+      }
+    });
+  }
+
+  tagInputEl.addEventListener("input", () => {
+    pickerIndex = 0;
+    drawTagPicker();
+  });
+
+  tagInputEl.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      pickerIndex += event.key === "ArrowDown" ? 1 : -1;
+      drawTagPicker();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const choice = pickerChoices()[pickerIndex];
+      if (choice) {
+        toggleTag(choice);
+      }
+    } else if (event.key === "Escape" && menuEl.hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTagPicker();
+    }
+  });
+
+  let optionsOpen = false;
+  let dataFiles = null;
+
+  function openOptions() {
+    closeMenu();
+    closeTagPicker();
+    if (finderOpen) {
+      closeFinder();
+    }
+    optionsOpen = true;
+    optionsLayerEl.hidden = false;
+    drawOptions();
+    optionsDialogEl.focus();
+    vscode.postMessage({ type: "dataFiles" });
+  }
+
+  function closeOptions() {
+    optionsOpen = false;
+    optionsLayerEl.hidden = true;
+    optionsDialogEl.textContent = "";
+  }
+
+  openOptionsEl.addEventListener("click", openOptions);
+
+  optionsLayerEl.addEventListener("pointerdown", (event) => {
+    if (event.target === optionsLayerEl) {
+      closeOptions();
+    }
+  });
+
+  function make(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) {
+      el.className = className;
+    }
+    if (text !== undefined) {
+      el.textContent = text;
+    }
+    return el;
+  }
+
+  function makeButton(label, run, className) {
+    const button = make("button", className || "opt-button", label);
+    button.type = "button";
+    button.addEventListener("click", run);
+    return button;
+  }
+
+  function optionSection(title) {
+    const section = make("section", "opt-section");
+    section.appendChild(make("h3", "", title));
+    optionsDialogEl.appendChild(section);
+    return section;
+  }
+
+  function optionRow(section, label, controls) {
+    const row = make("div", "opt-row");
+    const name = make("div", "opt-label");
+    for (const part of [].concat(label)) {
+      name.appendChild(typeof part === "string" ? make("span", "", part) : part);
+    }
+    const box = make("div", "opt-controls");
+    for (const control of controls) {
+      box.appendChild(control);
+    }
+    row.appendChild(name);
+    row.appendChild(box);
+    section.appendChild(row);
+    return row;
+  }
+
+  function optionChoice(labels, chosen, apply) {
+    const select = make("select", "opt-select");
+    labels.forEach((label, index) => {
+      const option = make("option", "", label);
+      option.value = String(index);
+      option.selected = index === chosen;
+      select.appendChild(option);
+    });
+    select.addEventListener("change", () => {
+      apply(Number(select.value));
+      drawOptions();
+    });
+    return select;
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) {
+      return bytes + " B";
+    }
+    if (bytes < 1024 * 1024) {
+      return (bytes / 1024).toFixed(1) + " KB";
+    }
+    return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  }
+
+  // Everything the panel keeps of its own: how a page reads, the tags, and the files
+  // the panel writes, each of which can be thrown away from here.
+  function drawOptions() {
+    if (!optionsOpen) {
+      return;
+    }
+    const scroll = optionsDialogEl.scrollTop;
+    optionsDialogEl.textContent = "";
+
+    const head = make("div", "opt-head");
+    head.appendChild(make("h2", "", "Docs Panel options"));
+    const close = makeButton("", closeOptions, "icon");
+    close.title = "Close (Escape)";
+    close.appendChild(make("span", "glyph", "✕"));
+    head.appendChild(close);
+    optionsDialogEl.appendChild(head);
+
+    const reading = optionSection("Reading");
+    const smaller = makeButton("−", () => {
+      stepTextScale(-TEXT_STEP);
+      drawOptions();
+    });
+    smaller.disabled = textScale <= MIN_TEXT;
+    const bigger = makeButton("+", () => {
+      stepTextScale(TEXT_STEP);
+      drawOptions();
+    });
+    bigger.disabled = textScale >= MAX_TEXT;
+    optionRow(reading, "Text size", [
+      smaller,
+      make("span", "opt-value", Math.round(textScale * 100) + "%"),
+      bigger
+    ]);
+    optionRow(reading, "Line spacing", [
+      optionChoice(LINE_LABELS, lineHeight, (step) => {
+        setLineHeight(step);
+        fitEditor();
+        persist();
+        scheduleActive();
+      })
+    ]);
+    optionRow(reading, "Font", [
+      optionChoice(["default", "mono"], mono ? 1 : 0, (choice) => {
+        setMono(choice === 1);
+        fitEditor();
+        persist();
+        scheduleActive();
+      })
+    ]);
+    optionRow(reading, "Contents list", [
+      optionChoice(["sized by hand", "sized to fit"], tocAuto ? 1 : 0, (choice) => {
+        tocAuto = choice === 1;
+        fitToc();
+        persist();
+      })
+    ]);
+
+    const folder = optionSection("Folder");
+    optionRow(folder, [make("span", "opt-path", rootPrefix || "the workspace root")], [
+      makeButton("Open settings", () => vscode.postMessage({ type: "settings" }))
+    ]);
+
+    const tagBox = optionSection("Tags");
+    const names = Object.keys(tagColors).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+    if (!names.length) {
+      tagBox.appendChild(make("p", "notice", "No tags yet. Add one with + in a file's header."));
+    }
+    for (const name of names) {
+      const used = Object.values(tags).filter((list) => list.includes(name)).length;
+      const swatch = make("span", "swatch pick c-" + tagColor(name));
+      swatch.title = "Colour";
+      swatch.addEventListener("click", () => {
+        const box = swatch.getBoundingClientRect();
+        pickTagColor(name, box.left, box.bottom + 4);
+      });
+      optionRow(tagBox, [swatch, make("span", "opt-name", name)], [
+        make("span", "opt-dim", used + (used === 1 ? " file" : " files")),
+        makeButton("Rename…", () => vscode.postMessage({ type: "renameTag", name: name })),
+        makeButton("Delete", () => vscode.postMessage({ type: "deleteTag", name: name }), "opt-button danger")
+      ]);
+    }
+
+    const data = optionSection("Data files");
+    if (!dataFiles) {
+      data.appendChild(make("p", "notice", "Reading the sizes…"));
+    } else {
+      for (const file of dataFiles) {
+        const label = make("div", "opt-file");
+        label.appendChild(make("span", "opt-name", file.label));
+        const where = make("span", "opt-path", file.path);
+        where.title = file.path + "\nPurging: " + file.note;
+        label.appendChild(where);
+        const purge = makeButton("Purge", () => vscode.postMessage({ type: "purge", ids: [file.id] }), "opt-button danger");
+        purge.disabled = file.size < 0;
+        optionRow(data, [label], [
+          make("span", "opt-dim", file.size < 0 ? "none" : formatSize(file.size)),
+          purge
+        ]);
+      }
+      const present = dataFiles.filter((file) => file.size >= 0);
+      const total = present.reduce((sum, file) => sum + file.size, 0);
+      const all = makeButton(
+        "Purge all",
+        () => vscode.postMessage({ type: "purge", ids: present.map((file) => file.id) }),
+        "opt-button danger"
+      );
+      all.disabled = !present.length;
+      optionRow(data, [make("span", "opt-dim", "Together")], [
+        make("span", "opt-dim", formatSize(total)),
+        all
+      ]);
+    }
+    optionsDialogEl.scrollTop = scroll;
+  }
+
+  const MAX_FINDER_HITS = 2000;
+  const MAX_FILE_HITS = 200;
+  const MAX_LINE_HITS = 50;
+  const EXCERPT_LEAD = 40;
+  const EXCERPT_MAX = 220;
+  const FINDER_PAGE = 10;
+
+  let finderOpen = false;
+  let corpus = null;
+  let finderCase = false;
+  let finderWord = false;
+  let finderRegex = false;
+  let finderItems = [];
+  let finderIndex = -1;
+  let finderTimer = 0;
+  let finderReturn = null;
+  let pendingFind = null;
+
+  // The search covers the reading pane rather than replacing it, so whatever was open is
+  // still there underneath when it closes.
+  function openFinder(returnTo) {
+    if (finderOpen) {
+      finderTextEl.focus();
+      finderTextEl.select();
+      return;
+    }
+    closeMenu();
+    closeTagPicker();
+    if (optionsOpen) {
+      closeOptions();
+    }
+    if (!lightboxEl.hidden) {
+      closeLightbox();
+    }
+    finderReturn = returnTo || document.activeElement;
+    finderOpen = true;
+    finderEl.hidden = false;
+    finderTextEl.focus();
+    finderTextEl.select();
+    vscode.postMessage({ type: "corpus" });
+    runFinder();
+  }
+
+  function closeFinder() {
+    finderOpen = false;
+    finderEl.hidden = true;
+    clearTimeout(finderTimer);
+    const back = finderReturn;
+    finderReturn = null;
+    if (back && back !== document.body && back.isConnected && back.offsetParent !== null) {
+      back.focus();
+    }
+  }
+
+  findAllEl.addEventListener("click", () => openFinder());
+  finderCloseEl.addEventListener("click", closeFinder);
+  finderTextEl.addEventListener("input", () => {
+    clearTimeout(finderTimer);
+    finderTimer = setTimeout(() => runFinder(), 40);
+  });
+
+  function finderOption(el, value) {
+    el.classList.toggle("active", value);
+    runFinder();
+    finderTextEl.focus();
+    return value;
+  }
+
+  finderCaseEl.addEventListener("click", () => {
+    finderCase = finderOption(finderCaseEl, !finderCase);
+  });
+  finderWordEl.addEventListener("click", () => {
+    finderWord = finderOption(finderWordEl, !finderWord);
+  });
+  finderRegexEl.addEventListener("click", () => {
+    finderRegex = finderOption(finderRegexEl, !finderRegex);
+  });
+
+  // The arrows only ever move the pick: the caret stays put and the focus stays here.
+  finderTextEl.addEventListener("keydown", (event) => {
+    const ctrl = event.ctrlKey || event.metaKey;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      if (ctrl) {
+        jumpGroup(delta);
+      } else {
+        moveFinder(finderIndex + delta);
+      }
+    } else if (event.key === "PageDown" || event.key === "PageUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveFinder(finderIndex + (event.key === "PageDown" ? FINDER_PAGE : -FINDER_PAGE));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      activateFinder();
+    }
+  });
+
+  // Names come first, folders and files alike, because a name that matches is most often
+  // what was being looked for; the files that only match inside follow in tree order.
+  function runFinder(keep) {
+    const pattern = makePattern(finderTextEl, finderCase, finderWord, finderRegex);
+    const named = [];
+    const inside = [];
+    let total = 0;
+    let capped = false;
+    if (pattern && corpus) {
+      for (const entry of corpus) {
+        const group = { entry: entry, name: rangesIn(entry.name, pattern), hits: [], more: 0, count: 0 };
+        if (entry.lines) {
+          if (total < MAX_FINDER_HITS) {
+            scanLines(entry.lines, pattern, group);
+            total += group.hits.length;
+          } else {
+            capped = true;
+          }
+        }
+        if (group.name.length) {
+          named.push(group);
+        } else if (group.hits.length) {
+          inside.push(group);
+        }
+      }
+    }
+    drawFinder(named.concat(inside), !!pattern, capped, keep);
+  }
+
+  function scanLines(lines, pattern, group) {
+    for (let i = 0; i < lines.length; i++) {
+      const ranges = rangesIn(lines[i], pattern);
+      if (!ranges.length) {
+        continue;
+      }
+      if (group.hits.length < MAX_FILE_HITS) {
+        group.hits.push({ line: i + 1, text: lines[i], ranges: ranges, nth: group.count });
+      } else {
+        group.more += 1;
+      }
+      group.count += ranges.length;
+    }
+  }
+
+  function rangesIn(text, pattern) {
+    const out = [];
+    pattern.lastIndex = 0;
+    let hit;
+    while (out.length < MAX_LINE_HITS && (hit = pattern.exec(text))) {
+      if (hit[0]) {
+        out.push([hit.index, hit.index + hit[0].length]);
+      } else {
+        pattern.lastIndex += 1;
+      }
+    }
+    return out;
+  }
+
+  function finderKey(item) {
+    return item ? item.kind + ":" + item.path + ":" + (item.nth === undefined ? "" : item.nth) : "";
+  }
+
+  function drawFinder(groups, searched, capped, keep) {
+    const kept = keep ? finderKey(finderItems[finderIndex]) : "";
+    finderResultsEl.textContent = "";
+    finderItems = [];
+    let hits = 0;
+
+    for (const group of groups) {
+      const entry = group.entry;
+      const box = make("div", "f-group");
+
+      const head = make("div", "f-row f-head");
+      const icon = make("span", "f-icon");
+      icon.innerHTML = entry.dir ? FOLDER_ICON : FILE_ICON;
+      head.appendChild(icon);
+      head.appendChild(marked(make("span", "f-name"), entry.name, group.name));
+      const parent = entry.path.split("/").slice(0, -1).join("/");
+      if (parent) {
+        head.appendChild(make("span", "f-where", parent));
+      }
+      if (group.count) {
+        head.appendChild(make("span", "f-count", String(group.count)));
+      }
+      head.title = entry.path;
+      box.appendChild(head);
+      addFinderItem({ kind: entry.dir ? "folder" : "file", path: entry.path, el: head, head: true });
+
+      for (const hit of group.hits) {
+        const row = make("div", "f-row f-hit");
+        row.appendChild(make("span", "f-line", String(hit.line)));
+        const excerpt = excerptOf(hit.text, hit.ranges);
+        row.appendChild(marked(make("span", "f-text"), excerpt.text, excerpt.ranges));
+        box.appendChild(row);
+        addFinderItem({ kind: "hit", path: entry.path, nth: hit.nth, el: row });
+        hits += 1;
+      }
+      if (group.more) {
+        box.appendChild(make("div", "f-more", group.more + " more lines in this file"));
+      }
+      finderResultsEl.appendChild(box);
+    }
+
+    if (!searched) {
+      finderCountEl.textContent = "";
+      finderResultsEl.appendChild(
+        make("p", "notice", "Type to search the names of files and folders, and the text in the files.")
+      );
+    } else if (!corpus) {
+      finderCountEl.textContent = "";
+      finderResultsEl.appendChild(make("p", "notice", "Reading the docs…"));
+    } else if (!groups.length) {
+      finderCountEl.textContent = "no results";
+    } else {
+      const files = groups.length + (groups.length === 1 ? " entry" : " entries");
+      finderCountEl.textContent = hits ? hits + " lines in " + files + (capped ? ", stopped early" : "") : files;
+    }
+
+    finderIndex = -1;
+    const back = kept ? finderItems.findIndex((item) => finderKey(item) === kept) : -1;
+    moveFinder(back >= 0 ? back : 0);
+  }
+
+  function addFinderItem(item) {
+    const index = finderItems.length;
+    finderItems.push(item);
+    // The input keeps the focus, so the arrows still work after a click.
+    item.el.addEventListener("pointerdown", (event) => event.preventDefault());
+    item.el.addEventListener("click", () => {
+      moveFinder(index);
+      activateFinder();
+    });
+  }
+
+  // A long line is cut to a window that starts a little before its first hit.
+  function excerptOf(text, ranges) {
+    const lead = text.length - text.trimStart().length;
+    let start = lead;
+    if (ranges.length && ranges[0][0] - start > EXCERPT_LEAD && text.length - start > EXCERPT_MAX) {
+      start = ranges[0][0] - EXCERPT_LEAD;
+    }
+    const end = Math.min(text.length, start + EXCERPT_MAX);
+    const shift = start > lead ? 1 : 0;
+    return {
+      text: (shift ? "…" : "") + text.slice(start, end) + (end < text.length ? "…" : ""),
+      ranges: ranges
+        .filter((range) => range[0] >= start && range[1] <= end)
+        .map((range) => [range[0] - start + shift, range[1] - start + shift])
+    };
+  }
+
+  function marked(el, text, ranges) {
+    let at = 0;
+    for (const range of ranges) {
+      if (range[0] > at) {
+        el.appendChild(document.createTextNode(text.slice(at, range[0])));
+      }
+      el.appendChild(make("mark", "", text.slice(range[0], range[1])));
+      at = range[1];
+    }
+    if (at < text.length) {
+      el.appendChild(document.createTextNode(text.slice(at)));
+    }
+    return el;
+  }
+
+  // Scrolled by hand, so only the result list moves.
+  function moveFinder(index) {
+    if (!finderItems.length) {
+      finderIndex = -1;
+      return;
+    }
+    const old = finderItems[finderIndex];
+    if (old) {
+      old.el.classList.remove("on");
+    }
+    finderIndex = Math.min(Math.max(index, 0), finderItems.length - 1);
+    const item = finderItems[finderIndex];
+    item.el.classList.add("on");
+    const view = finderResultsEl.getBoundingClientRect();
+    const box = item.el.getBoundingClientRect();
+    if (box.top < view.top) {
+      finderResultsEl.scrollTop += box.top - view.top - 4;
+    } else if (box.bottom > view.bottom) {
+      finderResultsEl.scrollTop += box.bottom - view.bottom + 4;
+    }
+  }
+
+  // A group is a file or folder and the lines found in it; the pick is in the group of
+  // the last heading at or above it.
+  function jumpGroup(delta) {
+    const heads = [];
+    finderItems.forEach((item, index) => {
+      if (item.head) {
+        heads.push(index);
+      }
+    });
+    if (!heads.length) {
+      return;
+    }
+    let at = 0;
+    heads.forEach((head, k) => {
+      if (head <= finderIndex) {
+        at = k;
+      }
+    });
+    moveFinder(heads[Math.min(Math.max(at + delta, 0), heads.length - 1)]);
+  }
+
+  // A folder is shown in the tree; a file is opened, and a line in it is found again in
+  // the page with the same term, at the same count of hits from the top.
+  function activateFinder() {
+    const item = finderItems[finderIndex];
+    if (!item) {
+      return;
+    }
+    pendingFind =
+      item.kind === "hit"
+        ? {
+            path: item.path,
+            term: finderTextEl.value,
+            matchCase: finderCase,
+            word: finderWord,
+            regex: finderRegex,
+            nth: item.nth
+          }
+        : null;
+    closeFinder();
+    expandTo(item.path, item.kind === "folder");
+    if (item.kind === "folder") {
+      drawTree();
+      persist();
+      showRow(item.path, true);
+      return;
+    }
+    if (item.path === selected) {
+      drawTree();
+      persist();
+      if (current && current.path === item.path) {
+        applyPendingFind();
+      }
+    } else {
+      openFile(item.path);
+    }
+    showRow(item.path, false);
+  }
+
+  function expandTo(path, self) {
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      expanded.add(parts.slice(0, i).join("/"));
+    }
+    if (self) {
+      expanded.add(path);
+    }
+  }
+
+  // A file needs no mark of its own: it is the one selected.
+  function showRow(path, flash) {
+    const row = [...treeEl.querySelectorAll(".row")].find((el) => el.dataset.path === path);
+    if (!row) {
+      return;
+    }
+    const view = treeEl.getBoundingClientRect();
+    const box = row.getBoundingClientRect();
+    if (box.top < view.top || box.bottom > view.bottom) {
+      treeEl.scrollTop += box.top - view.top - view.height / 3;
+    }
+    if (!flash) {
+      return;
+    }
+    row.classList.remove("found");
+    void row.offsetWidth; // restart the animation on a repeated jump
+    row.classList.add("found");
+    setTimeout(() => row.classList.remove("found"), FLASH_MS);
+  }
+
+  function applyPendingFind() {
+    const find = pendingFind;
+    pendingFind = null;
+    if (!find || !article || mode === "edit") {
+      return;
+    }
+    searchCase = find.matchCase;
+    searchWord = find.word;
+    searchRegex = find.regex;
+    searchCaseEl.classList.toggle("active", searchCase);
+    searchWordEl.classList.toggle("active", searchWord);
+    searchRegexEl.classList.toggle("active", searchRegex);
+    searchTextEl.value = find.term;
+    openSearch();
+    // The page is the file rendered, not the file, so the count can come out short; the
+    // last hit there is then the nearest one to go to.
+    if (matches.length > 1) {
+      matchIndex = Math.min(find.nth, matches.length - 1);
+      reveal(matches[matchIndex]);
+      paint();
+      showCount();
     }
   }
 

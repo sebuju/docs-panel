@@ -35,7 +35,7 @@ export function sessionsDir(workspace: vscode.Uri): string {
   );
 }
 
-function cacheUri(workspace: vscode.Uri): vscode.Uri {
+export function cacheUri(workspace: vscode.Uri): vscode.Uri {
   return vscode.Uri.joinPath(workspace, ".vscode", CACHE_FILE);
 }
 

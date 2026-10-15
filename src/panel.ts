@@ -3,12 +3,21 @@ import { buildTree, TreeNode } from "./tree";
 import { renderFile, escapeHtml } from "./render";
 import { watchRoot } from "./watch";
 import {
+  cleanTag,
+  deleteTag,
   invalidate,
+  isColor,
   listFiles,
+  load,
   prune,
   readsLedger,
   rekey,
+  rekeyFolders,
+  renameTag,
+  setColor,
   setStatus,
+  setTagColor,
+  setTags,
   statusLedger,
   Ledger,
   LedgerSpec,
@@ -16,7 +25,9 @@ import {
   READ,
   STATUSES
 } from "./ledger";
-import { match, refresh, sessionsDir } from "./mentions";
+import { cacheUri, match, refresh, sessionsDir } from "./mentions";
+import { openInBrowser } from "./browser";
+import { Corpus } from "./corpus";
 
 export const VIEW_TYPE = "docsPanel";
 export const TRASH_DIR = ".trash";
@@ -91,10 +102,28 @@ const GLASS_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden=
 <circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2"/>
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" d="M10.2 10.2 13.5 13.5"/></svg>`;
 
+const DOCS_SEARCH_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"
+d="M2 3.5h8M2 6.5h4.5M2 9.5h3M12.3 12.3l1.9 1.9"/>
+<circle cx="10.2" cy="10.2" r="2.9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
+
+const SLIDERS_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"
+d="M2.5 4.5h2M7.5 4.5h6M2.5 11.5h6M11.5 11.5h2"/>
+<circle cx="6" cy="4.5" r="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/>
+<circle cx="10" cy="11.5" r="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
+
 const EYE_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
 d="M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8z"/>
 <circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
+
+interface DataFile {
+  id: string;
+  label: string;
+  note: string;
+  uri: vscode.Uri;
+}
 
 interface Root {
   uri: vscode.Uri;
@@ -112,6 +141,7 @@ export class DocsPanel {
   private root: Root | undefined;
   private state: PanelState;
   private ready = false;
+  private readonly corpus = new Corpus();
 
   static open(context: vscode.ExtensionContext): void {
     if (DocsPanel.current) {
@@ -316,6 +346,36 @@ export class DocsPanel {
       case "status":
         await this.status(String(message.path), message.status);
         return;
+      case "tags":
+        await this.tags(String(message.path), message.tags);
+        return;
+      case "color":
+        await this.color(String(message.path), message.color, !!message.dir);
+        return;
+      case "tagColor":
+        await this.tagColor(String(message.name), message.color);
+        return;
+      case "renameTag":
+        await this.renameTag(String(message.name));
+        return;
+      case "deleteTag":
+        await this.deleteTag(String(message.name));
+        return;
+      case "browser":
+        await this.browse(String(message.path));
+        return;
+      case "corpus":
+        await this.sendCorpus();
+        return;
+      case "dataFiles":
+        await this.sendDataFiles();
+        return;
+      case "purge":
+        await this.purge(Array.isArray(message.ids) ? message.ids.map(String) : []);
+        return;
+      case "settings":
+        await vscode.commands.executeCommand("workbench.action.openSettings", "docsPanel");
+        return;
     }
   }
 
@@ -327,12 +387,89 @@ export class DocsPanel {
     this.postStatuses(await setStatus(statusLedger(this.root.uri), relPath, status));
   }
 
+  private async tags(relPath: string, value: unknown): Promise<void> {
+    if (!this.root || !Array.isArray(value)) {
+      return;
+    }
+    this.postStatuses(await setTags(statusLedger(this.root.uri), relPath, value));
+  }
+
+  private async color(relPath: string, value: unknown, dir: boolean): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const color = isColor(value) ? value : null;
+    this.postStatuses(await setColor(statusLedger(this.root.uri), relPath, color, dir));
+  }
+
+  private async tagColor(name: string, value: unknown): Promise<void> {
+    if (!this.root || !isColor(value)) {
+      return;
+    }
+    this.postStatuses(await setTagColor(statusLedger(this.root.uri), name, value));
+  }
+
+  private async renameTag(name: string): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const next = await vscode.window.showInputBox({
+      title: `Rename the tag ${name}`,
+      value: name,
+      validateInput: (value) => (cleanTag(value) ? null : "The name cannot be empty.")
+    });
+    if (next === undefined || cleanTag(next) === name) {
+      return;
+    }
+    this.postStatuses(await renameTag(statusLedger(this.root.uri), name, next));
+  }
+
+  private async deleteTag(name: string): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const spec = statusLedger(this.root.uri);
+    const used = Object.values((await load(spec)).files).filter((entry) =>
+      entry.tags.includes(name)
+    ).length;
+    if (used) {
+      const answer = await vscode.window.showWarningMessage(
+        `Delete the tag ${name}?`,
+        { modal: true, detail: `It comes off ${used} ${used === 1 ? "file" : "files"}.` },
+        "Delete"
+      );
+      if (answer !== "Delete") {
+        return;
+      }
+    }
+    this.postStatuses(await deleteTag(spec, name));
+  }
+
+  // One message carries everything the status ledger holds, since the tree draws it all
+  // at once: a file's status, tags and colour, a folder's colour, and each tag's colour.
   private postStatuses(ledger: Ledger): void {
     const statuses: Record<string, string> = {};
+    const tags: Record<string, string[]> = {};
+    const colors: Record<string, string> = {};
     for (const [path, entry] of Object.entries(ledger.files)) {
-      statuses[path] = entry.status;
+      if (entry.status) {
+        statuses[path] = entry.status;
+      }
+      if (entry.tags.length) {
+        tags[path] = entry.tags;
+      }
+      if (entry.color) {
+        colors[path] = entry.color;
+      }
     }
-    this.post({ type: "statuses", statuses });
+    for (const [path, mark] of Object.entries(ledger.folders)) {
+      colors[path] = mark.color;
+    }
+    const tagColors: Record<string, string> = {};
+    for (const [name, mark] of Object.entries(ledger.tags)) {
+      tagColors[name] = mark.color;
+    }
+    this.post({ type: "statuses", statuses, tags, colors, tagColors });
   }
 
   private postReads(ledger: Ledger): void {
@@ -417,6 +554,7 @@ export class DocsPanel {
         for (const inner of await listFiles(to)) {
           await rekey(spec, `${relPath}/${inner}`, `${toPath}/${inner}`);
         }
+        await rekeyFolders(spec, relPath, toPath);
       }
       this.repin(relPath, toPath);
       // Renaming a folder from the tree leaves the reading pane alone unless the open
@@ -476,6 +614,13 @@ export class DocsPanel {
           await this.shift(`${relPath}/${inner}`, direction);
         }
         await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
+        // The files land at the same path on the other side of the trash, and the
+        // folders they make there answer to the colours the originals had.
+        const to =
+          direction === "trash" ? `${TRASH_DIR}/${relPath}` : relPath.slice(TRASH_DIR.length + 1);
+        for (const spec of this.ledgers) {
+          await rekeyFolders(spec, relPath, to);
+        }
       } else {
         await this.shift(relPath, direction);
       }
@@ -610,6 +755,7 @@ export class DocsPanel {
           for (const rel of inner) {
             await rekey(spec, `${from}/${rel}`, `${toPath}/${rel}`);
           }
+          await rekeyFolders(spec, from, toPath);
         } else {
           await rekey(spec, from, toPath);
         }
@@ -631,6 +777,116 @@ export class DocsPanel {
       "revealFileInOS",
       vscode.Uri.joinPath(base, ...relPath.split("/"))
     );
+  }
+
+  private async browse(relPath: string): Promise<void> {
+    const base = this.base;
+    if (!base) {
+      return;
+    }
+    try {
+      await openInBrowser(base, relPath);
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `Docs Panel could not open ${relPath} in a browser: ${error instanceof Error ? error.message : error}`
+      );
+    }
+  }
+
+  // The search across the docs runs in the page, so it is handed the whole of them at
+  // once and every keystroke after that costs no round trip.
+  private async sendCorpus(): Promise<void> {
+    const base = this.base;
+    if (!this.ready || !base) {
+      return;
+    }
+    this.post({ type: "corpus", entries: await this.corpus.collect(base, await buildTree(base)) });
+  }
+
+  private dataFiles(): DataFile[] {
+    if (!this.root) {
+      return [];
+    }
+    return [
+      {
+        id: "ledger",
+        label: "Statuses, tags and colours",
+        note: "every status, tag and colour is lost",
+        uri: statusLedger(this.root.uri).store
+      },
+      {
+        id: "reads",
+        label: "Read marks",
+        note: "every file goes back to unread",
+        uri: readsLedger(this.root.workspace, this.root.uri).store
+      },
+      {
+        id: "mentions",
+        label: "Mention cache",
+        note: "rebuilt from the session logs on the next scan",
+        uri: cacheUri(this.root.workspace)
+      }
+    ];
+  }
+
+  private async sendDataFiles(): Promise<void> {
+    const workspace = this.root?.workspace;
+    if (!workspace) {
+      return;
+    }
+    const files = [];
+    for (const file of this.dataFiles()) {
+      files.push({
+        id: file.id,
+        label: file.label,
+        note: file.note,
+        path: relativeTo(workspace, file.uri),
+        size: await sizeOf(file.uri)
+      });
+    }
+    this.post({ type: "dataFiles", files });
+  }
+
+  // Each file is deleted outright and whatever it held is sent again, now empty, so the
+  // page drops what it was showing from it.
+  private async purge(ids: string[]): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const files: (DataFile & { size: number })[] = [];
+    for (const file of this.dataFiles()) {
+      const size = await sizeOf(file.uri);
+      if (ids.includes(file.id) && size >= 0) {
+        files.push({ ...file, size });
+      }
+    }
+    if (!files.length) {
+      return;
+    }
+    const answer = await vscode.window.showWarningMessage(
+      files.length === 1 ? `Purge ${files[0].label.toLowerCase()}?` : `Purge ${files.length} data files?`,
+      {
+        modal: true,
+        detail: files
+          .map((file) => `${relativeTo(this.root!.workspace, file.uri)}: ${file.note}.`)
+          .join("\n")
+      },
+      "Purge"
+    );
+    if (answer !== "Purge") {
+      return;
+    }
+    for (const file of files) {
+      try {
+        await vscode.workspace.fs.delete(file.uri, { useTrash: false });
+      } catch (error) {
+        void vscode.window.showErrorMessage(`Docs Panel could not purge ${file.uri.fsPath}: ${error}`);
+      }
+    }
+    this.postStatuses(await load(statusLedger(this.root.uri)));
+    this.postReads(await load(readsLedger(this.root.workspace, this.root.uri)));
+    await this.sendMentions();
+    await this.sendDataFiles();
   }
 
   // A pin names a path, and a renamed or moved file no longer answers to the one it was
@@ -677,7 +933,8 @@ export class DocsPanel {
       nodes: await buildTree(base),
       trash,
       pinned: this.state.pinned,
-      root: this.root ? relativeTo(this.root.workspace, base) : ""
+      root: this.root ? relativeTo(this.root.workspace, base) : "",
+      name: base.path.split("/").pop() ?? ""
     });
     if (this.root) {
       this.postStatuses(await prune(statusLedger(this.root.uri)));
@@ -746,6 +1003,11 @@ export class DocsPanel {
 <body>
 <div id="layout">
   <div id="side">
+    <div id="sideBar">
+      <span id="rootName"></span>
+      <button id="findAll" class="icon" type="button" title="Search all docs (Ctrl+F F)">${DOCS_SEARCH_ICON}</button>
+      <button id="openOptions" class="icon" type="button" title="Docs Panel options">${SLIDERS_ICON}</button>
+    </div>
     <div id="sideBody" class="no-toc">
       <div id="tree" tabindex="0"></div>
       <div id="sideSplitter"></div>
@@ -779,6 +1041,8 @@ export class DocsPanel {
           (value) => `<option value="${value}" class="opt-${value.replace(/ /g, "-")}">${value}</option>`
         ).join("")}
       </select>
+      <span id="tags"></span>
+      <button id="addTag" type="button" title="Tags">+</button>
     </div>
     <div id="search" hidden>
       <input id="searchText" type="text" placeholder="Find" spellcheck="false">
@@ -791,9 +1055,29 @@ export class DocsPanel {
       <button id="searchClose" class="icon" type="button" title="Close (Escape)"><span class="glyph">&#10005;</span></button>
     </div>
     <div id="body"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
+    <div id="finder" hidden>
+      <div id="finderBar">
+        <input id="finderText" type="text" placeholder="Search all docs: names, folders and text" spellcheck="false">
+        <span id="finderCount"></span>
+        <button id="finderCase" class="icon" type="button" title="Match case"><span class="glyph">Aa</span></button>
+        <button id="finderWord" class="icon" type="button" title="Whole word"><span class="glyph">ab</span></button>
+        <button id="finderRegex" class="icon" type="button" title="Regular expression"><span class="glyph">.*</span></button>
+        <button id="finderClose" class="icon" type="button" title="Close (Escape)"><span class="glyph">&#10005;</span></button>
+      </div>
+      <div id="finderHint">&#8593;&#8595; pick &middot; Ctrl+&#8593;&#8595; next file &middot; Enter open &middot; Escape back</div>
+      <div id="finderResults"></div>
+    </div>
   </div>
 </div>
 <div id="menu" hidden></div>
+<div id="tagPicker" hidden>
+  <div id="tagPickerTitle"></div>
+  <input id="tagInput" type="text" placeholder="Find or add a tag" spellcheck="false">
+  <div id="tagList"></div>
+</div>
+<div id="optionsLayer" hidden>
+  <div id="optionsDialog" role="dialog" aria-label="Docs Panel options" tabindex="-1"></div>
+</div>
 <div id="toasts"></div>
 <div id="lightbox" hidden>
   <img id="lightboxImage" alt="">
@@ -824,6 +1108,14 @@ function prefixNode(node: TreeNode): TreeNode {
     path: `${TRASH_DIR}/${node.path}`,
     children: node.children?.map(prefixNode)
   };
+}
+
+async function sizeOf(uri: vscode.Uri): Promise<number> {
+  try {
+    return (await vscode.workspace.fs.stat(uri)).size;
+  } catch {
+    return -1;
+  }
 }
 
 function relativeTo(root: vscode.Uri, uri: vscode.Uri): string {
