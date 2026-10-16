@@ -378,7 +378,9 @@
   // The host rewrites the root's colours and the body's classes when the theme or the
   // font changes; the side's width follows the font.
   function followTheme() {
+    capHeights.clear();
     fitWidth();
+    fitTags();
   }
 
   new MutationObserver(followTheme).observe(document.documentElement, {
@@ -710,7 +712,7 @@
   function tagPill(name) {
     const pill = document.createElement("span");
     pill.className = "tag t-" + tagColor(name);
-    pill.textContent = name;
+    pill.appendChild(make("span", "tag-text", name));
     pill.title = name;
     pill.dataset.name = name;
     pill.dataset.short = shortOf(name);
@@ -731,11 +733,64 @@
     return letters || Array.from(name)[0] || name;
   }
 
+  // How many pixels tall the capitals of a font are where they are drawn, which is what
+  // hinting makes of the font's own figure and can come out a pixel either side of it. A
+  // capital drawn on a canvas comes out the same as in the page.
+  const capHeights = new Map();
+
+  function drawnCap(font) {
+    if (!capHeights.has(font)) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 64;
+      canvas.height = 64;
+      const paint = canvas.getContext("2d", { willReadFrequently: true });
+      paint.fillStyle = "#fff";
+      paint.fillRect(0, 0, 64, 64);
+      paint.fillStyle = "#000";
+      paint.font = font;
+      paint.fillText("H", 8, 48);
+      const data = paint.getImageData(0, 0, 64, 64).data;
+      let top = -1;
+      let bottom = -1;
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+          if (data[(y * 64 + x) * 4] < 128) {
+            top = top < 0 ? y : top;
+            bottom = y + 1;
+            break;
+          }
+        }
+      }
+      capHeights.set(font, top < 0 ? 0 : bottom - top);
+    }
+    return capHeights.get(font);
+  }
+
+  // Every pill in a box shares a font, so one of them gives the height for all of them:
+  // the one nearest the height asked for that is odd where the capitals are an odd number
+  // of pixels tall and even where they are even, put on a whole pixel in the box.
+  function fitPillHeights(box) {
+    const pill = box.querySelector(".tag");
+    if (!pill) {
+      return;
+    }
+    const style = getComputedStyle(pill);
+    const cap = drawnCap(style.fontStyle + " " + style.fontWeight + " " + style.fontSize + " " + style.fontFamily);
+    const asked = parseFloat(style.getPropertyValue("--pill"));
+    const room = parseFloat(style.getPropertyValue("--room"));
+    if (!cap || !asked || !room) {
+      return;
+    }
+    const height = cap + 2 * Math.floor((asked - cap) / 2);
+    box.style.setProperty("--tag-height", height + "px");
+    box.style.setProperty("--tag-top", Math.floor((room - height) / 2) + "px");
+  }
+
   function shortenPills(pills, short) {
     for (const pill of pills) {
       const text = short ? pill.dataset.short : pill.dataset.name;
-      if (pill.textContent !== text) {
-        pill.textContent = text;
+      if (pill.firstChild.textContent !== text) {
+        pill.firstChild.textContent = text;
       }
       pill.classList.toggle("short", short);
     }
@@ -746,6 +801,7 @@
   // is cut. Each row is put back to full names and measured before any is changed, so the
   // whole tree costs two layouts, not one a row.
   function fitTags() {
+    fitPillHeights(treeEl);
     const rows = [...treeEl.querySelectorAll(".row")].filter((row) => row.querySelector(".tags"));
     for (const row of rows) {
       shortenPills(row.querySelectorAll(".tag"), false);
@@ -762,6 +818,7 @@
 
   // The same in the file bar, where the file's name is what must not be cut.
   function fitHeaderTags() {
+    fitPillHeights(headerTagsEl);
     const pills = headerTagsEl.querySelectorAll(".tag");
     shortenPills(pills, false);
     const tight =
@@ -3341,7 +3398,8 @@
         const box = swatch.getBoundingClientRect();
         pickTagColor(name, box.left, box.bottom + 4);
       });
-      const letters = make("span", "tag short opt-short t-" + tagColor(name), shortOf(name));
+      const letters = make("span", "tag short opt-short t-" + tagColor(name));
+      letters.appendChild(make("span", "tag-text", shortOf(name)));
       letters.title = "Letters shown where the name does not fit; click to change";
       letters.addEventListener("click", () => vscode.postMessage({ type: "tagShort", name: name }));
       optionRow(tagBox, [swatch, make("span", "opt-name cap", name), letters], [
@@ -3369,6 +3427,7 @@
         ]);
       }
     }
+    fitPillHeights(optionsDialogEl);
     optionsDialogEl.scrollTop = scroll;
   }
 
@@ -3710,6 +3769,7 @@
 
     finderIndex = -1;
     const back = kept ? finderItems.findIndex((item) => finderKey(item) === kept) : -1;
+    fitPillHeights(finderResultsEl);
     moveFinder(back >= 0 ? back : 0);
   }
 

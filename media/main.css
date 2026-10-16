@@ -367,9 +367,11 @@ body.dragging-rows {
 /* A pill in the tag's own colour, always with black text. It is never cut: short of room
    the script puts the tag's initials in it, and it is then as wide as they are. */
 .tag {
+  --pill: 14px;
   flex: none;
-  height: 14px;
-  line-height: 14px;
+  display: inline-flex;
+  align-items: center;
+  height: var(--pill);
   padding: 0 6px;
   border-radius: 999px;
   font-size: 0.75em;
@@ -390,18 +392,42 @@ body.dragging-rows {
   margin-left: 4px;
 }
 
+/* The name is cut down to its capitals, from their tops to the baseline, and the pill
+   centres that: the capitals sit on the pill's centre line whatever the font. */
+.tag-text {
+  line-height: normal;
+  text-box: trim-both cap alphabetic;
+}
+
+/* The baseline lands on a whole pixel, so the capitals can only have as many pixels above
+   them as below when they and the pill are both an odd or both an even number of pixels
+   tall. The script measures the capitals as they are drawn and sets, on the box the pills
+   stand in, the height nearest the one asked for (--pill) that matches them, and the
+   whole-pixel offset that puts that height in the middle of the box (--room). */
+.tag {
+  height: var(--tag-height, var(--pill));
+}
+
+.row .tag,
+#tags .tag,
+.opt-short,
+.f-title .tag {
+  align-self: flex-start;
+  margin-top: var(--tag-top, calc((var(--room) - var(--pill)) / 2));
+}
+
 /* Initials: as narrow as the letters, and round when there is one of them. */
 .tag.short {
-  min-width: var(--pill-height, 14px);
+  justify-content: center;
+  min-width: var(--tag-height, var(--pill));
   box-sizing: border-box;
   padding: 0 4px;
   text-align: center;
 }
 
 .row .tag {
-  --pill-height: var(--tree-pill);
-  height: var(--tree-pill);
-  line-height: var(--tree-pill);
+  --pill: var(--tree-pill);
+  --room: var(--tree-row);
   cursor: pointer;
 }
 
@@ -453,6 +479,7 @@ body.dragging-rows {
 
 #tags {
   display: flex;
+  height: 20px;
   flex: 0 1 auto;
   gap: 3px;
   min-width: 0;
@@ -464,9 +491,8 @@ body.dragging-rows {
 }
 
 #tags .tag {
-  --pill-height: 20px;
-  height: 20px;
-  line-height: 20px;
+  --pill: 20px;
+  --room: 20px;
   padding: 0 8px;
   font-size: 0.85em;
   cursor: pointer;
@@ -1345,9 +1371,8 @@ img.single {
 
 /* A tag's letters in the options, the pill the tree shows them in, and a way to change them. */
 .opt-short {
-  --pill-height: 15px;
-  height: 15px;
-  line-height: 15px;
+  --pill: 15px;
+  --room: 27px;
   cursor: pointer;
 }
 
@@ -1539,8 +1564,8 @@ img.single {
 }
 
 .f-title .tag {
-  height: 18px;
-  line-height: 18px;
+  --pill: 18px;
+  --room: 20px;
   padding: 0 8px;
   font-size: 0.9em;
 }
