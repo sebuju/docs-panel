@@ -17,12 +17,6 @@
   const modifiedEl = document.getElementById("modified");
   const agoEl = document.getElementById("ago");
   const toastsEl = document.getElementById("toasts");
-  const textSmallerEl = document.getElementById("textSmaller");
-  const textBiggerEl = document.getElementById("textBigger");
-  const lineHeightEl = document.getElementById("lineHeight");
-  const fontEl = document.getElementById("font");
-  const typeToggleEl = document.getElementById("typeToggle");
-  const typeSettingsEl = document.getElementById("typeSettings");
   const toggleEl = document.getElementById("toggle");
   const bodyEl = document.getElementById("body");
   const tocEl = document.getElementById("toc");
@@ -65,10 +59,23 @@
     '<path fill="currentColor" d="M6.2 2H9.8L9.1 3.1 9.6 6 11.2 7.6V8.7H8.5L8 13.8 7.5 8.7H4.8V7.6L6.4 6 6.9 3.1Z"/>' +
     "</svg>";
 
+  // Drawn on the pixel grid, one unit to a pixel, so every stroke covers whole pixels. The
+  // ink is 9px each way, the height of the capitals of a 13px label, in the middle of an
+  // 11px box; the stylesheet lines its middle up with theirs.
   const CAN_ICON =
-    '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">' +
-    '<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" ' +
-    'd="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9h6.6l.7-9M6.6 6.5v4M9.4 6.5v4"/></svg>';
+    '<svg viewBox="0 0 11 11" width="11" height="11" aria-hidden="true">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1" ' +
+    'd="M4.5 3V1.5h2V3M1 3.5h9M2.5 3.5v6h6v-6M4.5 5v3M6.5 5v3"/></svg>';
+
+  // The options' minus and plus, one unit to a pixel: each bar is a single row or column
+  // of whole pixels, the middle one of a 9px box that sits in the middle of its button.
+  const MINUS_ICON =
+    '<svg viewBox="0 0 9 9" width="9" height="9" aria-hidden="true">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1" d="M1 4.5h7"/></svg>';
+
+  const PLUS_ICON =
+    '<svg viewBox="0 0 9 9" width="9" height="9" aria-hidden="true">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1" d="M1 4.5h7M4.5 1v7"/></svg>';
 
   const FOLDER_ICON =
     '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
@@ -139,8 +146,16 @@
   // divider where it was put.
   let autoSize = "none";
   const AUTO_SIZES = ["none", "tree", "toc"];
-  const AUTO_LABELS = ["off", "files", "contents"];
+  const AUTO_LABELS = ["off", "files", "toc"];
+  // The side's width follows the widest row of the tree, so no name is cut short; past
+  // half the window the page would be squeezed, so it stops there.
+  let autoWidth = false;
+  const FIT_WIDTH_SHARE = 0.5;
+  // Which side of a file's name its tags are drawn on in the tree.
+  let tagSide = "right";
+  const TAG_SIDES = ["left", "right"];
   let hoverStrength = 40;
+  const HOVER_STEP = 10;
 
   const saved = vscode.getState();
   if (saved) {
@@ -152,6 +167,7 @@
   setLineHeight(lineHeight);
   setMono(mono);
   setHoverStrength(hoverStrength);
+  setTagSide(tagSide);
 
   function applyState(state) {
     if (typeof state.split === "number") {
@@ -174,6 +190,12 @@
     } else if (state.tocAuto === true) {
       autoSize = "toc";
     }
+    if (typeof state.autoWidth === "boolean") {
+      autoWidth = state.autoWidth;
+    }
+    if (TAG_SIDES.includes(state.tagSide)) {
+      tagSide = state.tagSide;
+    }
     if (typeof state.hoverStrength === "number") {
       hoverStrength = state.hoverStrength;
     }
@@ -194,6 +216,8 @@
       lineHeight: lineHeight,
       mono: mono,
       autoSize: autoSize,
+      autoWidth: autoWidth,
+      tagSide: tagSide,
       hoverStrength: hoverStrength,
       expanded: [...expanded],
       pinned: [...pinned],
@@ -247,22 +271,46 @@
     persist();
   }
 
+  // Each row is measured as wide as it would be with nothing cut: its name and its tags
+  // at their own width, and the indent of the folders it is in.
+  function fitWidth() {
+    if (!autoWidth) {
+      return;
+    }
+    const rows = treeEl.querySelectorAll(".row");
+    if (!rows.length) {
+      return;
+    }
+    treeEl.classList.add("measuring");
+    let right = 0;
+    for (const row of rows) {
+      right = Math.max(right, row.getBoundingClientRect().right);
+    }
+    treeEl.classList.remove("measuring");
+    const box = treeEl.getBoundingClientRect();
+    const wanted = right - box.left + parseFloat(getComputedStyle(treeEl).paddingRight);
+    setSplit(Math.min(Math.ceil(wanted), Math.floor(window.innerWidth * FIT_WIDTH_SHARE)));
+    // The contents wrap to the width they are given, so their height is found again.
+    if (autoSize === "toc") {
+      fitSide();
+    }
+  }
+
+  function setAutoWidth(value) {
+    autoWidth = !!value;
+    fitWidth();
+    persist();
+  }
+
   // One scale for every file, so the reading size is a property of the panel.
   function setTextScale(value) {
     textScale = Math.min(Math.max(Math.round(value * 100) / 100, MIN_TEXT), MAX_TEXT);
     layout.style.setProperty("--text-scale", textScale);
-    const percent = Math.round(textScale * 100) + "%";
-    textSmallerEl.title = "Smaller text (" + percent + ")";
-    textBiggerEl.title = "Bigger text (" + percent + ")";
-    textSmallerEl.disabled = textScale <= MIN_TEXT;
-    textBiggerEl.disabled = textScale >= MAX_TEXT;
   }
 
   function setLineHeight(value) {
     lineHeight = Math.min(Math.max(Math.round(value) || 0, 0), LINE_HEIGHTS.length - 1);
     layout.style.setProperty("--line-height", LINE_HEIGHTS[lineHeight]);
-    lineHeightEl.dataset.step = String(lineHeight);
-    lineHeightEl.title = "Line spacing (" + LINE_LABELS[lineHeight] + ")";
   }
 
   // How strongly the block under the pointer, or the one the arrow keys are on, is lit;
@@ -278,9 +326,73 @@
       "--body-font",
       mono ? "var(--vscode-editor-font-family)" : "var(--vscode-font-family)"
     );
-    fontEl.classList.toggle("active", mono);
-    fontEl.title = mono ? "Font (mono)" : "Font (default)";
   }
+
+  function setTagSide(value) {
+    tagSide = TAG_SIDES.includes(value) ? value : "right";
+    treeEl.classList.toggle("tags-left", tagSide === "left");
+    fitWidth();
+  }
+
+  const DARK_INK = [22, 22, 22];
+  const LIGHT_INK = [255, 255, 255];
+  const inkStyle = document.createElement("style");
+  document.head.appendChild(inkStyle);
+
+  // A pill's text is whichever of a near black and a white stands further off the colour
+  // the theme gives its tag, so every colour keeps its name legible in every theme. A
+  // colour with some see-through in it is laid over the page first, as it is drawn.
+  function inkTags() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const paint = canvas.getContext("2d", { willReadFrequently: true });
+    const probe = make("span", "ink-probe");
+    document.body.appendChild(probe);
+    const under = getComputedStyle(document.body).backgroundColor;
+    const rules = COLORS.map((name) => {
+      probe.className = "ink-probe c-" + name;
+      paint.clearRect(0, 0, 1, 1);
+      paint.fillStyle = under;
+      paint.fillRect(0, 0, 1, 1);
+      paint.fillStyle = getComputedStyle(probe).color;
+      paint.fillRect(0, 0, 1, 1);
+      const fill = luminance(paint.getImageData(0, 0, 1, 1).data);
+      const dark = contrast(fill, luminance(DARK_INK)) >= contrast(fill, luminance(LIGHT_INK));
+      return ".tag.c-" + name + " { --ink: rgb(" + (dark ? DARK_INK : LIGHT_INK).join(", ") + "); }";
+    });
+    probe.remove();
+    inkStyle.textContent = rules.join("\n");
+  }
+
+  // The relative luminance and contrast ratio of WCAG 2.
+  function luminance(rgb) {
+    const channel = (value) => {
+      const c = value / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+  }
+
+  function contrast(a, b) {
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  }
+
+  // The host rewrites the root's colours and the body's classes when the theme or the
+  // font changes; the inks follow the colours, and the side's width the font.
+  function followTheme() {
+    inkTags();
+    fitWidth();
+  }
+
+  new MutationObserver(followTheme).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["style"]
+  });
+  new MutationObserver(followTheme).observe(document.body, {
+    attributes: true,
+    attributeFilter: ["class"]
+  });
 
   const TOAST_MS = 2400;
 
@@ -367,6 +479,7 @@
     treeEl.appendChild(list);
     treeEl.scrollTop = top;
     markCursor(document.activeElement === treeEl ? cursorRow() : null);
+    fitWidth();
     if (autoSize === "tree") {
       fitSide();
     }
@@ -384,9 +497,11 @@
     return li;
   }
 
+  // A folder kept by another tool can have a .trash of its own, and that is in its bin too.
   function trashFor(at) {
     const node = findNode(trashNodes, TRASH_PREFIX + at);
-    return node && node.children ? node.children : [];
+    const own = findNode(nodes, at);
+    return ((node && node.children) || []).concat((own && own.trash) || []);
   }
 
   function findNode(items, path) {
@@ -444,9 +559,9 @@
 
   // Whatever leaves the bin takes its unsaved drafts along, as a single file would.
   function emptyBin(type, at) {
-    const bin = at ? TRASH_PREFIX + at : ".trash";
+    const bins = at ? [TRASH_PREFIX + at + "/", at + "/" + TRASH_PREFIX] : [TRASH_PREFIX];
     for (const path of [...drafts.keys()]) {
-      if (path.startsWith(bin + "/")) {
+      if (bins.some((bin) => path.startsWith(bin))) {
         drafts.delete(path);
       }
     }
@@ -1496,7 +1611,20 @@
   addBar(tocEl, sideEl);
   addBar(bodyEl, paneEl);
 
+  splitter.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    openMenu(event.clientX, event.clientY, [
+      { label: "No auto size of the side width", checked: !autoWidth, run: () => setAutoWidth(false) },
+      { label: "Auto size the side width to the files", checked: autoWidth, run: () => setAutoWidth(true) }
+    ]);
+  });
+
+  // Dragging the divider is a width chosen by hand, so the automatic one steps aside.
   splitter.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    autoWidth = false;
     splitter.setPointerCapture(event.pointerId);
     const move = (moveEvent) => setSplit(moveEvent.clientX);
     const up = (upEvent) => {
@@ -1516,7 +1644,7 @@
     event.preventDefault();
     openMenu(event.clientX, event.clientY, [
       { label: "Auto size the files", checked: autoSize === "tree", run: () => setAutoSize("tree") },
-      { label: "Auto size the contents", checked: autoSize === "toc", run: () => setAutoSize("toc") },
+      { label: "Auto size toc", checked: autoSize === "toc", run: () => setAutoSize("toc") },
       { label: "No auto size", checked: autoSize === "none", run: () => setAutoSize("none") }
     ]);
   });
@@ -1545,35 +1673,12 @@
 
   window.addEventListener("resize", () => {
     setSplit(split);
+    fitWidth();
     fitSide();
     fitEditor();
   });
 
   bodyEl.addEventListener("scroll", scheduleActive);
-
-  typeToggleEl.addEventListener("click", () => {
-    const open = typeSettingsEl.hidden;
-    typeSettingsEl.hidden = !open;
-    typeToggleEl.classList.toggle("active", open);
-    typeToggleEl.setAttribute("aria-expanded", String(open));
-  });
-
-  textSmallerEl.addEventListener("click", () => stepTextScale(-TEXT_STEP));
-  textBiggerEl.addEventListener("click", () => stepTextScale(TEXT_STEP));
-
-  lineHeightEl.addEventListener("click", () => {
-    setLineHeight((lineHeight + 1) % LINE_HEIGHTS.length);
-    fitEditor();
-    persist();
-    scheduleActive();
-  });
-
-  fontEl.addEventListener("click", () => {
-    setMono(!mono);
-    fitEditor();
-    persist();
-    scheduleActive();
-  });
 
   function stepTextScale(delta) {
     setTextScale(textScale + delta);
@@ -1631,8 +1736,9 @@
     }
   });
 
+  // In the trash at the docs root, or in a folder's own .trash.
   function inTrash(path) {
-    return path.startsWith(TRASH_PREFIX);
+    return path.split("/").slice(0, -1).includes(".trash");
   }
 
   function applyView() {
@@ -1987,6 +2093,7 @@
       setLineHeight(lineHeight);
       setMono(mono);
       setHoverStrength(hoverStrength);
+      setTagSide(tagSide);
       drawTree();
     } else if (message.type === "saved") {
       drafts.delete(message.path);
@@ -2019,6 +2126,9 @@
       drawHeaderTags();
       drawTagPicker();
       drawOptions();
+      if (finderOpen) {
+        runFinder(true);
+      }
     } else if (message.type === "corpus") {
       corpus = (message.entries || []).map((entry) => ({
         path: entry.path,
@@ -2128,8 +2238,8 @@
 
   // Both searches read their term the same way; a term that is no expression marks the
   // box it was typed in.
-  function makePattern(input, matchCase, word, regex) {
-    const term = input.value;
+  function makePattern(input, matchCase, word, regex, term) {
+    term = term === undefined ? input.value : term;
     input.classList.remove("bad");
     if (!term) {
       return null;
@@ -2901,6 +3011,7 @@
     optionsOpen = true;
     optionsLayerEl.hidden = false;
     drawOptions();
+    placeOptions();
     optionsDialogEl.focus();
     vscode.postMessage({ type: "dataFiles" });
   }
@@ -2910,6 +3021,20 @@
     optionsLayerEl.hidden = true;
     optionsDialogEl.textContent = "";
   }
+
+  // Set on whole pixels. Centred by the stylesheet the box can land on a half one, and
+  // every rule and label in it is then smeared over two rows of pixels.
+  function placeOptions() {
+    if (!optionsOpen) {
+      return;
+    }
+    const top = Math.round(window.innerHeight * 0.06);
+    optionsDialogEl.style.top = top + "px";
+    optionsDialogEl.style.maxHeight = window.innerHeight - 2 * top + "px";
+    optionsDialogEl.style.left = Math.round((window.innerWidth - optionsDialogEl.offsetWidth) / 2) + "px";
+  }
+
+  window.addEventListener("resize", placeOptions);
 
   openOptionsEl.addEventListener("click", openOptions);
 
@@ -2930,9 +3055,14 @@
     return el;
   }
 
+  // The label is a box of its own so the stylesheet can set its capitals on the button's
+  // centre line.
   function makeButton(label, run, className) {
-    const button = make("button", className || "opt-button", label);
+    const button = make("button", className || "opt-button");
     button.type = "button";
+    if (label) {
+      button.appendChild(make("span", "cap", label));
+    }
     button.addEventListener("click", run);
     return button;
   }
@@ -2948,7 +3078,7 @@
     const row = make("div", "opt-row");
     const name = make("div", "opt-label");
     for (const part of [].concat(label)) {
-      name.appendChild(typeof part === "string" ? make("span", "", part) : part);
+      name.appendChild(typeof part === "string" ? make("span", "cap", part) : part);
     }
     const box = make("div", "opt-controls");
     for (const control of controls) {
@@ -2973,6 +3103,29 @@
       drawOptions();
     });
     return select;
+  }
+
+  // A number is shown first and its two buttons after it, the pair as wide as a choice
+  // box, so the buttons stand in the same column as the boxes above and below them.
+  function optionStepper(text, titles, down, up, atMin, atMax) {
+    const value = make("span", "opt-value cap", text);
+    const smaller = makeButton("", down, "opt-button opt-step");
+    smaller.innerHTML = MINUS_ICON;
+    smaller.title = titles[0];
+    smaller.disabled = atMin;
+    const bigger = makeButton("", up, "opt-button opt-step");
+    bigger.innerHTML = PLUS_ICON;
+    bigger.title = titles[1];
+    bigger.disabled = atMax;
+    const pair = make("span", "opt-steps");
+    pair.append(smaller, bigger);
+    return [value, pair];
+  }
+
+  function stepHover(delta) {
+    setHoverStrength(Math.round(hoverStrength / HOVER_STEP) * HOVER_STEP + delta);
+    persist();
+    drawOptions();
   }
 
   function formatSize(bytes) {
@@ -3007,21 +3160,20 @@
     optionsDialogEl.appendChild(head);
 
     const reading = optionSection("Reading");
-    const smaller = makeButton("−", () => {
-      stepTextScale(-TEXT_STEP);
-      drawOptions();
-    });
-    smaller.disabled = textScale <= MIN_TEXT;
-    const bigger = makeButton("+", () => {
-      stepTextScale(TEXT_STEP);
-      drawOptions();
-    });
-    bigger.disabled = textScale >= MAX_TEXT;
-    optionRow(reading, "Text size", [
-      smaller,
-      make("span", "opt-value", Math.round(textScale * 100) + "%"),
-      bigger
-    ]);
+    optionRow(reading, "Text size", optionStepper(
+      Math.round(textScale * 100) + "%",
+      ["Smaller text", "Bigger text"],
+      () => {
+        stepTextScale(-TEXT_STEP);
+        drawOptions();
+      },
+      () => {
+        stepTextScale(TEXT_STEP);
+        drawOptions();
+      },
+      textScale <= MIN_TEXT,
+      textScale >= MAX_TEXT
+    ));
     optionRow(reading, "Line spacing", [
       optionChoice(LINE_LABELS, lineHeight, (step) => {
         setLineHeight(step);
@@ -3038,30 +3190,33 @@
         scheduleActive();
       })
     ]);
-    optionRow(reading, "Auto size", [
+    optionRow(reading, "Auto size list height", [
       optionChoice(AUTO_LABELS, AUTO_SIZES.indexOf(autoSize), (choice) => setAutoSize(AUTO_SIZES[choice]))
     ]);
-    const light = make("input", "opt-range");
-    light.type = "range";
-    light.min = "0";
-    light.max = "100";
-    light.step = "5";
-    light.value = String(hoverStrength);
-    const lightValue = make("span", "opt-value", hoverStrength ? hoverStrength + "%" : "off");
-    // Dragged, the page answers at once; the stored value waits for the thumb to settle.
-    light.addEventListener("input", () => {
-      setHoverStrength(Number(light.value));
-      lightValue.textContent = hoverStrength ? hoverStrength + "%" : "off";
-    });
-    light.addEventListener("change", persist);
-    optionRow(reading, "Block highlight", [light, lightValue]);
+    optionRow(reading, "Auto size side width", [
+      optionChoice(["off", "on"], autoWidth ? 1 : 0, (choice) => setAutoWidth(choice === 1))
+    ]);
+    optionRow(reading, "Block highlight", optionStepper(
+      hoverStrength ? hoverStrength + "%" : "off",
+      ["Dimmer", "Brighter"],
+      () => stepHover(-HOVER_STEP),
+      () => stepHover(HOVER_STEP),
+      hoverStrength <= 0,
+      hoverStrength >= 100
+    ));
 
     const folder = optionSection("Folder");
-    optionRow(folder, [make("span", "opt-path", rootPrefix || "the workspace root")], [
+    optionRow(folder, [make("span", "opt-path cap", rootPrefix || "the workspace root")], [
       makeButton("Open settings", () => vscode.postMessage({ type: "settings" }))
     ]);
 
     const tagBox = optionSection("Tags");
+    optionRow(tagBox, "Side of the name in the tree", [
+      optionChoice(TAG_SIDES, TAG_SIDES.indexOf(tagSide), (choice) => {
+        setTagSide(TAG_SIDES[choice]);
+        persist();
+      })
+    ]);
     const names = Object.keys(tagColors).sort((a, b) =>
       a.localeCompare(b, undefined, { sensitivity: "base" })
     );
@@ -3076,8 +3231,8 @@
         const box = swatch.getBoundingClientRect();
         pickTagColor(name, box.left, box.bottom + 4);
       });
-      optionRow(tagBox, [swatch, make("span", "opt-name", name)], [
-        make("span", "opt-dim", used + (used === 1 ? " file" : " files")),
+      optionRow(tagBox, [swatch, make("span", "opt-name cap", name)], [
+        make("span", "opt-dim cap", used + (used === 1 ? " file" : " files")),
         makeButton("Rename…", () => vscode.postMessage({ type: "renameTag", name: name })),
         makeButton("Delete", () => vscode.postMessage({ type: "deleteTag", name: name }), "opt-button danger")
       ]);
@@ -3096,22 +3251,10 @@
         const purge = makeButton("Purge", () => vscode.postMessage({ type: "purge", ids: [file.id] }), "opt-button danger");
         purge.disabled = file.size < 0;
         optionRow(data, [label], [
-          make("span", "opt-dim", file.size < 0 ? "none" : formatSize(file.size)),
+          make("span", "opt-dim cap", file.size < 0 ? "none" : formatSize(file.size)),
           purge
         ]);
       }
-      const present = dataFiles.filter((file) => file.size >= 0);
-      const total = present.reduce((sum, file) => sum + file.size, 0);
-      const all = makeButton(
-        "Purge all",
-        () => vscode.postMessage({ type: "purge", ids: present.map((file) => file.id) }),
-        "opt-button danger"
-      );
-      all.disabled = !present.length;
-      optionRow(data, [make("span", "opt-dim", "Together")], [
-        make("span", "opt-dim", formatSize(total)),
-        all
-      ]);
     }
     optionsDialogEl.scrollTop = scroll;
   }
@@ -3218,25 +3361,25 @@
     }
   });
 
+  // What is being searched for, without any scope written in front of it.
+  let finderTerm = "";
+
   // Names come first, folders and files alike, because a name that matches is most often
   // what was being looked for; the files that only match inside follow in tree order.
   function runFinder(keep) {
+    const scope = parseScope(finderTextEl.value);
+    if (scope) {
+      runScoped(scope, keep);
+      return;
+    }
+    finderTerm = finderTextEl.value;
     const pattern = makePattern(finderTextEl, finderCase, finderWord, finderRegex);
     const named = [];
     const inside = [];
-    let total = 0;
-    let capped = false;
+    const found = { total: 0, capped: false };
     if (pattern && corpus) {
       for (const entry of corpus) {
-        const group = { entry: entry, name: rangesIn(entry.name, pattern), hits: [], more: 0, count: 0 };
-        if (entry.lines) {
-          if (total < MAX_FINDER_HITS) {
-            scanLines(entry.lines, pattern, group);
-            total += group.hits.length;
-          } else {
-            capped = true;
-          }
-        }
+        const group = searchEntry(entry, pattern, found);
         if (group.name.length) {
           named.push(group);
         } else if (group.hits.length) {
@@ -3244,7 +3387,98 @@
         }
       }
     }
-    drawFinder(named.concat(inside), !!pattern, capped, keep);
+    drawFinder([{ groups: named.concat(inside) }], !!pattern, found.capped, keep);
+  }
+
+  function searchEntry(entry, pattern, found) {
+    const group = { entry: entry, name: rangesIn(entry.name, pattern), hits: [], more: 0, count: 0 };
+    if (entry.lines) {
+      if (found.total < MAX_FINDER_HITS) {
+        scanLines(entry.lines, pattern, group);
+        found.total += group.hits.length;
+      } else {
+        found.capped = true;
+      }
+    }
+    return group;
+  }
+
+  // "tag:", "file:" or "folder:" in front, then a name or part of one, quoted when it has a
+  // space in it, then what to search for. Nothing to search for lists every file let in.
+  const SCOPE = /^\s*(tag|file|folder):(?:"([^"]*)"?|(\S*))\s*([\s\S]*)$/i;
+
+  function parseScope(text) {
+    const match = SCOPE.exec(text);
+    if (!match) {
+      return null;
+    }
+    return {
+      kind: match[1].toLowerCase(),
+      name: (match[2] !== undefined ? match[2] : match[3]).toLowerCase(),
+      term: match[4]
+    };
+  }
+
+  // The files a scope lets in, grouped by what let them in: each tag whose name holds the
+  // part written, each folder whose name does, or, for files, each file on its own. A file
+  // under two such folders is given to the nearer one.
+  function scopeSections(scope) {
+    const files = corpus.filter((entry) => !entry.dir);
+    if (scope.kind === "file") {
+      return [{ files: files.filter((entry) => entry.name.toLowerCase().includes(scope.name)) }];
+    }
+    if (scope.kind === "tag") {
+      const names = [...new Set(Object.keys(tagColors).concat(...Object.values(tags)))]
+        .filter((name) => name.toLowerCase().includes(scope.name))
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      return names.map((name) => ({
+        head: { kind: "tag", name: name },
+        files: files.filter((entry) => (tags[entry.path] || []).includes(name))
+      }));
+    }
+    const folders = corpus.filter((entry) => entry.dir && entry.name.toLowerCase().includes(scope.name));
+    return folders.map((folder) => ({
+      head: { kind: "folder", name: folder.name, path: folder.path },
+      files: files.filter((entry) => {
+        const near = folders.filter((other) => entry.path.startsWith(other.path + "/"));
+        return near.length && near[near.length - 1] === folder;
+      })
+    }));
+  }
+
+  function runScoped(scope, keep) {
+    finderTerm = scope.term;
+    const pattern = scope.term
+      ? makePattern(finderTextEl, finderCase, finderWord, finderRegex, scope.term)
+      : null;
+    if (scope.term && !pattern) {
+      drawFinder([], true, false, keep);
+      return;
+    }
+    const found = { total: 0, capped: false };
+    const sections = [];
+    for (const section of corpus ? scopeSections(scope) : []) {
+      const groups = [];
+      for (const entry of section.files) {
+        if (!pattern) {
+          const part = scope.kind === "file" && scope.name ? rangesIn(entry.name, partPattern(scope.name)) : [];
+          groups.push({ entry: entry, name: part, hits: [], more: 0, count: 0 });
+          continue;
+        }
+        const group = searchEntry(entry, pattern, found);
+        if (group.name.length || group.hits.length) {
+          groups.push(group);
+        }
+      }
+      if (groups.length) {
+        sections.push({ head: section.head, groups: groups });
+      }
+    }
+    drawFinder(sections, true, found.capped, keep);
+  }
+
+  function partPattern(part) {
+    return new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
   }
 
   function scanLines(lines, pattern, group) {
@@ -3280,65 +3514,100 @@
     return item ? item.kind + ":" + item.path + ":" + (item.nth === undefined ? "" : item.nth) : "";
   }
 
-  function drawFinder(groups, searched, capped, keep) {
+  // Each section is headed by what let its files in, when a scope did; a plain search is
+  // one section with no head.
+  function drawFinder(sections, searched, capped, keep) {
     const kept = keep ? finderKey(finderItems[finderIndex]) : "";
     finderResultsEl.textContent = "";
     finderItems = [];
     let hits = 0;
+    let entries = 0;
 
-    for (const group of groups) {
-      const entry = group.entry;
-      const box = make("div", "f-group");
-
-      const head = make("div", "f-row f-head");
-      const icon = make("span", "f-icon");
-      icon.innerHTML = entry.dir ? FOLDER_ICON : FILE_ICON;
-      head.appendChild(icon);
-      head.appendChild(marked(make("span", "f-name"), entry.name, group.name));
-      const parent = entry.path.split("/").slice(0, -1).join("/");
-      if (parent) {
-        head.appendChild(make("span", "f-where", parent));
+    for (const section of sections) {
+      const holder = section.head ? make("div", "f-section") : finderResultsEl;
+      if (section.head) {
+        holder.appendChild(sectionHead(section.head, section.groups.length));
+        finderResultsEl.appendChild(holder);
       }
-      if (group.count) {
-        head.appendChild(make("span", "f-count", String(group.count)));
+      for (const group of section.groups) {
+        hits += drawGroup(holder, group);
+        entries += 1;
       }
-      head.title = entry.path;
-      box.appendChild(head);
-      addFinderItem({ kind: entry.dir ? "folder" : "file", path: entry.path, el: head, head: true });
-
-      for (const hit of group.hits) {
-        const row = make("div", "f-row f-hit");
-        row.appendChild(make("span", "f-line", String(hit.line)));
-        const excerpt = excerptOf(hit.text, hit.ranges);
-        row.appendChild(marked(make("span", "f-text"), excerpt.text, excerpt.ranges));
-        box.appendChild(row);
-        addFinderItem({ kind: "hit", path: entry.path, nth: hit.nth, el: row });
-        hits += 1;
-      }
-      if (group.more) {
-        box.appendChild(make("div", "f-more", group.more + " more lines in this file"));
-      }
-      finderResultsEl.appendChild(box);
     }
 
     if (!searched) {
       finderCountEl.textContent = "";
       finderResultsEl.appendChild(
-        make("p", "notice", "Type to search the names of files and folders, and the text in the files.")
+        make("p", "notice", "Type to search the names of files and folders, and the text in the files. " +
+          "Start with tag:, file: or folder: and a name, or part of one, to search only the files " +
+          "with that tag, of that name, or in that folder.")
       );
     } else if (!corpus) {
       finderCountEl.textContent = "";
       finderResultsEl.appendChild(make("p", "notice", "Reading the docs…"));
-    } else if (!groups.length) {
+    } else if (!entries) {
       finderCountEl.textContent = "no results";
     } else {
-      const files = groups.length + (groups.length === 1 ? " entry" : " entries");
+      const files = entries + (entries === 1 ? " entry" : " entries");
       finderCountEl.textContent = hits ? hits + " lines in " + files + (capped ? ", stopped early" : "") : files;
     }
 
     finderIndex = -1;
     const back = kept ? finderItems.findIndex((item) => finderKey(item) === kept) : -1;
     moveFinder(back >= 0 ? back : 0);
+  }
+
+  // A tag is shown as its pill. A folder's head is a row like any other, and shows the
+  // folder in the tree.
+  function sectionHead(head, count) {
+    const row = make("div", "f-row f-title");
+    if (head.kind === "tag") {
+      row.appendChild(tagPill(head.name));
+    } else {
+      const icon = make("span", "f-icon");
+      icon.innerHTML = FOLDER_ICON;
+      row.appendChild(icon);
+      row.appendChild(make("span", "f-name", head.path));
+      row.title = head.path;
+      addFinderItem({ kind: "folder", path: head.path, el: row, head: true });
+    }
+    row.appendChild(make("span", "f-count", count + (count === 1 ? " file" : " files")));
+    return row;
+  }
+
+  function drawGroup(holder, group) {
+    const entry = group.entry;
+    const box = make("div", "f-group");
+
+    const head = make("div", "f-row f-head");
+    const icon = make("span", "f-icon");
+    icon.innerHTML = entry.dir ? FOLDER_ICON : FILE_ICON;
+    head.appendChild(icon);
+    head.appendChild(marked(make("span", "f-name"), entry.name, group.name));
+    const parent = entry.path.split("/").slice(0, -1).join("/");
+    if (parent) {
+      head.appendChild(make("span", "f-where", parent));
+    }
+    if (group.count) {
+      head.appendChild(make("span", "f-count", String(group.count)));
+    }
+    head.title = entry.path;
+    box.appendChild(head);
+    addFinderItem({ kind: entry.dir ? "folder" : "file", path: entry.path, el: head, head: true });
+
+    for (const hit of group.hits) {
+      const row = make("div", "f-row f-hit");
+      row.appendChild(make("span", "f-line", String(hit.line)));
+      const excerpt = excerptOf(hit.text, hit.ranges);
+      row.appendChild(marked(make("span", "f-text"), excerpt.text, excerpt.ranges));
+      box.appendChild(row);
+      addFinderItem({ kind: "hit", path: entry.path, nth: hit.nth, el: row });
+    }
+    if (group.more) {
+      box.appendChild(make("div", "f-more", group.more + " more lines in this file"));
+    }
+    holder.appendChild(box);
+    return group.hits.length;
   }
 
   function addFinderItem(item) {
@@ -3438,7 +3707,7 @@
       item.kind === "hit"
         ? {
             path: item.path,
-            term: finderTextEl.value,
+            term: finderTerm,
             matchCase: finderCase,
             word: finderWord,
             regex: finderRegex,
@@ -3519,5 +3788,9 @@
     }
   }
 
+  followTheme();
+  if (document.fonts) {
+    document.fonts.ready.then(followTheme);
+  }
   vscode.postMessage({ type: "ready" });
 })();

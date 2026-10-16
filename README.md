@@ -33,10 +33,11 @@ Then run **Docs Panel: Open** from the command palette.
 | Step through a Markdown file | `Up` / `Down` light the next or previous block and scroll it into view |
 | Search all docs | `Ctrl+F` twice with `Ctrl` held, or the search button in the tree's top right corner (shown while the pointer is in that corner) |
 | Options | The sliders button in the tree's top right corner |
-| Trash a file | Bin button in the file bar; the trash shows at the foot of the tree, and each folder lists what was trashed from it |
+| Trash a file | Bin button in the file bar; the trash shows at the foot of the tree, and each folder lists what was trashed from it, along with anything in a `.trash` folder of its own |
 | Empty the trash | Right click a trash folder: **Restore all** or **Delete all** |
 | Move the divider | Drag it; the position is remembered |
-| Size a list to fit | Right click the divider between the files and the contents: auto size the files, the contents, or neither |
+| Size a list to fit | Right click the divider between the files and the toc: auto size the files, the toc, or neither |
+| Size the side to fit | Right click the divider between the side and the page: auto size the side's width to the files, or not |
 
 ## Keys in the tree
 
@@ -58,6 +59,17 @@ The search looks at the names of files and folders and at the text of every file
 lists what it finds by file, one line per row. A file or folder whose name matches is
 listed even when nothing inside it does.
 
+Start the search with a scope to look only in some files:
+
+| Search | Looks in |
+|---|---|
+| `tag:plan storage` | Files with a tag whose name holds `plan`, grouped by tag |
+| `file:road storage` | Files whose name holds `road` |
+| `folder:plans storage` | Files in a folder whose name holds `plans`, grouped by folder |
+
+With nothing after the name, the search lists every file the scope lets in. A name with a
+space in it is quoted: `tag:"to do"`.
+
 | Key | Does |
 |---|---|
 | `Up` / `Down` | Pick the previous or next row |
@@ -67,10 +79,11 @@ listed even when nothing inside it does.
 
 ## Options
 
-The options hold the reading settings (text size, line spacing, font, which list is
-auto sized, and how strongly the Markdown block under the pointer is lit, where 0 turns
-the light off), the tags (colour, rename, delete), and the data
-files the panel writes, each with its size and a button to purge it.
+The options hold the reading settings (text size, line spacing, font, which list's height
+is auto sized, whether the side's width is, and how strongly the Markdown block under the
+pointer is lit, where off turns the light off), the tags (which side of a name they are
+drawn on in the tree, and each tag's colour, rename and delete), and the data files the
+panel writes, each with its size and a button to purge it.
 
 ## Settings
 

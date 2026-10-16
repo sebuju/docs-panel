@@ -1,3 +1,17 @@
+.ink-probe {
+  position: absolute;
+  visibility: hidden;
+  color: var(--c);
+}
+
+/* A label's box cut down to its capitals, from their tops to the baseline: whatever the
+   font, a box that centres the label then has the capitals on its centre line. Left as
+   it is in an editor too old for it, a pixel or so out at worst. */
+.cap {
+  line-height: normal;
+  text-box: trim-both cap alphabetic;
+}
+
 html, body {
   height: 100%;
   margin: 0;
@@ -118,18 +132,6 @@ button.icon[hidden] {
   display: none;
 }
 
-/* Fixed size so the revealed buttons take room from the dates, not from the cog. */
-#typeSettings {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 6px;
-}
-
-#typeSettings[hidden] {
-  display: none;
-}
-
 button.icon span {
   display: flex;
   align-items: center;
@@ -145,17 +147,6 @@ button.icon svg {
 button.icon .glyph {
   font-size: 0.85em;
   line-height: 1;
-}
-
-/* The button carries all three spacing icons and shows the one the step names. */
-#lineHeight .step {
-  display: none;
-}
-
-#lineHeight[data-step="0"] .step-0,
-#lineHeight[data-step="1"] .step-1,
-#lineHeight[data-step="2"] .step-2 {
-  display: flex;
 }
 
 #toggle .eye,
@@ -271,16 +262,25 @@ body.dragging-rows {
   text-overflow: ellipsis;
 }
 
+/* A tad lighter than the rows around it, the can and the name alike. */
+.row.bin {
+  color: color-mix(in srgb, var(--vscode-foreground) 80%, #fff);
+}
+
 /* The colour sits on the name alone; on a selected row the selection's colour wins. */
 .row.colored:not(.selected) > .label {
   color: var(--c);
 }
 
+/* The can stands in the name's own line, on the same baseline, lifted by half the font's
+   capitals: its middle is then the middle of the capitals in "Trash", whatever the font. */
 .row .can {
-  display: flex;
-  align-items: center;
   flex: none;
-  opacity: 0.7;
+  opacity: 0.85;
+}
+
+.row .can svg {
+  vertical-align: calc(0.5cap - 5.5px);
 }
 
 @keyframes rowFlash {
@@ -329,15 +329,15 @@ body.dragging-rows {
 .c-magenta { --c: var(--vscode-terminal-ansiMagenta, #bc3fbc); }
 .c-grey { --c: var(--vscode-descriptionForeground, #8b949e); }
 
-/* A pill in the tag's own colour. The text takes the page's background, which is dark
-   against the bright colours of a dark theme and light against a light one's. */
+/* A pill in the tag's own colour. The script gives each colour the ink, near black or
+   white, that stands out from it most. */
 .tag {
   height: 14px;
   line-height: 14px;
   padding: 0 6px;
   border-radius: 999px;
   font-size: 0.75em;
-  color: var(--vscode-editor-background, #1e1e1e);
+  color: var(--ink, var(--vscode-editor-background, #1e1e1e));
   background: var(--c);
   white-space: nowrap;
   overflow: hidden;
@@ -360,6 +360,33 @@ body.dragging-rows {
 .row .tag {
   flex: 0 1 auto;
   min-width: 1.5em;
+}
+
+/* Tags in front of the name, after the dot or twisty. */
+#tree.tags-left .row .tags {
+  order: 1;
+  margin-left: 0;
+}
+
+#tree.tags-left .row .label {
+  order: 2;
+}
+
+#tree.tags-left .row .pin {
+  order: 3;
+}
+
+/* For a moment, while the script finds the width the side needs: every row as wide as
+   its parts are with nothing cut. */
+#tree.measuring .row {
+  width: max-content;
+}
+
+#tree.measuring .row .label,
+#tree.measuring .row .tags,
+#tree.measuring .row .tag {
+  flex: none;
+  overflow: visible;
 }
 
 .swatch {
@@ -1170,11 +1197,6 @@ img.single {
   position: fixed;
   inset: 0;
   z-index: 25;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  box-sizing: border-box;
-  padding: 6vh 16px;
   background: rgba(0, 0, 0, 0.35);
 }
 
@@ -1182,9 +1204,12 @@ img.single {
   display: none;
 }
 
+/* Placed by the script, on whole pixels. Every line in it has a height in whole pixels
+   too, so nothing below a line is pushed onto a fraction of one. */
 #optionsDialog {
-  width: min(560px, 100%);
-  max-height: 100%;
+  --opt-control: 112px;
+  position: absolute;
+  width: min(560px, 100% - 32px);
   box-sizing: border-box;
   overflow: auto;
   padding: 0 18px 18px;
@@ -1213,6 +1238,7 @@ img.single {
   margin: 0;
   font-size: 1.1em;
   font-weight: 600;
+  line-height: 20px;
 }
 
 .opt-version {
@@ -1224,6 +1250,7 @@ img.single {
 
 .opt-section h3 {
   margin: 14px 0 4px;
+  line-height: 16px;
   font-size: 0.8em;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -1231,21 +1258,26 @@ img.single {
   opacity: 0.65;
 }
 
+/* Odd heights throughout: at the usual sizes a font's capitals are an odd number of
+   pixels tall, and the baseline is put on a whole pixel, so only an odd box leaves as
+   many pixels above them as below. */
 .opt-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 26px;
+  min-height: 27px;
   padding: 2px 0;
 }
 
+/* As tall as the row, so a swatch in it is centred on whole pixels; and not clipped, so
+   the ring a swatch takes under the pointer is drawn whole. */
 .opt-label {
   display: flex;
   flex: 1;
+  align-self: stretch;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  overflow: hidden;
 }
 
 .opt-file {
@@ -1254,9 +1286,24 @@ img.single {
   min-width: 0;
 }
 
+.opt-file .opt-name {
+  line-height: 16px;
+}
+
+.opt-file .opt-path {
+  line-height: 15px;
+}
+
+.opt-label .swatch {
+  width: 11px;
+  height: 11px;
+}
+
+/* Clipped across only: cut down to its capitals a name still draws its descenders, below
+   the box. */
 .opt-name,
 .opt-path {
-  overflow: hidden;
+  overflow: clip visible;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1279,7 +1326,7 @@ img.single {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 22px;
+  height: 23px;
   box-sizing: border-box;
   border: 1px solid var(--vscode-button-border, transparent);
   border-radius: 3px;
@@ -1305,7 +1352,8 @@ img.single {
 }
 
 .opt-select {
-  height: 22px;
+  width: var(--opt-control);
+  height: 23px;
   box-sizing: border-box;
   border: 1px solid var(--vscode-dropdown-border, transparent);
   border-radius: 2px;
@@ -1315,15 +1363,28 @@ img.single {
   font: inherit;
 }
 
-.opt-range {
-  width: 120px;
-  margin: 0;
-  accent-color: var(--vscode-button-background, var(--vscode-focusBorder));
+/* The two buttons and the gap between them make up the width of a choice box, and each
+   button is an odd number of pixels wide, so the plus has a middle column for its bar. */
+.opt-steps {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  width: var(--opt-control);
+}
+
+.opt-button.opt-step {
+  flex: 1 1 0;
+  padding: 0;
+}
+
+.opt-step svg {
+  display: block;
+  flex: none;
 }
 
 .opt-value {
   min-width: 3.5em;
-  text-align: center;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1335,6 +1396,7 @@ img.single {
 
 #optionsDialog .notice {
   margin: 4px 0;
+  line-height: 18px;
 }
 
 /* Laid over the whole reading pane, header and all, which is left as it was beneath. */
@@ -1399,6 +1461,26 @@ img.single {
 
 .f-group {
   margin-bottom: 6px;
+}
+
+/* A scoped search groups its files under what let them in: a tag or a folder. */
+.f-section {
+  margin-bottom: 10px;
+}
+
+.f-section > .f-group {
+  margin-left: 18px;
+}
+
+.f-title {
+  margin-bottom: 2px;
+}
+
+.f-title .tag {
+  height: 18px;
+  line-height: 18px;
+  padding: 0 8px;
+  font-size: 0.9em;
 }
 
 .f-row {

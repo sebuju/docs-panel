@@ -35,6 +35,10 @@ const SESSION_DEBOUNCE_MS = 500;
 export type AutoSize = "none" | "tree" | "toc";
 const AUTO_SIZES: AutoSize[] = ["none", "tree", "toc"];
 
+// Which side of a file's name its tags are drawn on in the tree.
+export type TagSide = "left" | "right";
+const TAG_SIDES: TagSide[] = ["left", "right"];
+
 export interface PanelState {
   split: number;
   sideSplit: number;
@@ -42,6 +46,8 @@ export interface PanelState {
   lineHeight: number;
   mono: boolean;
   autoSize: AutoSize;
+  autoWidth: boolean;
+  tagSide: TagSide;
   hoverStrength: number;
   expanded: string[];
   pinned: string[];
@@ -55,6 +61,8 @@ const DEFAULT_STATE: PanelState = {
   lineHeight: 1,
   mono: false,
   autoSize: "none",
+  autoWidth: false,
+  tagSide: "right",
   hoverStrength: 40,
   expanded: [],
   pinned: [],
@@ -77,30 +85,6 @@ d="M2.5 2.5h5l6 6-5 5-6-6z"/>
 const PEN_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
 d="M11.2 2.6l2.2 2.2-8 8-2.9.7.7-2.9zM10 3.8l2.2 2.2"/></svg>`;
-
-const MINUS_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
-d="M3.5 8h9"/></svg>`;
-
-const PLUS_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
-d="M8 3.5v9M3.5 8h9"/></svg>`;
-
-// One icon per step: the gaps between the rules are the spacing the step gives.
-const LINES_ICONS = [
-  "M2.5 5.5h11M2.5 8h11M2.5 10.5h11",
-  "M2.5 4h11M2.5 8h11M2.5 12h11",
-  "M2.5 2.5h11M2.5 8h11M2.5 13.5h11"
-].map(
-  (path, step) => `<span class="step step-${step}"><svg viewBox="0 0 16 16" width="14" height="14"
-aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"
-d="${path}"/></svg></span>`
-).join("");
-
-const COG_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"
-d="M6.6 1.9h2.8l.3 1.7 1.3.8 1.6-.7 1.4 2.4-1.3 1.1v1.6l1.3 1.1-1.4 2.4-1.6-.7-1.3.8-.3 1.7H6.6l-.3-1.7-1.3-.8-1.6.7-1.4-2.4 1.3-1.1V7.2L2 6.1l1.4-2.4 1.6.7 1.3-.8z"/>
-<circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
 
 const GLASS_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
 <circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.2"/>
@@ -575,11 +559,10 @@ export class DocsPanel {
   }
 
   // The trash is a folder like any other, so a move is only the prefix going on or off.
+  // A file comes back from a folder's own .trash the same way, to the folder holding it.
   private async shift(relPath: string, direction: "trash" | "restore"): Promise<void> {
     const root = this.root!.uri;
-    const prefix = `${TRASH_DIR}/`;
-    const inTrash = relPath.startsWith(prefix);
-    const parts = (inTrash ? relPath.slice(prefix.length) : relPath).split("/");
+    const parts = (direction === "restore" ? untrash(relPath) : relPath).split("/");
     const name = parts.pop() ?? relPath;
     const anchor = direction === "trash" ? vscode.Uri.joinPath(root, TRASH_DIR) : root;
 
@@ -603,7 +586,7 @@ export class DocsPanel {
     dir: boolean
   ): Promise<void> {
     const root = this.root?.uri;
-    if (!root || relPath.startsWith(`${TRASH_DIR}/`) !== (direction === "restore")) {
+    if (!root || isTrashed(relPath) !== (direction === "restore")) {
       return;
     }
     try {
@@ -632,27 +615,34 @@ export class DocsPanel {
     await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
     // The files land at the same path on the other side of the trash, and the
     // folders they make there answer to the colours the originals had.
-    const to =
-      direction === "trash" ? `${TRASH_DIR}/${relPath}` : relPath.slice(TRASH_DIR.length + 1);
+    const to = direction === "trash" ? `${TRASH_DIR}/${relPath}` : untrash(relPath);
     for (const spec of this.ledgers) {
       await rekeyFolders(spec, relPath, to);
     }
   }
 
   // "at" names a bin: the folder its files were trashed from, and "" for the whole trash.
-  private async binEntries(at: string): Promise<{ bin: string; entries: [string, boolean][] }> {
-    const bin = at ? `${TRASH_DIR}/${at}` : TRASH_DIR;
-    try {
-      const listed = await vscode.workspace.fs.readDirectory(
-        vscode.Uri.joinPath(this.root!.uri, ...bin.split("/"))
-      );
-      return {
-        bin,
-        entries: listed.map(([name, type]) => [name, (type & vscode.FileType.Directory) !== 0])
-      };
-    } catch {
-      return { bin, entries: [] };
+  // A folder's bin is its part of the trash and, when it has one, its own .trash too.
+  private async binEntries(at: string): Promise<{ bin: string; entries: [string, boolean][] }[]> {
+    const bins = at ? [`${TRASH_DIR}/${at}`, `${at}/${TRASH_DIR}`] : [TRASH_DIR];
+    const out = [];
+    for (const bin of bins) {
+      try {
+        const listed = await vscode.workspace.fs.readDirectory(
+          vscode.Uri.joinPath(this.root!.uri, ...bin.split("/"))
+        );
+        out.push({
+          bin,
+          entries: listed.map(([name, type]): [string, boolean] => [
+            name,
+            (type & vscode.FileType.Directory) !== 0
+          ])
+        });
+      } catch {
+        // No such bin.
+      }
     }
+    return out;
   }
 
   // Everything in a bin goes back where it came from, and a folder's bin, emptied, goes
@@ -661,21 +651,22 @@ export class DocsPanel {
     if (!this.root) {
       return;
     }
-    const { bin, entries } = await this.binEntries(at);
-    try {
-      for (const [name, dir] of entries) {
-        await this.transfer(`${bin}/${name}`, "restore", dir);
+    for (const { bin, entries } of await this.binEntries(at)) {
+      try {
+        for (const [name, dir] of entries) {
+          await this.transfer(`${bin}/${name}`, "restore", dir);
+        }
+        if (at) {
+          await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.root.uri, ...bin.split("/")), {
+            recursive: true,
+            useTrash: false
+          });
+        }
+      } catch (error) {
+        void vscode.window.showErrorMessage(`Docs Panel could not restore ${bin}: ${error}`);
       }
-      if (at) {
-        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.root.uri, ...bin.split("/")), {
-          recursive: true,
-          useTrash: false
-        });
-      }
-    } catch (error) {
-      void vscode.window.showErrorMessage(`Docs Panel could not restore ${bin}: ${error}`);
+      this.dropSelection(bin);
     }
-    this.dropSelection(bin);
     await this.sendTree();
   }
 
@@ -683,8 +674,8 @@ export class DocsPanel {
     if (!this.root) {
       return;
     }
-    const { bin, entries } = await this.binEntries(at);
-    if (!entries.length) {
+    const bins = (await this.binEntries(at)).filter(({ entries }) => entries.length);
+    if (!bins.length) {
       return;
     }
     const answer = await vscode.window.showWarningMessage(
@@ -695,18 +686,20 @@ export class DocsPanel {
     if (answer !== "Delete all") {
       return;
     }
-    try {
-      const target = at ? [bin] : entries.map(([name]) => `${bin}/${name}`);
-      for (const path of target) {
-        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.root.uri, ...path.split("/")), {
-          recursive: true,
-          useTrash: false
-        });
+    for (const { bin, entries } of bins) {
+      try {
+        const target = at ? [bin] : entries.map(([name]) => `${bin}/${name}`);
+        for (const path of target) {
+          await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.root.uri, ...path.split("/")), {
+            recursive: true,
+            useTrash: false
+          });
+        }
+      } catch (error) {
+        void vscode.window.showErrorMessage(`Docs Panel could not empty ${bin}: ${error}`);
       }
-    } catch (error) {
-      void vscode.window.showErrorMessage(`Docs Panel could not empty ${bin}: ${error}`);
+      this.dropSelection(bin);
     }
-    this.dropSelection(bin);
     await this.sendTree();
   }
 
@@ -1006,7 +999,7 @@ export class DocsPanel {
     }
     // The walk skips dotted names, so the trash is built on its own and its paths are
     // prefixed here: one list, one set of keys, whichever side of the trash a file is on.
-    const trash = (await buildTree(vscode.Uri.joinPath(base, TRASH_DIR))).map(prefixNode);
+    const trash = (await buildTree(vscode.Uri.joinPath(base, TRASH_DIR), false)).map(prefixNode);
     this.post({
       type: "tree",
       nodes: await buildTree(base),
@@ -1101,14 +1094,7 @@ export class DocsPanel {
         <span id="modified"></span>
         <span id="ago"></span>
       </span>
-      <span id="typeSettings" hidden>
-        <button id="textSmaller" class="icon" type="button" title="Smaller text">${MINUS_ICON}</button>
-        <button id="textBigger" class="icon" type="button" title="Bigger text">${PLUS_ICON}</button>
-        <button id="lineHeight" class="icon" type="button" title="Line spacing">${LINES_ICONS}</button>
-        <button id="font" class="icon" type="button" title="Font"><span class="glyph">Aa</span></button>
-      </span>
       <button id="find" class="icon" type="button" title="Find (Ctrl+F)">${GLASS_ICON}</button>
-      <button id="typeToggle" class="icon" type="button" title="Text settings" aria-expanded="false">${COG_ICON}</button>
       <button id="toggle" class="icon" type="button" title="Edit"><span class="pen">${PEN_ICON}</span><span class="eye">${EYE_ICON}</span></button>
       <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
       <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
@@ -1129,14 +1115,14 @@ export class DocsPanel {
     <div id="body" tabindex="-1"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
     <div id="finder" hidden>
       <div id="finderBar">
-        <input id="finderText" type="text" placeholder="Search all docs: names, folders and text" spellcheck="false">
+        <input id="finderText" type="text" placeholder="Search all docs: names, folders and text, or tag:, file:, folder:" spellcheck="false">
         <span id="finderCount"></span>
         <button id="finderCase" class="icon" type="button" title="Match case"><span class="glyph">Aa</span></button>
         <button id="finderWord" class="icon" type="button" title="Whole word"><span class="glyph">ab</span></button>
         <button id="finderRegex" class="icon" type="button" title="Regular expression"><span class="glyph">.*</span></button>
         <button id="finderClose" class="icon" type="button" title="Close (Escape)"><span class="glyph">&#10005;</span></button>
       </div>
-      <div id="finderHint">&#8593;&#8595; pick &middot; Ctrl+&#8593;&#8595; next file &middot; Enter open &middot; Escape back</div>
+      <div id="finderHint">&#8593;&#8595; pick &middot; Ctrl+&#8593;&#8595; next file &middot; Enter open &middot; Escape back &middot; tag:, file:, folder: narrow the search</div>
       <div id="finderResults"></div>
     </div>
   </div>
@@ -1172,6 +1158,22 @@ export class DocsPanel {
     }
     this.disposables.length = 0;
   }
+}
+
+// A path is in a trash when a folder on the way to it is one: the panel's own at the docs
+// root, or a folder's own .trash.
+function isTrashed(relPath: string): boolean {
+  return relPath.split("/").slice(0, -1).includes(TRASH_DIR);
+}
+
+// Where a trashed path goes back to: the same path with the trash taken out of it.
+function untrash(relPath: string): string {
+  const parts = relPath.split("/");
+  const at = parts.indexOf(TRASH_DIR);
+  if (at >= 0) {
+    parts.splice(at, 1);
+  }
+  return parts.join("/");
 }
 
 function prefixNode(node: TreeNode): TreeNode {
@@ -1264,6 +1266,8 @@ function normalizeState(value: any): PanelState {
       : value?.tocAuto === true
         ? "toc"
         : DEFAULT_STATE.autoSize,
+    autoWidth: typeof value?.autoWidth === "boolean" ? value.autoWidth : DEFAULT_STATE.autoWidth,
+    tagSide: TAG_SIDES.includes(value?.tagSide) ? value.tagSide : DEFAULT_STATE.tagSide,
     hoverStrength: Number.isFinite(hoverStrength)
       ? Math.min(Math.max(hoverStrength, 0), 100)
       : DEFAULT_STATE.hoverStrength,
