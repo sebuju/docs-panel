@@ -30,6 +30,8 @@ module.exports = [
   { name: "tree-tags-left", state: { tagSide: "left" }, clip: side },
   { name: "tree-tags-right-autowidth", state: { tagSide: "right", autoWidth: true }, clip: wide },
   { name: "tree-tags-left-autowidth", state: { tagSide: "left", autoWidth: true }, clip: wide },
+  { name: "tree-tags-narrow", state: { tagSide: "right", split: 220 }, clip: side },
+  { name: "tree-tags-narrow-left", state: { tagSide: "left", split: 220 }, clip: side },
   { name: "tree-focused", clip: side, act: async (page) => page.focus("#tree") },
   { name: "tree-text-size", state: { treeScale: 1.3 }, clip: wide },
   { name: "tree-light", theme: "light-modern", clip: side },

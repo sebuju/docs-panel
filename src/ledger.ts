@@ -58,6 +58,8 @@ export interface Entry {
 
 export interface Mark {
   color: string;
+  // A tag's letters, shown in place of its name where the name does not fit.
+  short?: string;
 }
 
 export interface Ledger {
@@ -151,6 +153,7 @@ export async function load(spec: LedgerSpec): Promise<Ledger> {
     if (spec.marks) {
       ledger.folders = marksOf(parsed?.folders, (key) => key, isColor);
       ledger.tags = marksOf(parsed?.tags, cleanTag, isTagColor);
+      shortenTags(ledger);
       // A tag a file carries is always in the list, so it always has a colour to show.
       for (const entry of Object.values(ledger.files)) {
         for (const tag of entry.tags) {
@@ -179,8 +182,9 @@ function marksOf(
   for (const [raw, mark] of Object.entries(objectOf(value))) {
     const name = key(raw);
     const color = (mark as Partial<Mark> | null)?.color;
+    const short = (mark as Partial<Mark> | null)?.short;
     if (name && valid(color)) {
-      out[name] = { color };
+      out[name] = typeof short === "string" && short.trim() ? { color, short: short.trim() } : { color };
     }
   }
   return out;
@@ -296,7 +300,7 @@ export async function setColor(
 export async function setTagColor(spec: LedgerSpec, name: string, color: string): Promise<Ledger> {
   const ledger = await load(spec);
   if (ledger.tags[name] && isTagColor(color)) {
-    ledger.tags[name] = { color };
+    ledger.tags[name] = { ...ledger.tags[name], color };
     await save(spec, ledger);
   }
   return ledger;
@@ -314,9 +318,32 @@ export async function renameTag(spec: LedgerSpec, from: string, to: string): Pro
       entry.tags = cleanTags(entry.tags.map((tag) => (tag === from ? name : tag)));
     }
   }
-  ledger.tags[name] ??= ledger.tags[from];
+  const mark = ledger.tags[from];
   delete ledger.tags[from];
+  // A new name is a new tag to tell apart, so it is given letters of its own.
+  ledger.tags[name] ??= { color: mark.color, short: abbreviate(name, takenShorts(ledger)) };
   await save(spec, ledger);
+  return ledger;
+}
+
+export const MAX_SHORT = 8;
+
+// The tag, other than "name", whose letters these already are, if any.
+export function shortOwner(ledger: Ledger, name: string, short: string): string | undefined {
+  const lower = short.trim().toLowerCase();
+  return Object.keys(ledger.tags).find(
+    (other) => other !== name && ledger.tags[other].short?.toLowerCase() === lower
+  );
+}
+
+// Letters chosen by hand, kept only while no other tag has them.
+export async function setTagShort(spec: LedgerSpec, name: string, short: string): Promise<Ledger> {
+  const ledger = await load(spec);
+  const value = short.replace(/\s+/g, "").slice(0, MAX_SHORT);
+  if (ledger.tags[name] && value && !shortOwner(ledger, name, value)) {
+    ledger.tags[name] = { ...ledger.tags[name], short: value };
+    await save(spec, ledger);
+  }
   return ledger;
 }
 
@@ -358,7 +385,67 @@ function defineTag(ledger: Ledger, name: string): void {
   const color =
     TAG_COLORS.find((value) => !used.has(value)) ??
     TAG_COLORS[Object.keys(ledger.tags).length % TAG_COLORS.length];
-  ledger.tags[name] = { color };
+  ledger.tags[name] = { color, short: abbreviate(name, takenShorts(ledger)) };
+}
+
+function takenShorts(ledger: Ledger): Set<string> {
+  return new Set(
+    Object.values(ledger.tags).flatMap((mark) => (mark.short ? [mark.short.toLowerCase()] : []))
+  );
+}
+
+// A ledger written before tags had letters, or edited by hand, can hold tags with none or
+// with letters another tag has too. The first of each kept, by name, keeps them; the rest
+// are given new ones, once, and keep those from the next save on.
+function shortenTags(ledger: Ledger): void {
+  const taken = new Set<string>();
+  const names = Object.keys(ledger.tags).sort((a, b) => a.localeCompare(b));
+  const needing: string[] = [];
+  for (const name of names) {
+    const short = ledger.tags[name].short?.toLowerCase();
+    if (short && !taken.has(short)) {
+      taken.add(short);
+    } else {
+      needing.push(name);
+    }
+  }
+  for (const name of needing) {
+    const short = abbreviate(name, taken);
+    taken.add(short.toLowerCase());
+    ledger.tags[name] = { ...ledger.tags[name], short };
+  }
+}
+
+// The first letter of each word, a word ending at a space, a dash, an underscore, a dot or
+// a slash: "plan" is "p", "to do" is "td". Letters another tag already has, in either
+// case, are lengthened from the words in turn, the first word first: "priority" next to
+// "plan" is "pr", "to do" next to "td" is "tod". A name that runs out of letters is
+// numbered.
+export function abbreviate(name: string, taken: Set<string>): string {
+  const words = name.split(/[\s\-_./]+/).filter(Boolean).map((word) => Array.from(word));
+  if (!words.length) {
+    words.push(Array.from(name));
+  }
+  const counts = words.map(() => 1);
+  const letters = () => words.map((word, i) => word.slice(0, counts[i]).join("")).join("");
+  const free = (value: string) => !taken.has(value.toLowerCase());
+  for (;;) {
+    const value = letters();
+    if (free(value)) {
+      return value;
+    }
+    const grow = counts.findIndex((count, i) => count < words[i].length);
+    if (grow < 0) {
+      break;
+    }
+    counts[grow] += 1;
+  }
+  const base = letters();
+  for (let n = 2; ; n++) {
+    if (free(base + n)) {
+      return base + n;
+    }
+  }
 }
 
 // A file edited on disk is no longer the file that was read, so its entry is dropped.

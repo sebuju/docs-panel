@@ -37,6 +37,17 @@
       "idea": "orange",
       "misc": "grey",
       "stale": "cyan"
+    },
+    "tagShorts": {
+      "blocked": "b",
+      "draft": "d",
+      "idea": "i",
+      "meeting": "m",
+      "misc": "mi",
+      "overview": "o",
+      "plan": "p",
+      "q3": "q",
+      "review": "r"
     }
   },
   "contents": {

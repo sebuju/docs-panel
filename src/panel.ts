@@ -16,6 +16,9 @@ import {
   rekey,
   rekeyFolders,
   renameTag,
+  setTagShort,
+  shortOwner,
+  MAX_SHORT,
   setColor,
   setStatus,
   setTagColor,
@@ -357,6 +360,9 @@ export class DocsPanel {
       case "renameTag":
         await this.renameTag(String(message.name));
         return;
+      case "tagShort":
+        await this.tagShort(String(message.name));
+        return;
       case "deleteTag":
         await this.deleteTag(String(message.name));
         return;
@@ -418,6 +424,38 @@ export class DocsPanel {
     this.postMarks(await renameTag(marksLedger(this.root.uri), name, next));
   }
 
+  // The letters a tag shows where its name does not fit; two tags never share them.
+  private async tagShort(name: string): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const spec = marksLedger(this.root.uri);
+    const ledger = await load(spec);
+    if (!ledger.tags[name]) {
+      return;
+    }
+    const next = await vscode.window.showInputBox({
+      title: `Letters for the tag ${name}`,
+      prompt: "Shown in place of the name where it does not fit.",
+      value: ledger.tags[name].short ?? "",
+      validateInput: (value) => {
+        const short = value.replace(/\s+/g, "");
+        if (!short) {
+          return "The letters cannot be empty.";
+        }
+        if (short.length > MAX_SHORT) {
+          return `At most ${MAX_SHORT} letters.`;
+        }
+        const owner = shortOwner(ledger, name, short);
+        return owner ? `The tag ${owner} has these letters.` : null;
+      }
+    });
+    if (next === undefined) {
+      return;
+    }
+    this.postMarks(await setTagShort(spec, name, next));
+  }
+
   private async deleteTag(name: string): Promise<void> {
     if (!this.root) {
       return;
@@ -465,10 +503,14 @@ export class DocsPanel {
       colors[path] = mark.color;
     }
     const tagColors: Record<string, string> = {};
+    const tagShorts: Record<string, string> = {};
     for (const [name, mark] of Object.entries(ledger.tags)) {
       tagColors[name] = mark.color;
+      if (mark.short) {
+        tagShorts[name] = mark.short;
+      }
     }
-    this.post({ type: "marks", tags, colors, tagColors });
+    this.post({ type: "marks", tags, colors, tagColors, tagShorts });
   }
 
   private postReads(ledger: Ledger): void {

@@ -234,6 +234,7 @@ body.dragging-rows {
 /* One line box for every child: with each of them the same height, centring them puts
    text, twisty and dot all on the row's centre line. */
 .row {
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -363,8 +364,10 @@ body.dragging-rows {
 .t-grey { --c: #b4b4b4; }
 .t-silver { --c: #dcdcdc; }
 
-/* A pill in the tag's own colour, always with black text. */
+/* A pill in the tag's own colour, always with black text. It is never cut: short of room
+   the script puts the tag's initials in it, and it is then as wide as they are. */
 .tag {
+  flex: none;
   height: 14px;
   line-height: 14px;
   padding: 0 6px;
@@ -373,8 +376,6 @@ body.dragging-rows {
   color: #000;
   background: var(--c);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* A row's tags sit together in one box, set close: the row's own gap is for the parts
@@ -383,17 +384,22 @@ body.dragging-rows {
    name on either side of it, so the row is as wide whichever side that is. */
 .row .tags {
   display: flex;
-  flex: 0 3 auto;
+  flex: none;
   align-items: center;
   gap: 2px;
-  min-width: 0;
   margin-left: 4px;
-  overflow: hidden;
+}
+
+/* Initials: as narrow as the letters, and round when there is one of them. */
+.tag.short {
+  min-width: var(--pill-height, 14px);
+  box-sizing: border-box;
+  padding: 0 4px;
+  text-align: center;
 }
 
 .row .tag {
-  flex: 0 1 auto;
-  min-width: 1.5em;
+  --pill-height: var(--tree-pill);
   height: var(--tree-pill);
   line-height: var(--tree-pill);
   cursor: pointer;
@@ -458,6 +464,7 @@ body.dragging-rows {
 }
 
 #tags .tag {
+  --pill-height: 20px;
   height: 20px;
   line-height: 20px;
   padding: 0 8px;
@@ -1334,6 +1341,19 @@ img.single {
 
 .opt-file .opt-path {
   line-height: 15px;
+}
+
+/* A tag's letters in the options, the pill the tree shows them in, and a way to change them. */
+.opt-short {
+  --pill-height: 15px;
+  height: 15px;
+  line-height: 15px;
+  cursor: pointer;
+}
+
+.opt-short:hover {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
 }
 
 .opt-label .swatch {

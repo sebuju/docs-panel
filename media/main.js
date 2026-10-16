@@ -142,6 +142,9 @@
   let tags = {};
   let colors = {};
   let tagColors = {};
+  // Each tag's letters, given it by the extension when it was made and kept apart from
+  // every other tag's.
+  let tagShorts = {};
   let reads = new Set();
   let mentions = {};
   let logOpen = false;
@@ -250,6 +253,7 @@
     const max = Math.max(MIN_SPLIT, window.innerWidth - MIN_SPLIT - 4);
     split = Math.min(Math.max(value, MIN_SPLIT), max);
     layout.style.setProperty("--split", split + "px");
+    fitTags();
   }
 
   function setSideSplit(value) {
@@ -296,6 +300,7 @@
     if (!rows.length) {
       return;
     }
+    shortenPills(treeEl.querySelectorAll(".tag"), false);
     treeEl.classList.add("measuring");
     let right = 0;
     for (const row of rows) {
@@ -330,6 +335,7 @@
     treeEl.style.setProperty("--tree-scale", treeScale);
     treeEl.style.setProperty("--tree-row", Math.round(18 * treeScale) + "px");
     treeEl.style.setProperty("--tree-pill", Math.round(14 * treeScale) + "px");
+    fitTags();
   }
 
   function stepTreeScale(delta) {
@@ -366,6 +372,7 @@
     tagSide = TAG_SIDES.includes(value) ? value : "right";
     treeEl.classList.toggle("tags-left", tagSide === "left");
     fitWidth();
+    fitTags();
   }
 
   // The host rewrites the root's colours and the body's classes when the theme or the
@@ -469,6 +476,7 @@
     treeEl.scrollTop = top;
     markCursor(document.activeElement === treeEl ? cursorRow() : null);
     fitWidth();
+    fitTags();
     if (autoSize === "tree") {
       fitSide();
     }
@@ -697,13 +705,68 @@
     return names.slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }
 
-  // A tag is drawn as a pill in the colour it was given.
+  // A tag is drawn as a pill in the colour it was given. It carries its initials too, for
+  // when there is no room for its name.
   function tagPill(name) {
     const pill = document.createElement("span");
     pill.className = "tag t-" + tagColor(name);
     pill.textContent = name;
     pill.title = name;
+    pill.dataset.name = name;
+    pill.dataset.short = shortOf(name);
     return pill;
+  }
+
+  function shortOf(name) {
+    return tagShorts[name] || initials(name);
+  }
+
+  // A tag just typed in has no letters from the extension until it answers, and shows its
+  // initials until then: the first letter of each word.
+  function initials(name) {
+    const letters = name
+      .split(/[\s\-_./]+/)
+      .map((word) => Array.from(word)[0] || "")
+      .join("");
+    return letters || Array.from(name)[0] || name;
+  }
+
+  function shortenPills(pills, short) {
+    for (const pill of pills) {
+      const text = short ? pill.dataset.short : pill.dataset.name;
+      if (pill.textContent !== text) {
+        pill.textContent = text;
+      }
+      pill.classList.toggle("short", short);
+    }
+  }
+
+  // Tags that do not fit beside a name, all of them at their full width, give way to their
+  // initials, every pill in the row at once; the pills keep their width and only the name
+  // is cut. Each row is put back to full names and measured before any is changed, so the
+  // whole tree costs two layouts, not one a row.
+  function fitTags() {
+    const rows = [...treeEl.querySelectorAll(".row")].filter((row) => row.querySelector(".tags"));
+    for (const row of rows) {
+      shortenPills(row.querySelectorAll(".tag"), false);
+    }
+    const tight = rows.filter((row) => {
+      const label = row.querySelector(".label");
+      return label.scrollWidth > label.clientWidth;
+    });
+    for (const row of tight) {
+      shortenPills(row.querySelectorAll(".tag"), true);
+    }
+    fitHeaderTags();
+  }
+
+  // The same in the file bar, where the file's name is what must not be cut.
+  function fitHeaderTags() {
+    const pills = headerTagsEl.querySelectorAll(".tag");
+    shortenPills(pills, false);
+    const tight =
+      headerTagsEl.scrollWidth > headerTagsEl.clientWidth || titleEl.scrollWidth > titleEl.clientWidth;
+    shortenPills(pills, tight && pills.length > 0);
   }
 
   function tagColor(name) {
@@ -2146,6 +2209,7 @@
       tags = message.tags || {};
       colors = message.colors || {};
       tagColors = message.tagColors || {};
+      tagShorts = message.tagShorts || {};
       drawTree();
       drawHeaderTags();
       drawTagPicker();
@@ -2854,6 +2918,7 @@
       pill.addEventListener("click", () => toggleTagPicker(pill));
       headerTagsEl.appendChild(pill);
     }
+    fitHeaderTags();
   }
 
   addTagEl.addEventListener("click", () => toggleTagPicker(addTagEl));
@@ -3276,7 +3341,10 @@
         const box = swatch.getBoundingClientRect();
         pickTagColor(name, box.left, box.bottom + 4);
       });
-      optionRow(tagBox, [swatch, make("span", "opt-name cap", name)], [
+      const letters = make("span", "tag short opt-short t-" + tagColor(name), shortOf(name));
+      letters.title = "Letters shown where the name does not fit; click to change";
+      letters.addEventListener("click", () => vscode.postMessage({ type: "tagShort", name: name }));
+      optionRow(tagBox, [swatch, make("span", "opt-name cap", name), letters], [
         make("span", "opt-dim cap", used + (used === 1 ? " file" : " files")),
         makeButton("Rename…", () => vscode.postMessage({ type: "renameTag", name: name })),
         makeButton("Delete", () => vscode.postMessage({ type: "deleteTag", name: name }), "opt-button danger")

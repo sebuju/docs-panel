@@ -88,7 +88,7 @@ a space or a comma in it is quoted: `tag:"to do"`.
 The options hold the reading settings (text size, line spacing, font, which list's height
 is auto sized, whether the side's width is, and how strongly the Markdown block under the
 pointer is lit, where off turns the light off), the tree's (its own text size, and which
-side of a name the tags are drawn on), the tags (each one's colour, rename and delete, and
+side of a name the tags are drawn on), the tags (each one's colour, its letters, rename and delete, and
 **Prune**, which removes the tags no file has), and the data files the panel writes, each
 with its size and a button to purge it.
 
@@ -106,7 +106,15 @@ The setting has resource scope, so a project can override it in its own
 Tags and colours are stored in `<docs folder>/.docs-panel.json`, so they travel with the
 documents. The colours of files and folders are the theme's own, so they follow the theme
 in use; a tag's colours are the panel's own, the same in every theme, and each is light
-enough for the black text on a pill to read at 7:1 or better. Each entry
+enough for the black text on a pill to read at 7:1 or better.
+
+Where a row has no room for its tags beside the file's name, its pills show the tags'
+letters instead, each pill as wide as its letters. Every tag gets letters of its own when
+it is made: the first letter of each word, lengthened while another tag already has them
+(`plan` is `p`, then `priority` is `pr`). The options show them beside each tag; click
+them to choose others, which no other tag may have.
+
+Each entry
 carries a content hash: a file moved outside the panel keeps its tags and colour, an
 ambiguous match is dropped rather than guessed, and a trashed file keeps its entry until
 it is deleted for good.
