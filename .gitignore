@@ -32,3 +32,6 @@ npm-debug.log*
 
 # Local sandbox for trying the panel
 test-project/
+
+# Screenshots taken by tools/screenshots
+tools/screenshots/out/

@@ -1,0 +1,71 @@
+{
+  "marks": {
+    "tags": {
+      "README.md": [
+        "overview"
+      ],
+      "guide.md": [
+        "draft",
+        "review"
+      ],
+      "plans/roadmap.md": [
+        "plan",
+        "q3"
+      ],
+      "plans/migration-plan-for-the-new-storage-layer.md": [
+        "plan",
+        "blocked"
+      ],
+      "notes/meeting-notes.md": [
+        "meeting",
+        "misc"
+      ],
+      "notes/ideas.md": [
+        "idea",
+        "draft"
+      ]
+    },
+    "colors": {},
+    "tagColors": {
+      "overview": "blue",
+      "draft": "yellow",
+      "review": "purple",
+      "plan": "green",
+      "q3": "cyan",
+      "blocked": "red",
+      "meeting": "magenta",
+      "idea": "orange",
+      "misc": "grey",
+      "stale": "cyan"
+    }
+  },
+  "contents": {
+    "plans/roadmap.md": {
+      "kind": "md",
+      "html": "<h1 data-line=\"0\">Roadmap</h1><h2>Q3</h2><p>Ship the storage layer and the review flow.</p><h2>Q4</h2><p>Plan the migration. Review the draft with the team.</p><h3>Risks</h3><p>The storage layer may slip.</p>"
+    }
+  },
+  "dataFiles": [
+    {
+      "id": "ledger",
+      "label": "Tags and colours",
+      "note": "every tag and colour is lost",
+      "path": "docs/.docs-panel.json",
+      "size": 2310
+    },
+    {
+      "id": "reads",
+      "label": "Read marks",
+      "note": "every file goes back to unread",
+      "path": ".vscode/docs-panel-reads.json",
+      "size": 812
+    },
+    {
+      "id": "mentions",
+      "label": "Mention cache",
+      "note": "rebuilt from the session logs on the next scan",
+      "path": ".vscode/docs-panel-mentions.json",
+      "size": -1
+    }
+  ]
+}
