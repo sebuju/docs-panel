@@ -7,9 +7,11 @@ import {
   deleteTag,
   invalidate,
   isColor,
+  isTagColor,
   listFiles,
   load,
   prune,
+  pruneTags,
   readsLedger,
   rekey,
   rekeyFolders,
@@ -43,6 +45,7 @@ export interface PanelState {
   split: number;
   sideSplit: number;
   textScale: number;
+  treeScale: number;
   lineHeight: number;
   mono: boolean;
   autoSize: AutoSize;
@@ -58,6 +61,7 @@ const DEFAULT_STATE: PanelState = {
   split: 240,
   sideSplit: 0.5,
   textScale: 1,
+  treeScale: 1,
   lineHeight: 1,
   mono: false,
   autoSize: "none",
@@ -356,6 +360,9 @@ export class DocsPanel {
       case "deleteTag":
         await this.deleteTag(String(message.name));
         return;
+      case "pruneTags":
+        await this.pruneTags();
+        return;
       case "browser":
         await this.browse(String(message.path));
         return;
@@ -390,7 +397,7 @@ export class DocsPanel {
   }
 
   private async tagColor(name: string, value: unknown): Promise<void> {
-    if (!this.root || !isColor(value)) {
+    if (!this.root || !isTagColor(value)) {
       return;
     }
     this.postMarks(await setTagColor(marksLedger(this.root.uri), name, value));
@@ -430,6 +437,15 @@ export class DocsPanel {
       }
     }
     this.postMarks(await deleteTag(spec, name));
+  }
+
+  private async pruneTags(): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const { ledger, pruned } = await pruneTags(marksLedger(this.root.uri));
+    this.postMarks(ledger);
+    this.post({ type: "prunedTags", names: pruned });
   }
 
   // One message carries everything the marks ledger holds, since the tree draws it all
@@ -1115,14 +1131,14 @@ export class DocsPanel {
     <div id="body" tabindex="-1"><p class="notice">${escapeHtml("Pick a file on the left.")}</p></div>
     <div id="finder" hidden>
       <div id="finderBar">
-        <input id="finderText" type="text" placeholder="Search all docs: names, folders and text, or tag:, file:, folder:" spellcheck="false">
+        <input id="finderText" type="text" placeholder="Search all docs: names, folders and text, or tag:, file:, folder:, several split by commas" spellcheck="false">
         <span id="finderCount"></span>
         <button id="finderCase" class="icon" type="button" title="Match case"><span class="glyph">Aa</span></button>
         <button id="finderWord" class="icon" type="button" title="Whole word"><span class="glyph">ab</span></button>
         <button id="finderRegex" class="icon" type="button" title="Regular expression"><span class="glyph">.*</span></button>
         <button id="finderClose" class="icon" type="button" title="Close (Escape)"><span class="glyph">&#10005;</span></button>
       </div>
-      <div id="finderHint">&#8593;&#8595; pick &middot; Ctrl+&#8593;&#8595; next file &middot; Enter open &middot; Escape back &middot; tag:, file:, folder: narrow the search</div>
+      <div id="finderHint">&#8593;&#8595; pick &middot; Ctrl+&#8593;&#8595; next file &middot; Enter open &middot; Escape back &middot; tag:, file:, folder: narrow the search, tag:a,b takes either</div>
       <div id="finderResults"></div>
     </div>
   </div>
@@ -1252,12 +1268,14 @@ function normalizeState(value: any): PanelState {
   const split = Number(value?.split);
   const sideSplit = Number(value?.sideSplit);
   const textScale = Number(value?.textScale);
+  const treeScale = Number(value?.treeScale);
   const lineHeight = Number(value?.lineHeight);
   const hoverStrength = Number(value?.hoverStrength);
   return {
     split: Number.isFinite(split) ? split : DEFAULT_STATE.split,
     sideSplit: Number.isFinite(sideSplit) ? sideSplit : DEFAULT_STATE.sideSplit,
     textScale: Number.isFinite(textScale) ? textScale : DEFAULT_STATE.textScale,
+    treeScale: Number.isFinite(treeScale) ? treeScale : DEFAULT_STATE.treeScale,
     lineHeight: Number.isFinite(lineHeight) ? lineHeight : DEFAULT_STATE.lineHeight,
     mono: typeof value?.mono === "boolean" ? value.mono : DEFAULT_STATE.mono,
     // Before there were two lists to size, one switch sized the contents.

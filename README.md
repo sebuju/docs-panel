@@ -26,6 +26,7 @@ Then run **Docs Panel: Open** from the command palette.
 | Zoom a picture | Click it; scroll to zoom, drag to pan, `0` to fit, `Escape` to close |
 | Edit a file | Pen button in the file bar, then `Ctrl+S` |
 | Tag a file | `+` in the file bar, or **Tags…** in the tree's menu; type to find or add a tag |
+| Search by a tag | Click the tag in the tree; with the search up it takes the place of the tag searched for, and with `Shift` held it is added to them |
 | Colour a file or folder | **Colour…** in the tree's menu |
 | Pin a file or folder | **Pin to top** in the tree's menu |
 | Open in a browser | **Open in browser** in a file's menu in the tree |
@@ -48,7 +49,7 @@ With the tree focused (click it, or `Tab` to it):
 | `Up` / `Down` | Move to the previous or next row; a file you stop on opens |
 | `Right` | On a closed folder, open it; on an open one, go to its first entry; on a Markdown file, go into the page at its first block; on any other file, go into the page so `Up` / `Down` scroll it |
 | `Left` | On an open folder, close it; otherwise go up to the folder holding the row |
-| `Space` | Open the row's menu: `Up` / `Down` pick, `Enter` runs, `Escape` closes; the focus comes back to the tree either way |
+| `Space`, `Shift+F10` or the menu key | Open the row's menu: `Up` / `Down` pick, `Enter` runs, `Escape` closes; the focus comes back to the tree either way |
 
 In a file being read (not edited), `Left` goes back to the tree at the row you left. In
 a Markdown file, `Right` from there comes back to the block you were on.
@@ -67,8 +68,13 @@ Start the search with a scope to look only in some files:
 | `file:road storage` | Files whose name holds `road` |
 | `folder:plans storage` | Files in a folder whose name holds `plans`, grouped by folder |
 
-With nothing after the name, the search lists every file the scope lets in. A name with a
-space in it is quoted: `tag:"to do"`.
+Several names are split by commas, with or without spaces around them, and a file is let
+in by any of them: `tag:plan, draft storage` searches the files tagged with either for
+`storage`, and `file:road,ideas` lists the files whose name holds either. An empty name
+among others, as in `tag:plan,,draft` or a comma at the end, is left out.
+
+With nothing after the names, the search lists every file the scope lets in. A name with
+a space or a comma in it is quoted: `tag:"to do"`.
 
 | Key | Does |
 |---|---|
@@ -81,9 +87,10 @@ space in it is quoted: `tag:"to do"`.
 
 The options hold the reading settings (text size, line spacing, font, which list's height
 is auto sized, whether the side's width is, and how strongly the Markdown block under the
-pointer is lit, where off turns the light off), the tags (which side of a name they are
-drawn on in the tree, and each tag's colour, rename and delete), and the data files the
-panel writes, each with its size and a button to purge it.
+pointer is lit, where off turns the light off), the tree's (its own text size, and which
+side of a name the tags are drawn on), the tags (each one's colour, rename and delete, and
+**Prune**, which removes the tags no file has), and the data files the panel writes, each
+with its size and a button to purge it.
 
 ## Settings
 
@@ -97,7 +104,9 @@ The setting has resource scope, so a project can override it in its own
 ## Tags and colours
 
 Tags and colours are stored in `<docs folder>/.docs-panel.json`, so they travel with the
-documents. The colours are the theme's own, so they follow the theme in use. Each entry
+documents. The colours of files and folders are the theme's own, so they follow the theme
+in use; a tag's colours are the panel's own, the same in every theme, and each is light
+enough for the black text on a pill to read at 7:1 or better. Each entry
 carries a content hash: a file moved outside the panel keeps its tags and colour, an
 ambiguous match is dropped rather than guessed, and a trashed file keeps its entry until
 it is deleted for good.
@@ -108,6 +117,12 @@ Raise the version in `package.json` (`npm version <x.y.z> --no-git-tag-version`)
 the notes to `.github/releases/v<x.y.z>.md`, and merge to `master`. The release workflow
 builds the `.vsix`, tags the commit, and publishes the release with the notes; without a
 notes file GitHub writes them from the commits.
+
+## Screenshots
+
+`tools/screenshots` renders the panel in Chromium without VS Code and takes a set of
+screenshots of it, or of a committed version and the working tree side by side; see its
+README.
 
 ## Limits
 

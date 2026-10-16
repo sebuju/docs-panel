@@ -91,11 +91,20 @@
   // and the stylesheet says which.
   const COLORS = ["red", "orange", "yellow", "green", "blue", "purple", "cyan", "magenta", "grey"];
 
+  // A tag's colours are the panel's own, the same in every theme and all light enough for
+  // the black text on a pill; listed round the colour wheel, then the browns and greys.
+  const TAG_COLORS = [
+    "red", "coral", "orange", "peach", "amber", "yellow", "olive", "lime", "green", "mint", "teal",
+    "cyan", "sky", "blue", "lavender", "purple", "magenta", "pink", "brown", "sand", "grey", "silver"
+  ];
+
   const MIN_SPLIT = 120;
   const MIN_ROW = 60;
   const MIN_TEXT = 0.7;
   const MAX_TEXT = 2.5;
   const TEXT_STEP = 0.1;
+  const MIN_TREE = 0.7;
+  const MAX_TREE = 2;
   const LINE_HEIGHTS = ["normal", "1.6", "2"];
   const LINE_LABELS = ["tight", "normal", "loose"];
   const ACTIVE_SHARE = 0.1;
@@ -111,6 +120,7 @@
   let split = 240;
   let sideSplit = 0.5;
   let textScale = 1;
+  let treeScale = 1;
   let lineHeight = 1;
   let mono = false;
   let sections = [];
@@ -164,6 +174,7 @@
   setSplit(split);
   setSideSplit(sideSplit);
   setTextScale(textScale);
+  setTreeScale(treeScale);
   setLineHeight(lineHeight);
   setMono(mono);
   setHoverStrength(hoverStrength);
@@ -178,6 +189,9 @@
     }
     if (typeof state.textScale === "number") {
       textScale = state.textScale;
+    }
+    if (typeof state.treeScale === "number") {
+      treeScale = state.treeScale;
     }
     if (typeof state.lineHeight === "number") {
       lineHeight = state.lineHeight;
@@ -213,6 +227,7 @@
       split: split,
       sideSplit: sideSplit,
       textScale: textScale,
+      treeScale: treeScale,
       lineHeight: lineHeight,
       mono: mono,
       autoSize: autoSize,
@@ -308,6 +323,25 @@
     layout.style.setProperty("--text-scale", textScale);
   }
 
+  // The tree's own size, apart from the page's. The rows and pills are given whole pixels,
+  // so text, twisty and dot keep sharing one centre line at any size.
+  function setTreeScale(value) {
+    treeScale = Math.min(Math.max(Math.round(value * 100) / 100, MIN_TREE), MAX_TREE);
+    treeEl.style.setProperty("--tree-scale", treeScale);
+    treeEl.style.setProperty("--tree-row", Math.round(18 * treeScale) + "px");
+    treeEl.style.setProperty("--tree-pill", Math.round(14 * treeScale) + "px");
+  }
+
+  function stepTreeScale(delta) {
+    setTreeScale(treeScale + delta);
+    fitWidth();
+    if (autoSize === "tree") {
+      fitSide();
+    }
+    persist();
+    drawOptions();
+  }
+
   function setLineHeight(value) {
     lineHeight = Math.min(Math.max(Math.round(value) || 0, 0), LINE_HEIGHTS.length - 1);
     layout.style.setProperty("--line-height", LINE_HEIGHTS[lineHeight]);
@@ -334,54 +368,9 @@
     fitWidth();
   }
 
-  const DARK_INK = [22, 22, 22];
-  const LIGHT_INK = [255, 255, 255];
-  const inkStyle = document.createElement("style");
-  document.head.appendChild(inkStyle);
-
-  // A pill's text is whichever of a near black and a white stands further off the colour
-  // the theme gives its tag, so every colour keeps its name legible in every theme. A
-  // colour with some see-through in it is laid over the page first, as it is drawn.
-  function inkTags() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1;
-    canvas.height = 1;
-    const paint = canvas.getContext("2d", { willReadFrequently: true });
-    const probe = make("span", "ink-probe");
-    document.body.appendChild(probe);
-    const under = getComputedStyle(document.body).backgroundColor;
-    const rules = COLORS.map((name) => {
-      probe.className = "ink-probe c-" + name;
-      paint.clearRect(0, 0, 1, 1);
-      paint.fillStyle = under;
-      paint.fillRect(0, 0, 1, 1);
-      paint.fillStyle = getComputedStyle(probe).color;
-      paint.fillRect(0, 0, 1, 1);
-      const fill = luminance(paint.getImageData(0, 0, 1, 1).data);
-      const dark = contrast(fill, luminance(DARK_INK)) >= contrast(fill, luminance(LIGHT_INK));
-      return ".tag.c-" + name + " { --ink: rgb(" + (dark ? DARK_INK : LIGHT_INK).join(", ") + "); }";
-    });
-    probe.remove();
-    inkStyle.textContent = rules.join("\n");
-  }
-
-  // The relative luminance and contrast ratio of WCAG 2.
-  function luminance(rgb) {
-    const channel = (value) => {
-      const c = value / 255;
-      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-    };
-    return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
-  }
-
-  function contrast(a, b) {
-    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-  }
-
   // The host rewrites the root's colours and the body's classes when the theme or the
-  // font changes; the inks follow the colours, and the side's width the font.
+  // font changes; the side's width follows the font.
   function followTheme() {
-    inkTags();
     fitWidth();
   }
 
@@ -629,8 +618,13 @@
       if (!node.dir && (tags[node.path] || []).length) {
         const box = document.createElement("span");
         box.className = "tags";
-        for (const tag of tags[node.path]) {
-          box.appendChild(tagPill(tag));
+        for (const tag of byName(tags[node.path])) {
+          const pill = tagPill(tag);
+          pill.addEventListener("click", (event) => {
+            event.stopPropagation();
+            searchTag(tag, event.shiftKey);
+          });
+          box.appendChild(pill);
         }
         row.appendChild(box);
       }
@@ -699,17 +693,21 @@
     return [...up, ...items.filter((node) => !pinned.has(node.path))];
   }
 
+  function byName(names) {
+    return names.slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }
+
   // A tag is drawn as a pill in the colour it was given.
   function tagPill(name) {
     const pill = document.createElement("span");
-    pill.className = "tag c-" + tagColor(name);
+    pill.className = "tag t-" + tagColor(name);
     pill.textContent = name;
     pill.title = name;
     return pill;
   }
 
   function tagColor(name) {
-    return tagColors[name] || "grey";
+    return TAG_COLORS.includes(tagColors[name]) ? tagColors[name] : "grey";
   }
 
   function togglePin(path) {
@@ -785,7 +783,7 @@
       }
       if (item.swatch) {
         const swatch = document.createElement("span");
-        swatch.className = "swatch c-" + item.swatch;
+        swatch.className = "swatch " + item.swatch;
         button.appendChild(swatch);
       }
       button.appendChild(document.createTextNode(item.label));
@@ -817,6 +815,7 @@
     menuOn = button;
     if (menuOn) {
       menuOn.classList.add("on");
+      menuOn.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -862,11 +861,13 @@
     el.style.top = Math.max(0, Math.min(y, window.innerHeight - box.height - 4)) + "px";
   }
 
-  // "none" is offered only where having no colour at all is a choice; a tag always has one.
+  // "none" is offered only where having no colour at all is a choice; a tag always has one,
+  // from a palette of its own.
   function openColorMenu(x, y, chosen, none, apply) {
-    const items = COLORS.map((color) => ({
+    const palette = none ? COLORS : TAG_COLORS;
+    const items = palette.map((color) => ({
       label: color,
-      swatch: color,
+      swatch: (none ? "c-" : "t-") + color,
       checked: chosen === color,
       run: () => apply(color)
     }));
@@ -898,9 +899,24 @@
     }
   }
 
+  // The marks come first, as they are what the menu is most often opened for.
   function nodeMenu(node, x, y) {
     const trashed = inTrash(node.path);
     const items = [];
+    if (!trashed) {
+      if (!node.dir) {
+        items.push({ label: "Tags…", run: () => openTagPicker(node.path, x, y) });
+      }
+      items.push({
+        label: "Colour…",
+        run: () => openColorMenu(x, y, colors[node.path], true, (color) => setColor(node, color))
+      });
+      items.push({
+        label: pinned.has(node.path) ? "Unpin" : "Pin to top",
+        run: () => togglePin(node.path)
+      });
+      items.push({ separator: true });
+    }
     if (node.dir && !trashed) {
       items.push(...makeItems(node.path), { separator: true });
     }
@@ -911,20 +927,6 @@
     items.push({ label: "Rename…", run: () => send("rename", node) });
     items.push({ label: "Clone", run: () => send("clone", node) });
     items.push({ label: "Copy path", run: () => copyPath(node.path) });
-    if (!trashed) {
-      items.push({ separator: true });
-      items.push({
-        label: pinned.has(node.path) ? "Unpin" : "Pin to top",
-        run: () => togglePin(node.path)
-      });
-      items.push({
-        label: "Colour…",
-        run: () => openColorMenu(x, y, colors[node.path], true, (color) => setColor(node, color))
-      });
-      if (!node.dir) {
-        items.push({ label: "Tags…", run: () => openTagPicker(node.path, x, y) });
-      }
-    }
     items.push({ separator: true });
     if (trashed) {
       items.push({ label: "Restore", run: () => send("restore", node) });
@@ -1314,6 +1316,10 @@
       return;
     }
     event.preventDefault();
+    if (event.target === treeEl && Date.now() - keyMenuAt < KEY_MENU_MS) {
+      keyMenuAt = 0;
+      return;
+    }
     openMenu(event.clientX, event.clientY, makeItems(""));
   });
 
@@ -1413,7 +1419,7 @@
 
   // Up and Down walk the rows. Right opens a folder, then goes into it; on a file it goes
   // into the page, where the arrows walk a Markdown file's blocks and scroll any other. Left closes a folder, then goes up to the one holding it.
-  // Space opens the row's menu.
+  // Space opens the row's menu, and so do Shift+F10 and the menu key.
   function treeKey(key) {
     const rows = treeRows();
     const row = cursorRow(rows);
@@ -1824,8 +1830,16 @@
       return;
     }
     const plain = !ctrl && !event.altKey && !event.shiftKey;
-    if (plain && lightboxEl.hidden && menuEl.hidden && event.target === treeEl && treeKey(event.key)) {
+    const onTree = lightboxEl.hidden && menuEl.hidden && event.target === treeEl;
+    if (plain && onTree && treeKey(event.key)) {
       event.preventDefault();
+      return;
+    }
+    // The keys every list in the editor opens its menu with do what Space does here.
+    if (onTree && !ctrl && !event.altKey && menuKey(event)) {
+      event.preventDefault();
+      keyMenuAt = Date.now();
+      treeKey(" ");
       return;
     }
     if (plain && lightboxEl.hidden && menuEl.hidden && event.key === "ArrowLeft" && leaveText(event.target)) {
@@ -1858,6 +1872,15 @@
       save();
     }
   });
+
+  function menuKey(event) {
+    return (event.key === "ContextMenu" && !event.shiftKey) || (event.key === "F10" && event.shiftKey);
+  }
+
+  // Those keys have the browser send a menu event of its own, at the tree rather than at a
+  // row, once the menu is already open from the key; that one is let go.
+  const KEY_MENU_MS = 600;
+  let keyMenuAt = 0;
 
   const FIND_TWICE_MS = 500;
   let findAt = 0;
@@ -2090,6 +2113,7 @@
       setSplit(split);
       setSideSplit(sideSplit);
       setTextScale(textScale);
+      setTreeScale(treeScale);
       setLineHeight(lineHeight);
       setMono(mono);
       setHoverStrength(hoverStrength);
@@ -2152,6 +2176,9 @@
       mentions = message.mentions || {};
       drawTree();
       drawLog();
+    } else if (message.type === "prunedTags") {
+      const pruned = message.names || [];
+      toast(pruned.length ? "pruned " + pruned.length + (pruned.length === 1 ? " tag: " : " tags: ") + pruned.join(", ") : "no tags to prune");
     } else if (message.type === "prefixes") {
       prefixes = message.prefixes || {};
     }
@@ -2913,7 +2940,7 @@
       row.appendChild(tick);
 
       const swatch = document.createElement("span");
-      swatch.className = "swatch pick c-" + tagColor(choice.name);
+      swatch.className = "swatch pick t-" + tagColor(choice.name);
       if (!choice.fresh) {
         swatch.title = "Colour";
         swatch.addEventListener("click", (event) => {
@@ -3205,27 +3232,45 @@
       hoverStrength >= 100
     ));
 
+    const tree = optionSection("Tree");
+    optionRow(tree, "Text size", optionStepper(
+      Math.round(treeScale * 100) + "%",
+      ["Smaller text in the tree", "Bigger text in the tree"],
+      () => stepTreeScale(-TEXT_STEP),
+      () => stepTreeScale(TEXT_STEP),
+      treeScale <= MIN_TREE + 0.001,
+      treeScale >= MAX_TREE - 0.001
+    ));
+    optionRow(tree, "Tags beside the name", [
+      optionChoice(TAG_SIDES, TAG_SIDES.indexOf(tagSide), (choice) => {
+        setTagSide(TAG_SIDES[choice]);
+        persist();
+      })
+    ]);
+
     const folder = optionSection("Folder");
     optionRow(folder, [make("span", "opt-path cap", rootPrefix || "the workspace root")], [
       makeButton("Open settings", () => vscode.postMessage({ type: "settings" }))
     ]);
 
     const tagBox = optionSection("Tags");
-    optionRow(tagBox, "Side of the name in the tree", [
-      optionChoice(TAG_SIDES, TAG_SIDES.indexOf(tagSide), (choice) => {
-        setTagSide(TAG_SIDES[choice]);
-        persist();
-      })
-    ]);
-    const names = Object.keys(tagColors).sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base" })
-    );
+    const names = byName(Object.keys(tagColors));
     if (!names.length) {
       tagBox.appendChild(make("p", "notice", "No tags yet. Add one with + in a file's header."));
     }
+    const unused = names.filter((name) => !Object.values(tags).some((list) => list.includes(name))).length;
+    if (names.length) {
+      const prune = makeButton("Prune", () => vscode.postMessage({ type: "pruneTags" }));
+      prune.title = "Remove the tags no file has";
+      prune.disabled = !unused;
+      optionRow(tagBox, "Tags on no file", [
+        make("span", "opt-dim cap", unused ? String(unused) : "none"),
+        prune
+      ]);
+    }
     for (const name of names) {
       const used = Object.values(tags).filter((list) => list.includes(name)).length;
-      const swatch = make("span", "swatch pick c-" + tagColor(name));
+      const swatch = make("span", "swatch pick t-" + tagColor(name));
       swatch.title = "Colour";
       swatch.addEventListener("click", () => {
         const box = swatch.getBoundingClientRect();
@@ -3404,19 +3449,61 @@
   }
 
   // "tag:", "file:" or "folder:" in front, then a name or part of one, quoted when it has a
-  // space in it, then what to search for. Nothing to search for lists every file let in.
-  const SCOPE = /^\s*(tag|file|folder):(?:"([^"]*)"?|(\S*))\s*([\s\S]*)$/i;
+  // space or a comma in it, then what to search for. Several names are split by commas, with
+  // or without space around them, and any of them lets a file in; one left empty among
+  // others is dropped. Nothing to search for lists every file let in.
+  const SCOPE = /^\s*(tag|file|folder):/i;
+  const SCOPE_NAME = /^(?:"([^"]*)"?|([^\s,]*))/;
+  const SCOPE_COMMA = /^\s*,\s*/;
 
   function parseScope(text) {
-    const match = SCOPE.exec(text);
-    if (!match) {
+    const head = SCOPE.exec(text);
+    if (!head) {
       return null;
     }
+    let rest = text.slice(head[0].length);
+    const names = [];
+    for (;;) {
+      const name = SCOPE_NAME.exec(rest);
+      names.push((name[1] !== undefined ? name[1] : name[2]).trim().toLowerCase());
+      rest = rest.slice(name[0].length);
+      const comma = SCOPE_COMMA.exec(rest);
+      if (!comma) {
+        break;
+      }
+      rest = rest.slice(comma[0].length);
+    }
+    const kept = names.filter((name) => name);
     return {
-      kind: match[1].toLowerCase(),
-      name: (match[2] !== undefined ? match[2] : match[3]).toLowerCase(),
-      term: match[4]
+      kind: head[1].toLowerCase(),
+      names: names.length > 1 && kept.length ? kept : [names[0] || ""],
+      term: rest.replace(/^\s+/, "")
     };
+  }
+
+  // A name the scope can take back as it is: quoted when it would otherwise be cut short.
+  function scopeName(name) {
+    return /[\s,"]/.test(name) ? '"' + name.replace(/"/g, "") + '"' : name;
+  }
+
+  // A tag clicked in the tree searches the files with it. With the search up already it
+  // takes the place of whatever scope is there and keeps what is searched for; with Shift
+  // held it joins the tags already there instead.
+  function searchTag(name, add) {
+    const scope = finderOpen ? parseScope(finderTextEl.value) : null;
+    const term = !finderOpen ? "" : scope ? scope.term : finderTextEl.value.trim();
+    const names = add && scope && scope.kind === "tag" ? scope.names.filter((other) => other) : [];
+    if (!names.includes(name.toLowerCase())) {
+      names.push(name);
+    }
+    finderTextEl.value = "tag:" + names.map(scopeName).join(",") + " " + term;
+    if (finderOpen) {
+      finderTextEl.focus();
+      runFinder();
+    } else {
+      openFinder();
+    }
+    finderTextEl.setSelectionRange(finderTextEl.value.length, finderTextEl.value.length);
   }
 
   // The files a scope lets in, grouped by what let them in: each tag whose name holds the
@@ -3424,19 +3511,18 @@
   // under two such folders is given to the nearer one.
   function scopeSections(scope) {
     const files = corpus.filter((entry) => !entry.dir);
+    const fits = (name) => scope.names.some((part) => name.toLowerCase().includes(part));
     if (scope.kind === "file") {
-      return [{ files: files.filter((entry) => entry.name.toLowerCase().includes(scope.name)) }];
+      return [{ files: files.filter((entry) => fits(entry.name)) }];
     }
     if (scope.kind === "tag") {
-      const names = [...new Set(Object.keys(tagColors).concat(...Object.values(tags)))]
-        .filter((name) => name.toLowerCase().includes(scope.name))
-        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      const names = byName([...new Set(Object.keys(tagColors).concat(...Object.values(tags)))].filter(fits));
       return names.map((name) => ({
         head: { kind: "tag", name: name },
         files: files.filter((entry) => (tags[entry.path] || []).includes(name))
       }));
     }
-    const folders = corpus.filter((entry) => entry.dir && entry.name.toLowerCase().includes(scope.name));
+    const folders = corpus.filter((entry) => entry.dir && fits(entry.name));
     return folders.map((folder) => ({
       head: { kind: "folder", name: folder.name, path: folder.path },
       files: files.filter((entry) => {
@@ -3461,7 +3547,8 @@
       const groups = [];
       for (const entry of section.files) {
         if (!pattern) {
-          const part = scope.kind === "file" && scope.name ? rangesIn(entry.name, partPattern(scope.name)) : [];
+          const parts = scope.names.filter((name) => name);
+          const part = scope.kind === "file" && parts.length ? rangesIn(entry.name, partPattern(parts)) : [];
           groups.push({ entry: entry, name: part, hits: [], more: 0, count: 0 });
           continue;
         }
@@ -3477,8 +3564,8 @@
     drawFinder(sections, true, found.capped, keep);
   }
 
-  function partPattern(part) {
-    return new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  function partPattern(parts) {
+    return new RegExp(parts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
   }
 
   function scanLines(lines, pattern, group) {
@@ -3540,7 +3627,8 @@
       finderResultsEl.appendChild(
         make("p", "notice", "Type to search the names of files and folders, and the text in the files. " +
           "Start with tag:, file: or folder: and a name, or part of one, to search only the files " +
-          "with that tag, of that name, or in that folder.")
+          "with that tag, of that name, or in that folder; several names split by commas, as in " +
+          "tag:plan,draft, take the files of any of them.")
       );
     } else if (!corpus) {
       finderCountEl.textContent = "";

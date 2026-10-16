@@ -15,6 +15,34 @@ export const COLORS = [
   "grey"
 ] as const;
 
+// A tag's pill has black text whatever the theme, so its colours are the panel's own: light
+// enough for black to read on at 7:1 or better, and far enough apart to tell from one
+// another. A new tag takes the next one in this order, which keeps neighbours unalike.
+export const TAG_COLORS = [
+  "red",
+  "yellow",
+  "blue",
+  "green",
+  "purple",
+  "orange",
+  "cyan",
+  "pink",
+  "lime",
+  "brown",
+  "teal",
+  "magenta",
+  "sky",
+  "amber",
+  "mint",
+  "coral",
+  "lavender",
+  "olive",
+  "peach",
+  "sand",
+  "grey",
+  "silver"
+] as const;
+
 export const READ = "read";
 const READ_STATUSES = [READ] as const;
 const MAX_TAG = 40;
@@ -75,6 +103,10 @@ export function isColor(value: unknown): value is string {
   return COLORS.includes(value as (typeof COLORS)[number]);
 }
 
+export function isTagColor(value: unknown): value is string {
+  return TAG_COLORS.includes(value as (typeof TAG_COLORS)[number]);
+}
+
 // A tag is whatever was typed, less the space around it; the same name twice is one tag.
 export function cleanTags(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -117,8 +149,8 @@ export async function load(spec: LedgerSpec): Promise<Ledger> {
       }
     }
     if (spec.marks) {
-      ledger.folders = marksOf(parsed?.folders, (key) => key);
-      ledger.tags = marksOf(parsed?.tags, cleanTag);
+      ledger.folders = marksOf(parsed?.folders, (key) => key, isColor);
+      ledger.tags = marksOf(parsed?.tags, cleanTag, isTagColor);
       // A tag a file carries is always in the list, so it always has a colour to show.
       for (const entry of Object.values(ledger.files)) {
         for (const tag of entry.tags) {
@@ -138,12 +170,16 @@ function objectOf(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function marksOf(value: unknown, key: (raw: string) => string): Record<string, Mark> {
+function marksOf(
+  value: unknown,
+  key: (raw: string) => string,
+  valid: (color: unknown) => color is string
+): Record<string, Mark> {
   const out: Record<string, Mark> = {};
   for (const [raw, mark] of Object.entries(objectOf(value))) {
     const name = key(raw);
     const color = (mark as Partial<Mark> | null)?.color;
-    if (name && isColor(color)) {
+    if (name && valid(color)) {
       out[name] = { color };
     }
   }
@@ -259,7 +295,7 @@ export async function setColor(
 
 export async function setTagColor(spec: LedgerSpec, name: string, color: string): Promise<Ledger> {
   const ledger = await load(spec);
-  if (ledger.tags[name] && isColor(color)) {
+  if (ledger.tags[name] && isTagColor(color)) {
     ledger.tags[name] = { color };
     await save(spec, ledger);
   }
@@ -297,6 +333,21 @@ export async function deleteTag(spec: LedgerSpec, name: string): Promise<Ledger>
   return ledger;
 }
 
+// A tag kept for its colour alone, on no file any more, goes; the names in the list are
+// then exactly the tags in use.
+export async function pruneTags(spec: LedgerSpec): Promise<{ ledger: Ledger; pruned: string[] }> {
+  const ledger = await load(spec);
+  const used = new Set(Object.values(ledger.files).flatMap((entry) => entry.tags));
+  const pruned = Object.keys(ledger.tags).filter((name) => !used.has(name));
+  for (const name of pruned) {
+    delete ledger.tags[name];
+  }
+  if (pruned.length) {
+    await save(spec, ledger);
+  }
+  return { ledger, pruned };
+}
+
 // A new tag takes the first colour no other tag has, and once they are all taken the
 // list goes round again.
 function defineTag(ledger: Ledger, name: string): void {
@@ -305,8 +356,8 @@ function defineTag(ledger: Ledger, name: string): void {
   }
   const used = new Set(Object.values(ledger.tags).map((mark) => mark.color));
   const color =
-    COLORS.find((value) => !used.has(value)) ??
-    COLORS[Object.keys(ledger.tags).length % COLORS.length];
+    TAG_COLORS.find((value) => !used.has(value)) ??
+    TAG_COLORS[Object.keys(ledger.tags).length % TAG_COLORS.length];
   ledger.tags[name] = { color };
 }
 

@@ -1,9 +1,3 @@
-.ink-probe {
-  position: absolute;
-  visibility: hidden;
-  color: var(--c);
-}
-
 /* A label's box cut down to its capitals, from their tops to the baseline: whatever the
    font, a box that centres the label then has the capitals on its centre line. Left as
    it is in an editor too old for it, a pixel or so out at worst. */
@@ -206,10 +200,25 @@ body.dragging-rows {
 }
 
 #tree {
+  --tree-scale: 1;
+  --tree-row: 18px;
+  --tree-pill: 14px;
   min-height: 0;
   overflow: auto;
   padding: 8px 10px 8px 4px;
   user-select: none;
+  font-size: calc(var(--vscode-font-size, 13px) * var(--tree-scale));
+}
+
+/* The tree shows where the keys are with the row they are on, so the box itself draws no
+   ring when it has the focus, whatever the editor's own styles would give it. */
+#side:focus,
+#side:focus-within,
+#sideBody:focus-within,
+#tree:focus,
+#tree:focus-visible,
+#tree:focus-within {
+  outline: none;
 }
 
 #tree ul {
@@ -232,11 +241,11 @@ body.dragging-rows {
   border-radius: 3px;
   cursor: pointer;
   white-space: nowrap;
-  line-height: 18px;
+  line-height: var(--tree-row);
 }
 
 .row > * {
-  height: 18px;
+  height: var(--tree-row);
 }
 
 .row:hover {
@@ -318,7 +327,7 @@ body.dragging-rows {
   color: var(--vscode-textLink-foreground, #4c8eda);
 }
 
-/* The theme's own colours, under the names the extension stores. */
+/* The theme's own colours, under the names the extension stores, for files and folders. */
 .c-red { --c: var(--vscode-charts-red, #f14c4c); }
 .c-orange { --c: var(--vscode-charts-orange, #d18616); }
 .c-yellow { --c: var(--vscode-charts-yellow, #cca700); }
@@ -329,15 +338,39 @@ body.dragging-rows {
 .c-magenta { --c: var(--vscode-terminal-ansiMagenta, #bc3fbc); }
 .c-grey { --c: var(--vscode-descriptionForeground, #8b949e); }
 
-/* A pill in the tag's own colour. The script gives each colour the ink, near black or
-   white, that stands out from it most. */
+/* A tag's colours are the panel's own and the same in every theme: each is light enough
+   for black text to read on it at 7:1 or better. */
+.t-red { --c: #ff7070; }
+.t-coral { --c: #ff9478; }
+.t-orange { --c: #ffa344; }
+.t-peach { --c: #ffbe9c; }
+.t-amber { --c: #ffc23d; }
+.t-yellow { --c: #f2e05a; }
+.t-olive { --c: #c7c46e; }
+.t-lime { --c: #bce35a; }
+.t-green { --c: #6fdc7a; }
+.t-mint { --c: #8cebc4; }
+.t-teal { --c: #3fd0bd; }
+.t-cyan { --c: #5ad8ef; }
+.t-sky { --c: #62c4ff; }
+.t-blue { --c: #8aa6ff; }
+.t-lavender { --c: #d6c8ff; }
+.t-purple { --c: #d494ff; }
+.t-magenta { --c: #ff86e0; }
+.t-pink { --c: #ff9cc4; }
+.t-brown { --c: #d6a678; }
+.t-sand { --c: #e8d1a4; }
+.t-grey { --c: #b4b4b4; }
+.t-silver { --c: #dcdcdc; }
+
+/* A pill in the tag's own colour, always with black text. */
 .tag {
   height: 14px;
   line-height: 14px;
   padding: 0 6px;
   border-radius: 999px;
   font-size: 0.75em;
-  color: var(--ink, var(--vscode-editor-background, #1e1e1e));
+  color: #000;
   background: var(--c);
   white-space: nowrap;
   overflow: hidden;
@@ -346,7 +379,8 @@ body.dragging-rows {
 
 /* A row's tags sit together in one box, set close: the row's own gap is for the parts
    of a row, and would spread the pills apart. Fixed and shorter than the label's line
-   box, so adding a pill never moves a row. */
+   box, so adding a pill never moves a row. The box keeps the same extra space from the
+   name on either side of it, so the row is as wide whichever side that is. */
 .row .tags {
   display: flex;
   flex: 0 3 auto;
@@ -360,12 +394,16 @@ body.dragging-rows {
 .row .tag {
   flex: 0 1 auto;
   min-width: 1.5em;
+  height: var(--tree-pill);
+  line-height: var(--tree-pill);
+  cursor: pointer;
 }
 
 /* Tags in front of the name, after the dot or twisty. */
 #tree.tags-left .row .tags {
   order: 1;
   margin-left: 0;
+  margin-right: 4px;
 }
 
 #tree.tags-left .row .label {
@@ -1054,6 +1092,10 @@ img.single {
   border-radius: 4px;
   background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  /* The tags' colours make a long list; in a short window it scrolls. */
+  max-height: calc(100vh - 8px);
+  box-sizing: border-box;
+  overflow-y: auto;
 }
 
 #menu[hidden] {
