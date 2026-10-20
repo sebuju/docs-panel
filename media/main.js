@@ -44,6 +44,8 @@
   const tagListEl = document.getElementById("tagList");
   const optionsLayerEl = document.getElementById("optionsLayer");
   const optionsDialogEl = document.getElementById("optionsDialog");
+  const optionsHeadEl = document.getElementById("optionsHead");
+  const optionsBodyEl = document.getElementById("optionsBody");
   const finderEl = document.getElementById("finder");
   const finderTextEl = document.getElementById("finderText");
   const finderCountEl = document.getElementById("finderCount");
@@ -145,6 +147,9 @@
   // Each tag's letters, given it by the extension when it was made and kept apart from
   // every other tag's.
   let tagShorts = {};
+  // How each tag's pill is drawn beyond its colour, and the order tags are listed in.
+  let tagStyles = {};
+  let tagOrder = [];
   let reads = new Set();
   let mentions = {};
   let logOpen = false;
@@ -169,10 +174,35 @@
   const TAG_SIDES = ["left", "right"];
   let hoverStrength = 40;
   const HOVER_STEP = 10;
+  // How far the block light reaches past the block's own edges.
+  let blockPad = 4;
+  const MAX_BLOCK_PAD = 16;
+  // How many of a file's newest mentions show before the rest wait behind a button; none
+  // turns the mentions off.
+  let mentionLines = 5;
+  const MAX_MENTION_LINES = 100;
+  // The files left in edit mode, which open in it again.
+  let editing = new Set();
+  // How far down each file was read, as a share of the way, oldest first.
+  let scrolls = {};
+  const MAX_SCROLLS = 300;
+
+  // The capitals' drawn height per font, and the tree font the tree's line was last fitted
+  // to; both are needed by the first layout, which runs before the code that fills them.
+  const capHeights = new Map();
+  let treeLineKey = "";
+  // The files opened, in order, for the mouse's back and forward buttons.
+  const visits = [];
+  let visitAt = -1;
+  let walking = false;
+  const MAX_VISITS = 200;
 
   const saved = vscode.getState();
   if (saved) {
     applyState(saved);
+  }
+  if (selected) {
+    visit(selected);
   }
   setSplit(split);
   setSideSplit(sideSplit);
@@ -181,6 +211,7 @@
   setLineHeight(lineHeight);
   setMono(mono);
   setHoverStrength(hoverStrength);
+  setBlockPad(blockPad);
   setTagSide(tagSide);
 
   function applyState(state) {
@@ -216,6 +247,18 @@
     if (typeof state.hoverStrength === "number") {
       hoverStrength = state.hoverStrength;
     }
+    if (typeof state.blockPad === "number") {
+      blockPad = state.blockPad;
+    }
+    if (typeof state.mentionLines === "number") {
+      mentionLines = state.mentionLines;
+    }
+    if (Array.isArray(state.editing)) {
+      editing = new Set(state.editing);
+    }
+    if (state.scrolls && typeof state.scrolls === "object") {
+      scrolls = Object.assign({}, state.scrolls);
+    }
     if (Array.isArray(state.expanded)) {
       expanded = new Set(state.expanded);
     }
@@ -237,9 +280,13 @@
       autoWidth: autoWidth,
       tagSide: tagSide,
       hoverStrength: hoverStrength,
+      blockPad: blockPad,
+      mentionLines: mentionLines,
       expanded: [...expanded],
       pinned: [...pinned],
-      selected: selected
+      selected: selected,
+      editing: [...editing],
+      scrolls: scrolls
     };
   }
 
@@ -360,6 +407,11 @@
     layout.style.setProperty("--block-light", String(hoverStrength / 100));
   }
 
+  function setBlockPad(value) {
+    blockPad = Math.min(Math.max(Math.round(value) || 0, 0), MAX_BLOCK_PAD);
+    layout.style.setProperty("--block-pad", blockPad + "px");
+  }
+
   function setMono(value) {
     mono = !!value;
     layout.style.setProperty(
@@ -379,6 +431,7 @@
   // font changes; the side's width follows the font.
   function followTheme() {
     capHeights.clear();
+    treeLineKey = "";
     fitWidth();
     fitTags();
   }
@@ -628,7 +681,7 @@
       if (!node.dir && (tags[node.path] || []).length) {
         const box = document.createElement("span");
         box.className = "tags";
-        for (const tag of byName(tags[node.path])) {
+        for (const tag of byOrder(tags[node.path])) {
           const pill = tagPill(tag);
           pill.addEventListener("click", (event) => {
             event.stopPropagation();
@@ -639,7 +692,12 @@
         row.appendChild(box);
       }
 
-      row.addEventListener("click", () => {
+      // With Ctrl held a file's tags come up where it was clicked, and the file stays shut.
+      row.addEventListener("click", (event) => {
+        if (!node.dir && (event.ctrlKey || event.metaKey) && !inTrash(node.path)) {
+          openTagPicker(node.path, event.clientX, event.clientY);
+          return;
+        }
         if (node.dir) {
           if (expanded.has(node.path)) {
             expanded.delete(node.path);
@@ -707,15 +765,35 @@
     return names.slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }
 
-  // A tag is drawn as a pill in the colour it was given. It carries its initials too, for
-  // when there is no room for its name.
+  // Tags are listed wherever they are listed in the order the options give them; one the
+  // order does not know yet, just typed in, goes after the rest.
+  function byOrder(names) {
+    const rank = (name) => {
+      const at = tagOrder.indexOf(name);
+      return at < 0 ? tagOrder.length : at;
+    };
+    return byName(names).sort((a, b) => rank(a) - rank(b));
+  }
+
+  const STYLE_FLAGS = ["bold", "italic", "underline", "white", "square"];
+
+  // A tag is drawn as a pill in the colour it was given, and in the style, if any. It
+  // carries its initials too, for when there is no room for its name; a wrap goes round
+  // either.
   function tagPill(name) {
+    const style = tagStyles[name] || {};
     const pill = document.createElement("span");
     pill.className = "tag t-" + tagColor(name);
-    pill.appendChild(make("span", "tag-text", name));
+    for (const flag of STYLE_FLAGS) {
+      pill.classList.toggle("tag-" + flag, !!style[flag]);
+    }
+    const wrap = Array.from(style.wrap || "");
+    const open = wrap[0] || "";
+    const close = wrap[1] || open;
+    pill.appendChild(make("span", "tag-text", open + name + close));
     pill.title = name;
-    pill.dataset.name = name;
-    pill.dataset.short = shortOf(name);
+    pill.dataset.name = open + name + close;
+    pill.dataset.short = open + shortOf(name) + close;
     return pill;
   }
 
@@ -736,7 +814,6 @@
   // How many pixels tall the capitals of a font are where they are drawn, which is what
   // hinting makes of the font's own figure and can come out a pixel either side of it. A
   // capital drawn on a canvas comes out the same as in the page.
-  const capHeights = new Map();
 
   function drawnCap(font) {
     if (!capHeights.has(font)) {
@@ -786,6 +863,59 @@
     box.style.setProperty("--tag-top", Math.floor((room - height) / 2) + "px");
   }
 
+  // In the tree the row, its pills and its name share one centre line, on whole pixels. A
+  // pill is the height nearest the one asked for that centres its own capitals; the row is
+  // made a pixel taller where it must be for the pill to have as many pixels above it as
+  // below; and the name, whose capitals sit wherever the font's ascent puts them, is moved
+  // by whole pixels to put their middle on the row's. A row made for the purpose is
+  // measured, so a tree with no tags yet is laid out as one with them.
+
+  function fitTreeLine() {
+    const font = getComputedStyle(treeEl);
+    const key = treeScale + "|" + font.fontSize + "|" + font.fontFamily;
+    if (key === treeLineKey) {
+      return;
+    }
+    const probe = make("div", "row");
+    probe.style.cssText = "position: absolute; visibility: hidden; left: 0; top: 0;";
+    const label = make("span", "label", "H");
+    const base = make("span");
+    base.style.cssText = "display: inline-block; width: 0; height: 0; vertical-align: baseline;";
+    label.appendChild(base);
+    const box = make("span", "tags");
+    const pill = make("span", "tag");
+    pill.appendChild(make("span", "tag-text", "H"));
+    box.appendChild(pill);
+    probe.append(label, box);
+    treeEl.appendChild(probe);
+
+    const pillStyle = getComputedStyle(pill);
+    const pillCap = drawnCap(pillStyle.fontStyle + " " + pillStyle.fontWeight + " " + pillStyle.fontSize + " " + pillStyle.fontFamily);
+    const asked = parseFloat(pillStyle.getPropertyValue("--pill"));
+    const labelStyle = getComputedStyle(label);
+    const labelCap = drawnCap(labelStyle.fontStyle + " " + labelStyle.fontWeight + " " + labelStyle.fontSize + " " + labelStyle.fontFamily);
+    const wanted = Math.round(18 * treeScale);
+    if (!pillCap || !labelCap || !asked) {
+      probe.remove();
+      return;
+    }
+    const height = pillCap + 2 * Math.floor((asked - pillCap) / 2);
+    const row = wanted + ((wanted - height) % 2 ? 1 : 0);
+    treeEl.style.setProperty("--tree-row", row + "px");
+    treeEl.style.setProperty("--tag-height", height + "px");
+    treeEl.style.setProperty("--tag-top", (row - height) / 2 + "px");
+    treeEl.style.setProperty("--label-shift", "0px");
+
+    const top = label.getBoundingClientRect();
+    const baseline = Math.round(base.getBoundingClientRect().top - top.top);
+    probe.remove();
+    if (!top.height) {
+      return;
+    }
+    treeEl.style.setProperty("--label-shift", Math.round((row + labelCap) / 2 - baseline) + "px");
+    treeLineKey = key;
+  }
+
   function shortenPills(pills, short) {
     for (const pill of pills) {
       const text = short ? pill.dataset.short : pill.dataset.name;
@@ -801,7 +931,7 @@
   // is cut. Each row is put back to full names and measured before any is changed, so the
   // whole tree costs two layouts, not one a row.
   function fitTags() {
-    fitPillHeights(treeEl);
+    fitTreeLine();
     const rows = [...treeEl.querySelectorAll(".row")].filter((row) => row.querySelector(".tags"));
     for (const row of rows) {
       shortenPills(row.querySelectorAll(".tag"), false);
@@ -848,10 +978,56 @@
     }
     save();
     selected = path;
+    visit(path);
     drawTree();
     persist();
     vscode.postMessage({ type: "open", path: path });
   }
+
+  // Every file opened is a step, the way a page is in a browser, and the mouse's back and
+  // forward buttons walk the steps. A step to a file that has gone since is passed over.
+  function visit(path) {
+    if (walking || visits[visitAt] === path) {
+      return;
+    }
+    visits.splice(visitAt + 1);
+    visits.push(path);
+    if (visits.length > MAX_VISITS) {
+      visits.shift();
+    }
+    visitAt = visits.length - 1;
+  }
+
+  function walkVisits(delta) {
+    for (let i = visitAt + delta; i >= 0 && i < visits.length; i += delta) {
+      const path = visits[i];
+      if (findNode(nodes, path) || findNode(trashNodes, path)) {
+        visitAt = i;
+        walking = true;
+        expandTo(path, false);
+        if (path === selected) {
+          drawTree();
+        }
+        openFile(path);
+        walking = false;
+        showRow(path, false);
+        return;
+      }
+    }
+  }
+
+  window.addEventListener("mousedown", (event) => {
+    if (event.button === 3 || event.button === 4) {
+      event.preventDefault();
+    }
+  });
+
+  window.addEventListener("mouseup", (event) => {
+    if (event.button === 3 || event.button === 4) {
+      event.preventDefault();
+      walkVisits(event.button === 3 ? -1 : 1);
+    }
+  });
 
   function stashDraft() {
     if (mode !== "edit" || !current) {
@@ -1091,12 +1267,13 @@
     if (mode === "edit" || !article) {
       return;
     }
-    const block = blockAt(event.target);
+    const block = rowOf(blockAt(event.target));
     const selection = window.getSelection();
     const picked = String(selection).trim();
     // Clicking the menu takes the selection away, so the range is kept as it stands now.
     const range = picked && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
-    if (!block && !picked) {
+    const word = picked ? firstLine(picked) : wordAt(event.clientX, event.clientY);
+    if (!block && !picked && !word) {
       return;
     }
     event.preventDefault();
@@ -1119,11 +1296,61 @@
         }
       });
     }
+    if (word) {
+      const shown = "“" + (word.length > 24 ? word.slice(0, 24) + "…" : word) + "”";
+      items.push(
+        { separator: true },
+        { label: "Find " + shown, run: () => openSearch(word) },
+        { label: "Find " + shown + " in all docs", run: () => openFinder(null, word) }
+      );
+    }
     openMenu(event.clientX, event.clientY, items);
   });
 
+  // The word under the pointer: letters, digits and underscores either side of it.
+  function wordAt(x, y) {
+    const range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+    const node = range && range.startContainer;
+    if (!node || node.nodeType !== 3 || !article.contains(node)) {
+      return "";
+    }
+    const text = node.nodeValue;
+    const part = /[\p{L}\p{N}_]/u;
+    let from = range.startOffset;
+    let to = from;
+    while (from > 0 && part.test(text[from - 1])) {
+      from -= 1;
+    }
+    while (to < text.length && part.test(text[to])) {
+      to += 1;
+    }
+    return text.slice(from, to);
+  }
+
+  function firstLine(text) {
+    return (text.split(/\r?\n/).find((line) => line.trim()) || "").trim().slice(0, 200);
+  }
+
+  // What is selected in the page, or in the editor while it has the focus, as one line to
+  // search for.
+  function pickedText() {
+    const area = mode === "edit" ? bodyEl.querySelector("textarea") : null;
+    if (area && document.activeElement === area) {
+      return firstLine(area.value.slice(area.selectionStart, area.selectionEnd));
+    }
+    const selection = window.getSelection();
+    return selection.rangeCount && bodyEl.contains(selection.anchorNode) ? firstLine(String(selection)) : "";
+  }
+
   function blockAt(el) {
     return el && el.closest && article.contains(el) ? el.closest(BLOCKS) : null;
+  }
+
+  // A table is read a row at a time, so a cell stands for the row it is in.
+  function rowOf(block) {
+    return block && /^T[DH]$/.test(block.tagName) && block.parentElement && block.parentElement.tagName === "TR"
+      ? block.parentElement
+      : block;
   }
 
   // Anything that only holds other blocks - a quote, a loose list item, a table - is
@@ -1140,7 +1367,11 @@
   }
 
   function lightableAt(el) {
-    let block = blockAt(el);
+    const cell = blockAt(el);
+    if (cell && rowOf(cell) !== cell) {
+      return rowOf(cell);
+    }
+    let block = cell;
     while (block && !ownsText(block)) {
       block = block.parentElement && article.contains(block.parentElement)
         ? block.parentElement.closest(BLOCKS)
@@ -1200,9 +1431,17 @@
   });
 
   function readableBlocks() {
-    return [...article.querySelectorAll(BLOCKS)].filter(
-      (el) => ownsText(el) && el.getClientRects().length
-    );
+    const out = [];
+    for (const el of article.querySelectorAll(BLOCKS)) {
+      const block = rowOf(el);
+      if (block === out[out.length - 1] || !el.getClientRects().length) {
+        continue;
+      }
+      if (block === el ? ownsText(el) : block.innerText.trim()) {
+        out.push(block);
+      }
+    }
+    return out;
   }
 
   // The keys walk on from the lit block while it is on screen. With none, or after the
@@ -1736,6 +1975,7 @@
   addBar(treeEl, sideEl);
   addBar(tocEl, sideEl);
   addBar(bodyEl, paneEl);
+  addBar(optionsBodyEl, optionsDialogEl);
 
   splitter.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -1820,9 +2060,78 @@
     save();
     const ratio = scrollRatio();
     mode = mode === "edit" ? "preview" : "edit";
+    // The mode is the file's own, and it opens in it again next time.
+    if (mode === "edit") {
+      editing.add(current.path);
+    } else {
+      editing.delete(current.path);
+    }
+    persist();
+    focusEditor = true;
     draw();
+    focusEditor = false;
     applyScrollRatio(ratio);
   });
+
+  // Only the button puts the caret in the editor: a file opening in edit mode from the
+  // tree leaves the focus where the keys walking the tree have it.
+  let focusEditor = false;
+
+  // Each file keeps how far down it was read, as a share of the way, so a file that changed
+  // since still opens near the same place. The share is written a moment after the scroll
+  // settles, and at once when another file takes the pane.
+  let scrollTimer = 0;
+  // The place just put back, kept while pictures still loading can push it down the page.
+  let restored = null;
+
+  bodyEl.addEventListener("scroll", () => {
+    if (!current) {
+      return;
+    }
+    clearTimeout(scrollTimer);
+    const path = current.path;
+    scrollTimer = setTimeout(() => rememberScroll(path), 300);
+  });
+
+  function rememberScroll(path) {
+    clearTimeout(scrollTimer);
+    if (!current || current.path !== path) {
+      return;
+    }
+    const ratio = Math.round(scrollRatio() * 10000) / 10000;
+    if (scrolls[path] === ratio) {
+      return;
+    }
+    delete scrolls[path];
+    if (ratio > 0) {
+      scrolls[path] = ratio;
+    }
+    const paths = Object.keys(scrolls);
+    for (const old of paths.slice(0, Math.max(0, paths.length - MAX_SCROLLS))) {
+      delete scrolls[old];
+    }
+    persist();
+  }
+
+  function restoreScroll(path) {
+    const ratio = scrolls[path] || 0;
+    applyScrollRatio(ratio);
+    restored = ratio ? { path: path, ratio: ratio, top: bodyEl.scrollTop } : null;
+  }
+
+  // A picture that loads after the place was put back makes the page longer; the place is
+  // put back again, unless the reader has moved since.
+  bodyEl.addEventListener("load", (event) => {
+    if (event.target.tagName !== "IMG" || !restored || !current || current.path !== restored.path) {
+      return;
+    }
+    if (Math.abs(bodyEl.scrollTop - restored.top) > 1) {
+      restored = null;
+      return;
+    }
+    applyScrollRatio(restored.ratio);
+    restored.top = bodyEl.scrollTop;
+  }, true);
 
   // Both modes scroll the same box, so a share of the way down carries over as it is.
   function scrollRatio() {
@@ -2006,6 +2315,7 @@
   let findAt = 0;
   let findFocus = null;
   let findWasOpen = false;
+  let findPick = "";
 
   // Ctrl+F finds in the page. A second F soon after, with Ctrl held down the whole time,
   // searches every doc instead, and the find the first press opened is put away again.
@@ -2019,19 +2329,20 @@
       if (!findWasOpen) {
         closeSearch();
       }
-      openFinder(findFocus);
+      openFinder(findFocus, findPick);
       return;
     }
     findAt = now;
     findFocus = document.activeElement;
     findWasOpen = searchOpen;
+    findPick = finderOpen ? "" : pickedText();
     if (finderOpen) {
       finderTextEl.focus();
       finderTextEl.select();
       return;
     }
     if (!optionsOpen && article) {
-      openSearch();
+      openSearch(findPick);
     }
   }
 
@@ -2192,6 +2503,7 @@
       }
     } else if (message.type === "select") {
       selected = message.path;
+      visit(message.path);
       cursor = message.path;
       drawTree();
       persist();
@@ -2211,13 +2523,21 @@
       logOpen = logOpen && reopened;
       const anchor = reopened ? captureAnchor() : null;
       flashModified = reopened && !!current.modified && current.modified !== message.modified;
+      if (current && !reopened) {
+        rememberScroll(current.path);
+      }
       current = message;
+      if (!reopened) {
+        mode = editing.has(message.path) ? "edit" : "preview";
+      }
       if (!editable(message)) {
         mode = "preview";
       }
       draw();
       if (anchor) {
         restoreAnchor(anchor);
+      } else {
+        restoreScroll(message.path);
       }
       if (pendingFind && pendingFind.path === message.path) {
         applyPendingFind();
@@ -2237,7 +2557,11 @@
       setLineHeight(lineHeight);
       setMono(mono);
       setHoverStrength(hoverStrength);
+      setBlockPad(blockPad);
       setTagSide(tagSide);
+      if (selected) {
+        visit(selected);
+      }
       drawTree();
     } else if (message.type === "saved") {
       drafts.delete(message.path);
@@ -2250,6 +2574,18 @@
       selected = message.to;
       if (cursor === message.from) {
         cursor = message.to;
+      }
+      if (editing.delete(message.from)) {
+        editing.add(message.to);
+      }
+      visits.forEach((path, i) => {
+        if (path === message.from) {
+          visits[i] = message.to;
+        }
+      });
+      if (message.from in scrolls) {
+        scrolls[message.to] = scrolls[message.from];
+        delete scrolls[message.from];
       }
       if (current) {
         current.path = message.to;
@@ -2267,6 +2603,8 @@
       colors = message.colors || {};
       tagColors = message.tagColors || {};
       tagShorts = message.tagShorts || {};
+      tagStyles = message.tagStyles || {};
+      tagOrder = message.tagOrder || [];
       drawTree();
       drawHeaderTags();
       drawTagPicker();
@@ -2320,9 +2658,13 @@
   let matches = [];
   let matchIndex = -1;
 
-  function openSearch() {
+  // A term given, the selection in the page as a rule, takes the place of what was there.
+  function openSearch(term) {
     if (!article) {
       return;
+    }
+    if (term) {
+      searchTextEl.value = term;
     }
     searchOpen = true;
     searchEl.hidden = false;
@@ -2476,7 +2818,10 @@
     return value;
   }
 
-  findEl.addEventListener("click", () => (searchOpen ? closeSearch() : openSearch()));
+  findEl.addEventListener("pointerdown", () => {
+    buttonPick = pickedText();
+  });
+  findEl.addEventListener("click", () => (searchOpen ? closeSearch() : openSearch(buttonPick)));
   searchCloseEl.addEventListener("click", closeSearch);
   searchPrevEl.addEventListener("click", () => step(-1));
   searchNextEl.addEventListener("click", () => step(1));
@@ -2537,8 +2882,8 @@
     drawStamps();
     drawHeaderTags();
     toggleEl.hidden = !editable(current);
-    toggleEl.classList.toggle("editing", mode === "edit");
-    toggleEl.title = mode === "edit" ? "Preview" : "Edit";
+    toggleEl.classList.toggle("active", mode === "edit");
+    toggleEl.title = mode === "edit" ? "Stop editing" : "Edit";
     applyView();
     drawLog();
 
@@ -2563,11 +2908,21 @@
     bodyEl.appendChild(article);
     bodyEl.scrollTop = 0;
 
+    linkNames(article, current.links || {});
+
     article.addEventListener("click", (event) => {
       const link = event.target.closest("a[data-open]");
       if (link) {
         event.preventDefault();
+        expandTo(link.dataset.open, false);
         openFile(link.dataset.open);
+        showRow(link.dataset.open, false);
+        return;
+      }
+      const outside = event.target.closest("a[data-workspace]");
+      if (outside) {
+        event.preventDefault();
+        vscode.postMessage({ type: "openWorkspace", path: outside.dataset.workspace });
         return;
       }
       if (event.target.tagName === "IMG") {
@@ -2577,6 +2932,51 @@
 
     if (current.kind === "md" || current.kind === "html") {
       buildToc();
+    }
+  }
+
+  // A name in the text that is a file, one of the docs or any other in the workspace, is
+  // made a link to it. The host works out which names are files and the page finds them in
+  // its text with the same pattern the host read them with; a name already in a link is
+  // left as it is.
+  const FILE_NAME = /[\w-][\w.\-\\/]*\.[A-Za-z][A-Za-z0-9]{0,5}/g;
+
+  function linkNames(root, links) {
+    if (!Object.keys(links).length) {
+      return;
+    }
+    const texts = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.parentElement.closest("a")) {
+        texts.push(node);
+      }
+    }
+    for (const node of texts) {
+      const text = node.nodeValue;
+      const parts = [];
+      let at = 0;
+      for (const hit of text.matchAll(FILE_NAME)) {
+        const link = links[hit[0]];
+        if (!link) {
+          continue;
+        }
+        const a = make("a", "file-link", hit[0]);
+        a.href = "#";
+        if (link.workspace) {
+          a.dataset.workspace = link.path;
+          a.title = "Open " + link.path + " in an editor";
+        } else {
+          a.dataset.open = link.path;
+          a.title = fullPath(link.path);
+        }
+        parts.push(text.slice(at, hit.index), a);
+        at = hit.index + hit[0].length;
+      }
+      if (parts.length) {
+        parts.push(text.slice(at));
+        node.replaceWith(...parts.filter((part) => part !== ""));
+      }
     }
   }
 
@@ -2661,10 +3061,8 @@
     }
   }
 
-  const LOG_SHOWN = 5;
-
   function buildLog(items) {
-    if (!items || !items.length) {
+    if (!items || !items.length || !mentionLines) {
       return null;
     }
     const log = document.createElement("div");
@@ -2674,7 +3072,7 @@
     // What was said last is what the reader came for, so the log runs backwards, and the
     // older lines wait behind one button rather than pushing the file down the pane.
     const rows = items.slice().reverse();
-    for (const item of logOpen ? rows : rows.slice(0, LOG_SHOWN)) {
+    for (const item of logOpen ? rows : rows.slice(0, mentionLines)) {
       const row = document.createElement("div");
       row.className = "log-row " + (item.role === "user" ? "log-you" : "log-them");
 
@@ -2692,11 +3090,11 @@
       log.appendChild(row);
     }
 
-    if (rows.length > LOG_SHOWN) {
+    if (rows.length > mentionLines) {
       const more = document.createElement("button");
       more.type = "button";
       more.className = "log-more";
-      more.textContent = logOpen ? "Show fewer" : "Show " + (rows.length - LOG_SHOWN) + " more";
+      more.textContent = logOpen ? "Show fewer" : "Show " + (rows.length - mentionLines) + " more";
       more.addEventListener("click", () => {
         logOpen = !logOpen;
         drawLog();
@@ -2728,7 +3126,9 @@
         drawTree();
       }
     });
-    area.focus();
+    if (focusEditor) {
+      area.focus();
+    }
   }
 
   // The editor grows to its text so the reading pane keeps the only scrollbar.
@@ -2970,7 +3370,7 @@
     if (!current) {
       return;
     }
-    for (const tag of tags[current.path] || []) {
+    for (const tag of byOrder(tags[current.path] || [])) {
       const pill = tagPill(tag);
       pill.addEventListener("click", () => toggleTagPicker(pill));
       headerTagsEl.appendChild(pill);
@@ -3025,9 +3425,7 @@
   function pickerChoices() {
     const text = tagInputEl.value.replace(/\s+/g, " ").trim();
     const lower = text.toLowerCase();
-    const names = [...new Set(Object.keys(tagColors).concat(tags[pickerPath] || []))].sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base" })
-    );
+    const names = byOrder([...new Set(Object.keys(tagColors).concat(tags[pickerPath] || []))]);
     const choices = names
       .filter((name) => name.toLowerCase().includes(lower))
       .map((name) => ({ name: name }));
@@ -3168,7 +3566,8 @@
   function closeOptions() {
     optionsOpen = false;
     optionsLayerEl.hidden = true;
-    optionsDialogEl.textContent = "";
+    optionsHeadEl.textContent = "";
+    optionsBodyEl.textContent = "";
   }
 
   // Set on whole pixels. Centred by the stylesheet the box can land on a half one, and
@@ -3219,7 +3618,7 @@
   function optionSection(title) {
     const section = make("section", "opt-section");
     section.appendChild(make("h3", "", title));
-    optionsDialogEl.appendChild(section);
+    optionsBodyEl.appendChild(section);
     return section;
   }
 
@@ -3287,26 +3686,40 @@
     return (bytes / 1024 / 1024).toFixed(1) + " MB";
   }
 
+  function stepBlockPad(delta) {
+    setBlockPad(blockPad + delta);
+    persist();
+    drawOptions();
+  }
+
+  function stepMentionLines(delta) {
+    mentionLines = Math.min(Math.max(mentionLines + delta, 0), MAX_MENTION_LINES);
+    logOpen = false;
+    persist();
+    drawLog();
+    drawOptions();
+  }
+
   // Everything the panel keeps of its own: how a page reads, the tags, and the files
-  // the panel writes, each of which can be thrown away from here.
+  // the panel writes, each of which can be thrown away from here. The head stays put and
+  // only what is under it scrolls.
   function drawOptions() {
     if (!optionsOpen) {
       return;
     }
-    const scroll = optionsDialogEl.scrollTop;
-    optionsDialogEl.textContent = "";
+    const scroll = optionsBodyEl.scrollTop;
+    optionsHeadEl.textContent = "";
+    optionsBodyEl.textContent = "";
 
-    const head = make("div", "opt-head");
     const title = make("h2", "", "Docs Panel options");
     if (version) {
       title.appendChild(make("span", "opt-version", "v" + version));
     }
-    head.appendChild(title);
+    optionsHeadEl.appendChild(title);
     const close = makeButton("", closeOptions, "icon");
     close.title = "Close (Escape)";
     close.appendChild(make("span", "glyph", "✕"));
-    head.appendChild(close);
-    optionsDialogEl.appendChild(head);
+    optionsHeadEl.appendChild(close);
 
     const reading = optionSection("Reading");
     optionRow(reading, "Text size", optionStepper(
@@ -3353,6 +3766,22 @@
       hoverStrength <= 0,
       hoverStrength >= 100
     ));
+    optionRow(reading, "Block highlight padding", optionStepper(
+      blockPad + "px",
+      ["Less padding", "More padding"],
+      () => stepBlockPad(-1),
+      () => stepBlockPad(1),
+      blockPad <= 0,
+      blockPad >= MAX_BLOCK_PAD
+    ));
+    optionRow(reading, "Mentions shown", optionStepper(
+      mentionLines ? String(mentionLines) : "off",
+      ["Fewer mentions before Show more, none turns them off", "More mentions before Show more"],
+      () => stepMentionLines(-1),
+      () => stepMentionLines(1),
+      mentionLines <= 0,
+      mentionLines >= MAX_MENTION_LINES
+    ));
 
     const tree = optionSection("Tree");
     optionRow(tree, "Text size", optionStepper(
@@ -3376,37 +3805,20 @@
     ]);
 
     const tagBox = optionSection("Tags");
-    const names = byName(Object.keys(tagColors));
+    const names = byOrder(Object.keys(tagColors));
     if (!names.length) {
       tagBox.appendChild(make("p", "notice", "No tags yet. Add one with + in a file's header."));
     }
-    const unused = names.filter((name) => !Object.values(tags).some((list) => list.includes(name))).length;
-    if (names.length) {
-      const prune = makeButton("Prune", () => vscode.postMessage({ type: "pruneTags" }));
-      prune.title = "Remove the tags no file has";
-      prune.disabled = !unused;
-      optionRow(tagBox, "Tags on no file", [
-        make("span", "opt-dim cap", unused ? String(unused) : "none"),
-        prune
-      ]);
-    }
+    const list = make("div", "opt-tags");
     for (const name of names) {
-      const used = Object.values(tags).filter((list) => list.includes(name)).length;
-      const swatch = make("span", "swatch pick t-" + tagColor(name));
-      swatch.title = "Colour";
-      swatch.addEventListener("click", () => {
-        const box = swatch.getBoundingClientRect();
-        pickTagColor(name, box.left, box.bottom + 4);
-      });
-      const letters = make("span", "tag short opt-short t-" + tagColor(name));
-      letters.appendChild(make("span", "tag-text", shortOf(name)));
-      letters.title = "Letters shown where the name does not fit; click to change";
-      letters.addEventListener("click", () => vscode.postMessage({ type: "tagShort", name: name }));
-      optionRow(tagBox, [swatch, make("span", "opt-name cap", name), letters], [
-        make("span", "opt-dim cap", used + (used === 1 ? " file" : " files")),
-        makeButton("Rename…", () => vscode.postMessage({ type: "renameTag", name: name })),
-        makeButton("Delete", () => vscode.postMessage({ type: "deleteTag", name: name }), "opt-button danger")
-      ]);
+      list.appendChild(tagOptionRow(name, names));
+    }
+    tagBox.appendChild(list);
+    const unused = names.filter((name) => !Object.values(tags).some((own) => own.includes(name))).length;
+    if (unused) {
+      const prune = makeButton("Prune", () => vscode.postMessage({ type: "pruneTags" }), "opt-button opt-wide");
+      prune.title = "Remove the tags no file has";
+      optionRow(tagBox, "Tags on no file", [make("span", "opt-dim cap", String(unused)), prune]);
     }
 
     const data = optionSection("Data files");
@@ -3427,8 +3839,160 @@
         ]);
       }
     }
-    fitPillHeights(optionsDialogEl);
-    optionsDialogEl.scrollTop = scroll;
+    fitPillHeights(optionsBodyEl);
+    optionsBodyEl.scrollTop = scroll;
+  }
+
+  // The style a tag's pill can take besides its colour, each a button that is lit while on.
+  const STYLE_BUTTONS = [
+    { flag: "bold", title: "Bold", html: "<b>B</b>" },
+    { flag: "italic", title: "Italic", html: "<i>I</i>" },
+    { flag: "underline", title: "Underline", html: "<u>U</u>" },
+    { flag: "white", title: "White text", html: '<span class="opt-white">A</span>' },
+    {
+      flag: "square",
+      title: "Square corners",
+      html: '<svg viewBox="0 0 11 9" width="11" height="9" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1" d="M.5 .5h10v8H.5z"/></svg>'
+    }
+  ];
+
+  // One tag: its letters, which open a menu for its colour and letters, its name, which
+  // renames it, its style, and a way to delete it. The row is dragged to move the tag in
+  // the order every list of tags follows.
+  function tagOptionRow(name, names) {
+    const used = Object.values(tags).filter((own) => own.includes(name)).length;
+    const style = tagStyles[name] || {};
+
+    const letters = tagPill(name);
+    letters.classList.add("short", "opt-short");
+    letters.firstChild.textContent = letters.dataset.short;
+    letters.title = "Colour and letters";
+    letters.addEventListener("click", () => {
+      const box = letters.getBoundingClientRect();
+      openMenu(box.left, box.bottom + 4, [
+        { label: "Colour…", run: () => pickTagColor(name, box.left, box.bottom + 4) },
+        { label: "Change letters…", run: () => vscode.postMessage({ type: "tagShort", name: name }) }
+      ]);
+    });
+
+    const label = make("span", "opt-name opt-rename cap", name);
+    label.title = "Click to rename";
+    label.addEventListener("click", () => vscode.postMessage({ type: "renameTag", name: name }));
+
+    const buttons = STYLE_BUTTONS.map((item) => {
+      const button = makeButton("", () => setTagStyle(name, { [item.flag]: !style[item.flag] }), "opt-button opt-toggle");
+      button.innerHTML = item.html;
+      button.title = item.title;
+      button.classList.toggle("active", !!style[item.flag]);
+      button.setAttribute("aria-pressed", style[item.flag] ? "true" : "false");
+      return button;
+    });
+
+    const wrap = make("input", "opt-wrap");
+    wrap.type = "text";
+    wrap.spellcheck = false;
+    wrap.maxLength = 4;
+    wrap.value = style.wrap || "";
+    wrap.placeholder = "[ ]";
+    wrap.title = "Characters to put the name between, as in []";
+    wrap.addEventListener("change", () => {
+      setTagStyle(name, { wrap: Array.from(wrap.value.replace(/\s+/g, "")).slice(0, 2).join("") });
+    });
+    wrap.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        wrap.blur();
+      }
+    });
+
+    const row = optionRow(make("div"), [letters, label], [
+      make("span", "opt-dim cap", used + (used === 1 ? " file" : " files")),
+      ...buttons,
+      wrap,
+      makeButton("Delete", () => vscode.postMessage({ type: "deleteTag", name: name }), "opt-button opt-wide danger")
+    ]);
+    row.classList.add("opt-tag");
+    row.dataset.name = name;
+    dragTagRow(row, name, names);
+    return row;
+  }
+
+  function setTagStyle(name, change) {
+    const style = Object.assign({}, tagStyles[name], change);
+    for (const key of Object.keys(style)) {
+      if (!style[key]) {
+        delete style[key];
+      }
+    }
+    tagStyles = Object.assign({}, tagStyles, { [name]: style });
+    vscode.postMessage({ type: "tagStyle", name: name, style: style });
+    drawTree();
+    drawHeaderTags();
+    drawOptions();
+  }
+
+  // A row is dropped above or below the one under the pointer, whichever half it is in. A
+  // row is only draggable while the press is not in its box for the wrap, so the text in
+  // that box can still be chosen with the pointer.
+  let tagDrag = null;
+
+  function dragTagRow(row, name, names) {
+    row.addEventListener("pointerdown", (event) => {
+      row.draggable = !event.target.closest("input");
+    });
+    row.addEventListener("dragstart", (event) => {
+      tagDrag = name;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", name);
+      row.classList.add("dragged");
+    });
+    row.addEventListener("dragend", () => {
+      tagDrag = null;
+      row.classList.remove("dragged");
+      markTagDrop(null);
+    });
+    row.addEventListener("dragover", (event) => {
+      if (!tagDrag) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      markTagDrop(row, dropsAfter(row, event));
+    });
+    row.addEventListener("drop", (event) => {
+      if (!tagDrag) {
+        return;
+      }
+      event.preventDefault();
+      const moved = tagDrag;
+      const after = dropsAfter(row, event);
+      tagDrag = null;
+      markTagDrop(null);
+      if (moved === name) {
+        return;
+      }
+      const order = names.filter((other) => other !== moved);
+      order.splice(order.indexOf(name) + (after ? 1 : 0), 0, moved);
+      tagOrder = order;
+      vscode.postMessage({ type: "tagOrder", names: order });
+      drawTree();
+      drawHeaderTags();
+      drawTagPicker();
+      drawOptions();
+    });
+  }
+
+  function dropsAfter(row, event) {
+    const box = row.getBoundingClientRect();
+    return event.clientY > box.top + box.height / 2;
+  }
+
+  function markTagDrop(row, after) {
+    for (const el of optionsBodyEl.querySelectorAll(".drop-before, .drop-after")) {
+      el.classList.remove("drop-before", "drop-after");
+    }
+    if (row) {
+      row.classList.add(after ? "drop-after" : "drop-before");
+    }
   }
 
   const MAX_FINDER_HITS = 2000;
@@ -3451,10 +4015,16 @@
 
   // The search covers the reading pane rather than replacing it, so whatever was open is
   // still there underneath when it closes.
-  function openFinder(returnTo) {
+  function openFinder(returnTo, term) {
+    if (term) {
+      finderTextEl.value = term;
+    }
     if (finderOpen) {
       finderTextEl.focus();
       finderTextEl.select();
+      if (term) {
+        runFinder();
+      }
       return;
     }
     closeMenu();
@@ -3488,7 +4058,12 @@
   }
 
   // The button toggles: pressed again it puts the search away, back to the file it covered.
-  findAllEl.addEventListener("click", () => (finderOpen ? closeFinder() : openFinder()));
+  // The selection is read as the button is pressed, before the press can take it away.
+  let buttonPick = "";
+  findAllEl.addEventListener("pointerdown", () => {
+    buttonPick = pickedText();
+  });
+  findAllEl.addEventListener("click", () => (finderOpen ? closeFinder() : openFinder(null, buttonPick)));
   finderCloseEl.addEventListener("click", closeFinder);
   finderTextEl.addEventListener("input", () => {
     clearTimeout(finderTimer);
@@ -3643,7 +4218,7 @@
       return [{ files: files.filter((entry) => fits(entry.name)) }];
     }
     if (scope.kind === "tag") {
-      const names = byName([...new Set(Object.keys(tagColors).concat(...Object.values(tags)))].filter(fits));
+      const names = byOrder([...new Set(Object.keys(tagColors).concat(...Object.values(tags)))].filter(fits));
       return names.map((name) => ({
         head: { kind: "tag", name: name },
         files: files.filter((entry) => (tags[entry.path] || []).includes(name))

@@ -17,6 +17,7 @@ AGENTS.md
 # Editor and OS
 .vscode/settings.json
 docs-panel-reads.json
+docs-panel-links.json
 .vscode-test/
 .idea/
 .DS_Store

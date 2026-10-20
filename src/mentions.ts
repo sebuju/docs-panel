@@ -23,7 +23,7 @@ const NEWLINE = 10;
 
 // Flat character classes only: a nested repeat over the same characters backtracks so
 // badly that a megabyte of log never finishes.
-const TOKEN = /[\w-][\w.\-\\/]*\.[A-Za-z][A-Za-z0-9]{0,5}/g;
+export const TOKEN = /[\w-][\w.\-\\/]*\.[A-Za-z][A-Za-z0-9]{0,5}/g;
 
 // A workspace path is the session folder's name with every separator flattened.
 export function sessionsDir(workspace: vscode.Uri): string {
@@ -203,6 +203,18 @@ function excerptAt(text: string, index: number, length: number): string {
 // Tokens are kept as they were written, so the files they belong to are worked out here
 // against whatever the tree holds now: a doc added later gets its history with no reparse.
 export function match(hits: Mention[], files: Set<string>): Record<string, Mention[]> {
+  const find = resolver(files);
+  const out: Record<string, Mention[]> = {};
+  for (const hit of hits) {
+    const file = find(hit.token);
+    if (file) {
+      (out[file] ??= []).push(hit);
+    }
+  }
+  return out;
+}
+
+export function resolver(files: Set<string>): (token: string) => string | undefined {
   const byPath = new Map<string, string>();
   const byName = new Map<string, string | null>();
   for (const file of files) {
@@ -210,15 +222,7 @@ export function match(hits: Mention[], files: Set<string>): Record<string, Menti
     const name = (file.split("/").pop() ?? file).toLowerCase();
     byName.set(name, byName.has(name) ? null : file);
   }
-
-  const out: Record<string, Mention[]> = {};
-  for (const hit of hits) {
-    const file = resolve(hit.token, byPath, byName);
-    if (file) {
-      (out[file] ??= []).push(hit);
-    }
-  }
-  return out;
+  return (token) => resolve(token, byPath, byName);
 }
 
 // The longest tail of the token that names a file wins; a bare name only counts when one

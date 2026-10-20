@@ -62,11 +62,28 @@ export interface Mark {
   short?: string;
 }
 
+// How a tag's pill is drawn, beyond its colour. Only a tag has these, never a folder.
+export interface TagStyle {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  white?: boolean;
+  square?: boolean;
+  // One or two characters the name is put between: "[]" draws "[plan]".
+  wrap?: string;
+}
+
+export type TagMark = Mark & TagStyle;
+
+const STYLE_FLAGS = ["bold", "italic", "underline", "white", "square"] as const;
+
 export interface Ledger {
   version: number;
   files: Record<string, Entry>;
   folders: Record<string, Mark>;
-  tags: Record<string, Mark>;
+  tags: Record<string, TagMark>;
+  // Every tag, in the order it is listed wherever tags are listed.
+  tagOrder: string[];
 }
 
 // Two ledgers share every operation below; only the file they live in, the values they
@@ -79,7 +96,7 @@ export interface LedgerSpec {
   marks: boolean;
 }
 
-const MARKS_FILE = ".docs-panel.json";
+export const MARKS_FILE = ".docs-panel.json";
 const READS_FILE = "docs-panel-reads.json";
 const TRASH_DIR = ".trash";
 const MAX_DEPTH = 12;
@@ -98,7 +115,7 @@ export function readsLedger(workspace: vscode.Uri, root: vscode.Uri): LedgerSpec
 }
 
 export function emptyLedger(): Ledger {
-  return { version: 1, files: {}, folders: {}, tags: {} };
+  return { version: 1, files: {}, folders: {}, tags: {}, tagOrder: [] };
 }
 
 export function isColor(value: unknown): value is string {
@@ -153,6 +170,13 @@ export async function load(spec: LedgerSpec): Promise<Ledger> {
     if (spec.marks) {
       ledger.folders = marksOf(parsed?.folders, (key) => key, isColor);
       ledger.tags = marksOf(parsed?.tags, cleanTag, isTagColor);
+      for (const [raw, mark] of Object.entries(objectOf(parsed?.tags))) {
+        const name = cleanTag(raw);
+        if (ledger.tags[name]) {
+          ledger.tags[name] = { ...ledger.tags[name], ...styleOf(mark) };
+        }
+      }
+      ledger.tagOrder = Array.isArray(parsed?.tagOrder) ? parsed.tagOrder.map(cleanTag) : [];
       shortenTags(ledger);
       // A tag a file carries is always in the list, so it always has a colour to show.
       for (const entry of Object.values(ledger.files)) {
@@ -160,6 +184,7 @@ export async function load(spec: LedgerSpec): Promise<Ledger> {
           defineTag(ledger, tag);
         }
       }
+      orderTags(ledger);
     }
   } catch {
     return emptyLedger();
@@ -190,6 +215,37 @@ function marksOf(
   return out;
 }
 
+// Only what is set is kept, so a tag drawn plainly is written as it always was.
+export function styleOf(value: unknown): TagStyle {
+  const raw = objectOf(value);
+  const out: TagStyle = {};
+  for (const flag of STYLE_FLAGS) {
+    if (raw[flag] === true) {
+      out[flag] = true;
+    }
+  }
+  const wrap = typeof raw.wrap === "string" ? Array.from(raw.wrap.replace(/\s+/g, "")).slice(0, 2).join("") : "";
+  if (wrap) {
+    out.wrap = wrap;
+  }
+  return out;
+}
+
+// The order kept names each tag once; a tag it does not name, from an older ledger or one
+// edited by hand, goes after the rest, by name.
+function orderTags(ledger: Ledger): void {
+  const seen = new Set<string>();
+  const order = ledger.tagOrder.filter((name) => {
+    const keep = !!ledger.tags[name] && !seen.has(name);
+    seen.add(name);
+    return keep;
+  });
+  const rest = Object.keys(ledger.tags)
+    .filter((name) => !seen.has(name))
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  ledger.tagOrder = [...order, ...rest];
+}
+
 export async function save(spec: LedgerSpec, ledger: Ledger): Promise<void> {
   const files: Record<string, object> = {};
   for (const path of Object.keys(ledger.files).sort()) {
@@ -211,6 +267,8 @@ export async function save(spec: LedgerSpec, ledger: Ledger): Promise<void> {
   }
   if (spec.marks && Object.keys(ledger.tags).length) {
     out.tags = sorted(ledger.tags);
+    orderTags(ledger);
+    out.tagOrder = ledger.tagOrder;
   }
   const text = JSON.stringify(out, null, 2) + "\n";
   const folder = spec.store.with({ path: spec.store.path.split("/").slice(0, -1).join("/") });
@@ -320,9 +378,35 @@ export async function renameTag(spec: LedgerSpec, from: string, to: string): Pro
   }
   const mark = ledger.tags[from];
   delete ledger.tags[from];
-  // A new name is a new tag to tell apart, so it is given letters of its own.
-  ledger.tags[name] ??= { color: mark.color, short: abbreviate(name, takenShorts(ledger)) };
+  // A new name is a new tag to tell apart, so it is given letters of its own. It keeps the
+  // old one's place in the order, unless it merges into a tag that has a place already.
+  const merged = !!ledger.tags[name];
+  ledger.tags[name] ??= { ...mark, short: abbreviate(name, takenShorts(ledger)) };
+  ledger.tagOrder = merged
+    ? ledger.tagOrder.filter((tag) => tag !== from)
+    : ledger.tagOrder.map((tag) => (tag === from ? name : tag));
   await save(spec, ledger);
+  return ledger;
+}
+
+export async function setTagStyle(spec: LedgerSpec, name: string, style: unknown): Promise<Ledger> {
+  const ledger = await load(spec);
+  const mark = ledger.tags[name];
+  if (mark) {
+    ledger.tags[name] = { color: mark.color, ...(mark.short ? { short: mark.short } : {}), ...styleOf(style) };
+    await save(spec, ledger);
+  }
+  return ledger;
+}
+
+// The names in the order given; any tag left out keeps its place after them.
+export async function setTagOrder(spec: LedgerSpec, names: unknown): Promise<Ledger> {
+  const ledger = await load(spec);
+  if (Array.isArray(names)) {
+    ledger.tagOrder = [...names.map(cleanTag), ...ledger.tagOrder];
+    orderTags(ledger);
+    await save(spec, ledger);
+  }
   return ledger;
 }
 
@@ -356,6 +440,7 @@ export async function deleteTag(spec: LedgerSpec, name: string): Promise<Ledger>
     }
   }
   delete ledger.tags[name];
+  ledger.tagOrder = ledger.tagOrder.filter((tag) => tag !== name);
   await save(spec, ledger);
   return ledger;
 }
@@ -369,6 +454,7 @@ export async function pruneTags(spec: LedgerSpec): Promise<{ ledger: Ledger; pru
   for (const name of pruned) {
     delete ledger.tags[name];
   }
+  ledger.tagOrder = ledger.tagOrder.filter((tag) => !pruned.includes(tag));
   if (pruned.length) {
     await save(spec, ledger);
   }
@@ -386,6 +472,8 @@ function defineTag(ledger: Ledger, name: string): void {
     TAG_COLORS.find((value) => !used.has(value)) ??
     TAG_COLORS[Object.keys(ledger.tags).length % TAG_COLORS.length];
   ledger.tags[name] = { color, short: abbreviate(name, takenShorts(ledger)) };
+  // A new tag goes to the end of the list, where the one making it can see it arrive.
+  ledger.tagOrder.push(name);
 }
 
 function takenShorts(ledger: Ledger): Set<string> {

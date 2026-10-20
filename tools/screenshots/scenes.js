@@ -5,6 +5,7 @@
 //   theme  one of themes.js, dark-modern by default
 //   state  merged over the panel state build.js starts from
 //   act    async (page) => {...}, run once the page has drawn
+//   hover  true to leave the pointer where the scene put it
 //   clip   { x, y, width, height } in CSS pixels; the whole window when left out
 
 const side = { x: 0, y: 0, width: 340, height: 300 };
@@ -79,7 +80,7 @@ module.exports = [
     act: async (page) => {
       await press("openOptions")(page);
       await page.evaluate(() => {
-        const box = document.getElementById("optionsDialog");
+        const box = document.getElementById("optionsBody");
         box.scrollTop = box.scrollHeight;
       });
       await page.waitForTimeout(100);
@@ -90,7 +91,7 @@ module.exports = [
     act: async (page) => {
       await press("openOptions")(page);
       await page.evaluate(() => {
-        const box = document.getElementById("optionsDialog");
+        const box = document.getElementById("optionsBody");
         box.scrollTop = box.scrollHeight;
       });
       await page.click("#optionsDialog button:has-text('Prune')");
@@ -102,12 +103,56 @@ module.exports = [
     act: async (page) => {
       await press("openOptions")(page);
       await page.evaluate(() => {
-        const box = document.getElementById("optionsDialog");
+        const box = document.getElementById("optionsBody");
         box.scrollTop = box.scrollHeight;
       });
-      await page.click("#optionsDialog .swatch.pick >> nth=0");
+      await page.click("#optionsBody .opt-short >> nth=0");
+      await page.waitForTimeout(100);
+      await page.click("#menu button:has-text('Colour')");
       await page.waitForTimeout(100);
     }
+  },
+  {
+    name: "tag-letters-menu",
+    act: async (page) => {
+      await press("openOptions")(page);
+      await page.evaluate(() => {
+        const box = document.getElementById("optionsBody");
+        box.scrollTop = box.scrollHeight;
+      });
+      await page.click("#optionsBody .opt-short >> nth=1");
+      await page.waitForTimeout(100);
+    }
+  },
+  {
+    name: "tags-ctrl-click",
+    clip: menu,
+    act: async (page) => page.click('.row[data-path="guide.md"] .label', { modifiers: ["Control"] })
+  },
+  {
+    name: "page-table-row",
+    state: { selected: "guide.md" },
+    clip: { x: 300, y: 0, width: 700, height: 300 },
+    hover: true,
+    act: async (page) => page.mouse.move(380, 195)
+  },
+  {
+    name: "page-links-and-edit",
+    state: { selected: "guide.md", editing: [] },
+    clip: { x: 300, y: 0, width: 700, height: 140 },
+    hover: true,
+    act: async (page) => page.hover("a.file-link >> nth=0")
+  },
+  {
+    name: "page-edit-on",
+    state: { selected: "guide.md", editing: ["guide.md"] },
+    clip: header
+  },
+  {
+    name: "page-menu-find",
+    state: { selected: "guide.md" },
+    clip: { x: 300, y: 0, width: 700, height: 300 },
+    act: async (page) => page.click(".markdown-body table td >> nth=1", { button: "right" })
   },
   { name: "header-tags", clip: header },
   { name: "header-tags-light", theme: "light-modern", clip: header }

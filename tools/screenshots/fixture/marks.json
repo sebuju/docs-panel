@@ -48,12 +48,56 @@
       "plan": "p",
       "q3": "q",
       "review": "r"
-    }
+    },
+    "tagStyles": {
+      "review": {
+        "bold": true,
+        "square": true
+      },
+      "q3": {
+        "wrap": "[]"
+      },
+      "meeting": {
+        "italic": true,
+        "white": true
+      },
+      "misc": {
+        "underline": true
+      }
+    },
+    "tagOrder": [
+      "plan",
+      "q3",
+      "draft",
+      "review",
+      "overview",
+      "blocked",
+      "meeting",
+      "idea",
+      "misc",
+      "stale"
+    ]
   },
   "contents": {
     "plans/roadmap.md": {
       "kind": "md",
       "html": "<h1 data-line=\"0\">Roadmap</h1><h2>Q3</h2><p>Ship the storage layer and the review flow.</p><h2>Q4</h2><p>Plan the migration. Review the draft with the team.</p><h3>Risks</h3><p>The storage layer may slip.</p>"
+    },
+    "guide.md": {
+      "kind": "md",
+      "html": "<h1 data-line=\"0\">Guide</h1><p>Start with plans/roadmap.md, then read meeting-notes.md and the code in src/panel.ts.</p><table><thead><tr><th>Step</th><th>Owner</th><th>Due</th></tr></thead><tbody><tr><td>Draft</td><td>Ana</td><td>Mon</td></tr><tr><td>Review</td><td>Bo</td><td>Wed</td></tr><tr><td>Ship</td><td>Cy</td><td>Fri</td></tr></tbody></table><ul><li>One item</li><li>Another item</li></ul>",
+      "links": {
+        "plans/roadmap.md": {
+          "path": "plans/roadmap.md"
+        },
+        "meeting-notes.md": {
+          "path": "notes/meeting-notes.md"
+        },
+        "src/panel.ts": {
+          "path": "src/panel.ts",
+          "workspace": true
+        }
+      }
     }
   },
   "dataFiles": [
@@ -77,6 +121,13 @@
       "note": "rebuilt from the session logs on the next scan",
       "path": ".vscode/docs-panel-mentions.json",
       "size": -1
+    },
+    {
+      "id": "links",
+      "label": "Link cache",
+      "note": "the files each page names are looked up again as the pages are opened",
+      "path": ".vscode/docs-panel-links.json",
+      "size": 412
     }
   ]
 }

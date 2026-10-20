@@ -56,8 +56,10 @@ async function shoot({ repo, out, only = "", dpr = 2 }) {
       errors.push("act: " + error.message.split("\n")[0]);
     }
     await page.waitForTimeout(150);
-    // Out of the way, so no hover is left lit.
-    await page.mouse.move(999, 639);
+    // Out of the way, so no hover is left lit, unless the hover is what the scene shows.
+    if (!scene.hover) {
+      await page.mouse.move(999, 639);
+    }
     const file = path.join(out, scene.name + ".png");
     await page.screenshot({ path: file, clip: scene.clip });
     console.log(scene.name.padEnd(28), errors.length ? "ERRORS " + errors.join(" | ") : "ok");

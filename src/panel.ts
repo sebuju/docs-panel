@@ -22,19 +22,30 @@ import {
   setColor,
   setStatus,
   setTagColor,
+  setTagOrder,
+  setTagStyle,
   setTags,
   marksLedger,
+  styleOf,
+  TagStyle,
+  MARKS_FILE,
   Ledger,
   LedgerSpec,
   READ
 } from "./ledger";
 import { cacheUri, match, refresh, sessionsDir } from "./mentions";
+import { Links, linksUri, treeStamp } from "./links";
 import { openInBrowser } from "./browser";
 import { Corpus } from "./corpus";
 
 export const VIEW_TYPE = "docsPanel";
 export const TRASH_DIR = ".trash";
 const SESSION_DEBOUNCE_MS = 500;
+// The marks file can be rewritten by anything, a watcher may not hear of it, so one timer
+// looks at its time stamp now and then and reads it only once that has moved.
+const MARKS_POLL_MS = 1500;
+// The places kept in files once read, most recent last; past this many the oldest go.
+const MAX_SCROLLS = 300;
 
 // Which of the side's two lists, if either, is given the height its entries need.
 export type AutoSize = "none" | "tree" | "toc";
@@ -55,9 +66,17 @@ export interface PanelState {
   autoWidth: boolean;
   tagSide: TagSide;
   hoverStrength: number;
+  // How far the block light reaches past the block, in pixels.
+  blockPad: number;
+  // How many of the newest mentions a file shows before "Show more"; none turns them off.
+  mentionLines: number;
   expanded: string[];
   pinned: string[];
   selected: string | null;
+  // The files left in edit mode, which open in it again.
+  editing: string[];
+  // How far down each file was read, as a share of the way.
+  scrolls: Record<string, number>;
 }
 
 const DEFAULT_STATE: PanelState = {
@@ -71,9 +90,13 @@ const DEFAULT_STATE: PanelState = {
   autoWidth: false,
   tagSide: "right",
   hoverStrength: 40,
+  blockPad: 4,
+  mentionLines: 5,
   expanded: [],
   pinned: [],
-  selected: null
+  selected: null,
+  editing: [],
+  scrolls: {}
 };
 
 const TRASH_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -111,11 +134,6 @@ d="M2.5 4.5h2M7.5 4.5h6M2.5 11.5h6M11.5 11.5h2"/>
 const ADD_TAG_ICON = `<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
 <path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M5 1.5v7M1.5 5h7"/></svg>`;
 
-const EYE_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-<path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
-d="M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8z"/>
-<circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
-
 interface DataFile {
   id: string;
   label: string;
@@ -140,6 +158,13 @@ export class DocsPanel {
   private state: PanelState;
   private ready = false;
   private readonly corpus = new Corpus();
+  private readonly links = new Links();
+  // The files of the docs as the tree last showed them, which names in a page link to.
+  private docFiles = new Set<string>();
+  private docStamp = "";
+  private marksPoll: NodeJS.Timeout | undefined;
+  private marksStamp = "";
+  private marksSent = "";
 
   static open(context: vscode.ExtensionContext): void {
     if (DocsPanel.current) {
@@ -198,6 +223,28 @@ export class DocsPanel {
     this.panel.onDidDispose(() => this.dispose());
     this.startWatcher();
     this.startSessionWatcher();
+    this.marksPoll = setInterval(() => void this.checkMarks(), MARKS_POLL_MS);
+  }
+
+  // A stat each time round; the file is only read when its stamp has moved, and the page
+  // only hears of it when what it holds is not what was sent last.
+  private async checkMarks(): Promise<void> {
+    if (!this.ready || !this.root) {
+      return;
+    }
+    const spec = marksLedger(this.root.uri);
+    let stamp = "";
+    try {
+      const stat = await vscode.workspace.fs.stat(spec.store);
+      stamp = `${stat.mtime}:${stat.size}`;
+    } catch {
+      stamp = "none";
+    }
+    if (stamp === this.marksStamp) {
+      return;
+    }
+    this.marksStamp = stamp;
+    this.postMarks(await load(spec));
   }
 
   private get base(): vscode.Uri | undefined {
@@ -240,7 +287,9 @@ export class DocsPanel {
     this.watcher = watchRoot(base, {
       onTreeChange: () => void this.sendTree(),
       onFileChange: (path) => {
-        if (path === this.state.selected) {
+        if (path === MARKS_FILE) {
+          void this.checkMarks();
+        } else if (path === this.state.selected) {
           void this.markRead(path);
           void this.sendContent(path);
         } else {
@@ -262,6 +311,9 @@ export class DocsPanel {
       new vscode.RelativePattern(vscode.Uri.file(sessionsDir(this.root.workspace)), "*.jsonl")
     );
     const schedule = () => {
+      if (!this.state.mentionLines) {
+        return;
+      }
       if (this.sessionsTimer) {
         clearTimeout(this.sessionsTimer);
       }
@@ -291,6 +343,10 @@ export class DocsPanel {
     if (!this.ready || !this.root) {
       return;
     }
+    if (!this.state.mentionLines) {
+      this.post({ type: "mentions", mentions: {} });
+      return;
+    }
     const hits = await refresh(this.root.workspace);
     this.post({ type: "mentions", mentions: match(hits, await listFiles(this.root.uri)) });
   }
@@ -299,6 +355,8 @@ export class DocsPanel {
     switch (message?.type) {
       case "ready":
         this.ready = true;
+        // A page loaded again has none of the marks, whatever was sent to the last one.
+        this.marksSent = "";
         this.post({ type: "state", ...this.state });
         this.post({ type: "version", version: String(this.context.extension.packageJSON.version ?? "") });
         this.sendPrefixes();
@@ -312,9 +370,14 @@ export class DocsPanel {
         await this.markRead(this.state.selected);
         await this.sendContent(this.state.selected);
         return;
-      case "persist":
+      case "persist": {
+        const mentioned = this.state.mentionLines > 0;
         this.state = normalizeState(message);
+        if (mentioned !== this.state.mentionLines > 0) {
+          await this.sendMentions();
+        }
         return;
+      }
       case "save":
         await this.save(String(message.path), String(message.text));
         return;
@@ -362,6 +425,19 @@ export class DocsPanel {
         return;
       case "tagShort":
         await this.tagShort(String(message.name));
+        return;
+      case "tagStyle":
+        if (this.root) {
+          this.postMarks(await setTagStyle(marksLedger(this.root.uri), String(message.name), message.style));
+        }
+        return;
+      case "tagOrder":
+        if (this.root) {
+          this.postMarks(await setTagOrder(marksLedger(this.root.uri), message.names));
+        }
+        return;
+      case "openWorkspace":
+        await this.openWorkspaceFile(String(message.path));
         return;
       case "deleteTag":
         await this.deleteTag(String(message.name));
@@ -504,13 +580,40 @@ export class DocsPanel {
     }
     const tagColors: Record<string, string> = {};
     const tagShorts: Record<string, string> = {};
+    const tagStyles: Record<string, TagStyle> = {};
     for (const [name, mark] of Object.entries(ledger.tags)) {
       tagColors[name] = mark.color;
       if (mark.short) {
         tagShorts[name] = mark.short;
       }
+      const style = styleOf(mark);
+      if (Object.keys(style).length) {
+        tagStyles[name] = style;
+      }
     }
-    this.post({ type: "marks", tags, colors, tagColors, tagShorts });
+    const message = { type: "marks", tags, colors, tagColors, tagShorts, tagStyles, tagOrder: ledger.tagOrder };
+    // The timer reads the file back after every write the panel makes itself, and that
+    // would only send the page what it already has.
+    const sent = JSON.stringify(message);
+    if (sent !== this.marksSent) {
+      this.marksSent = sent;
+      this.post(message);
+    }
+  }
+
+  // A name in a page that is a file of the workspace but not of the docs opens beside.
+  private async openWorkspaceFile(relPath: string): Promise<void> {
+    const workspace = this.root?.workspace;
+    if (!workspace || relPath.split("/").includes("..")) {
+      return;
+    }
+    try {
+      await vscode.window.showTextDocument(vscode.Uri.joinPath(workspace, ...relPath.split("/")), {
+        preview: true
+      });
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Docs Panel could not open ${relPath}: ${error}`);
+    }
   }
 
   private postReads(ledger: Ledger): void {
@@ -955,6 +1058,12 @@ export class DocsPanel {
         label: "Mention cache",
         note: "rebuilt from the session logs on the next scan",
         uri: cacheUri(this.root.workspace)
+      },
+      {
+        id: "links",
+        label: "Link cache",
+        note: "the files each page names are looked up again as the pages are opened",
+        uri: linksUri(this.root.workspace)
       }
     ];
   }
@@ -1013,6 +1122,7 @@ export class DocsPanel {
         void vscode.window.showErrorMessage(`Docs Panel could not purge ${file.uri.fsPath}: ${error}`);
       }
     }
+    this.links.forget();
     this.postMarks(await load(marksLedger(this.root.uri)));
     this.postReads(await load(readsLedger(this.root.workspace, this.root.uri)));
     await this.sendMentions();
@@ -1058,9 +1168,12 @@ export class DocsPanel {
     // The walk skips dotted names, so the trash is built on its own and its paths are
     // prefixed here: one list, one set of keys, whichever side of the trash a file is on.
     const trash = (await buildTree(vscode.Uri.joinPath(base, TRASH_DIR), false)).map(prefixNode);
+    const nodes = await buildTree(base);
+    this.docFiles = filesOf(nodes);
+    this.docStamp = treeStamp(this.docFiles);
     this.post({
       type: "tree",
-      nodes: await buildTree(base),
+      nodes,
       trash,
       pinned: this.state.pinned,
       root: this.root ? relativeTo(this.root.workspace, base) : "",
@@ -1095,10 +1208,19 @@ export class DocsPanel {
     if (!this.ready || !base) {
       return;
     }
-    this.post({
-      type: "content",
-      ...(await renderFile(base, relPath, this.panel.webview))
-    });
+    const content = await renderFile(base, relPath, this.panel.webview);
+    const links =
+      content.kind === "md" && this.root && typeof content.text === "string"
+        ? await this.links.of(
+            this.root.workspace,
+            relPath,
+            content.text,
+            content.modified ?? 0,
+            this.docFiles,
+            this.docStamp
+          )
+        : {};
+    this.post({ type: "content", ...content, links });
   }
 
   private post(message: unknown): void {
@@ -1153,7 +1275,7 @@ export class DocsPanel {
         <span id="ago"></span>
       </span>
       <button id="find" class="icon" type="button" title="Find (Ctrl+F)">${GLASS_ICON}</button>
-      <button id="toggle" class="icon" type="button" title="Edit"><span class="pen">${PEN_ICON}</span><span class="eye">${EYE_ICON}</span></button>
+      <button id="toggle" class="icon" type="button" title="Edit">${PEN_ICON}</button>
       <button id="rename" class="icon" type="button" title="Rename">${TAG_ICON}</button>
       <button id="trash" class="icon" type="button" title="Move to the trash">${TRASH_ICON}</button>
       <button id="restore" class="icon" type="button" title="Restore" hidden>${RESTORE_ICON}</button>
@@ -1192,7 +1314,10 @@ export class DocsPanel {
   <div id="tagList"></div>
 </div>
 <div id="optionsLayer" hidden>
-  <div id="optionsDialog" role="dialog" aria-label="Docs Panel options" tabindex="-1"></div>
+  <div id="optionsDialog" role="dialog" aria-label="Docs Panel options" tabindex="-1">
+    <div id="optionsHead"></div>
+    <div id="optionsBody"></div>
+  </div>
 </div>
 <div id="toasts"></div>
 <div id="lightbox" hidden>
@@ -1206,6 +1331,9 @@ export class DocsPanel {
 
   private dispose(): void {
     DocsPanel.current = undefined;
+    if (this.marksPoll) {
+      clearInterval(this.marksPoll);
+    }
     this.watcher?.dispose();
     this.sessions?.dispose();
     if (this.sessionsTimer) {
@@ -1232,6 +1360,17 @@ function untrash(relPath: string): string {
     parts.splice(at, 1);
   }
   return parts.join("/");
+}
+
+function filesOf(nodes: TreeNode[], out = new Set<string>()): Set<string> {
+  for (const node of nodes) {
+    if (node.dir) {
+      filesOf(node.children ?? [], out);
+    } else {
+      out.add(node.path);
+    }
+  }
+  return out;
 }
 
 function prefixNode(node: TreeNode): TreeNode {
@@ -1313,6 +1452,14 @@ function normalizeState(value: any): PanelState {
   const treeScale = Number(value?.treeScale);
   const lineHeight = Number(value?.lineHeight);
   const hoverStrength = Number(value?.hoverStrength);
+  const blockPad = Number(value?.blockPad);
+  const mentionLines = Number(value?.mentionLines);
+  const scrolls: Record<string, number> = {};
+  for (const [path, ratio] of Object.entries(value?.scrolls ?? {}).slice(-MAX_SCROLLS)) {
+    if (typeof ratio === "number" && Number.isFinite(ratio)) {
+      scrolls[path] = Math.min(Math.max(ratio, 0), 1);
+    }
+  }
   return {
     split: Number.isFinite(split) ? split : DEFAULT_STATE.split,
     sideSplit: Number.isFinite(sideSplit) ? sideSplit : DEFAULT_STATE.sideSplit,
@@ -1331,9 +1478,15 @@ function normalizeState(value: any): PanelState {
     hoverStrength: Number.isFinite(hoverStrength)
       ? Math.min(Math.max(hoverStrength, 0), 100)
       : DEFAULT_STATE.hoverStrength,
+    blockPad: Number.isFinite(blockPad) ? Math.min(Math.max(Math.round(blockPad), 0), 16) : DEFAULT_STATE.blockPad,
+    mentionLines: Number.isFinite(mentionLines)
+      ? Math.min(Math.max(Math.round(mentionLines), 0), 100)
+      : DEFAULT_STATE.mentionLines,
     expanded: Array.isArray(value?.expanded) ? value.expanded.map(String) : [],
     pinned: Array.isArray(value?.pinned) ? value.pinned.map(String) : [],
-    selected: typeof value?.selected === "string" ? value.selected : null
+    selected: typeof value?.selected === "string" ? value.selected : null,
+    editing: Array.isArray(value?.editing) ? value.editing.map(String) : [],
+    scrolls
   };
 }
 

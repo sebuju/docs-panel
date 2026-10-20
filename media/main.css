@@ -143,15 +143,6 @@ button.icon .glyph {
   line-height: 1;
 }
 
-#toggle .eye,
-#toggle.editing .pen {
-  display: none;
-}
-
-#toggle.editing .eye {
-  display: flex;
-}
-
 button.icon:hover {
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
   opacity: 1;
@@ -247,6 +238,16 @@ body.dragging-rows {
 
 .row > * {
   height: var(--tree-row);
+}
+
+/* The script measures where the name's capitals fall in the row and moves the parts set
+   on the name's baseline by whole pixels, so their middle is the row's, as the pills' is. */
+.row > .label,
+.row > .twisty,
+.row > .dot,
+.row > .can {
+  position: relative;
+  top: var(--label-shift, 0px);
 }
 
 .row:hover {
@@ -414,6 +415,28 @@ body.dragging-rows {
 .f-title .tag {
   align-self: flex-start;
   margin-top: var(--tag-top, calc((var(--room) - var(--pill)) / 2));
+}
+
+/* The style a tag can be given besides its colour, the same wherever its pill is drawn. */
+.tag.tag-bold {
+  font-weight: 700;
+}
+
+.tag.tag-italic {
+  font-style: italic;
+}
+
+.tag.tag-underline .tag-text {
+  text-decoration: underline;
+  text-underline-offset: 1px;
+}
+
+.tag.tag-white {
+  color: #fff;
+}
+
+.tag.tag-square {
+  border-radius: 2px;
 }
 
 /* Initials: as narrow as the letters, and round when there is one of them. */
@@ -894,7 +917,18 @@ body.dragging {
   );
   border-radius: 3px;
   background-image: linear-gradient(var(--block-light-colour), var(--block-light-colour));
-  box-shadow: 0 0 0 4px var(--block-light-colour);
+  box-shadow: 0 0 0 var(--block-pad, 4px) var(--block-light-colour);
+}
+
+/* A table is lit a row at a time, through its cells: a row draws neither the image nor
+   the shadow of its own, and the cells' padding is the reach. */
+.markdown-body tr.block-on {
+  background-image: none;
+  box-shadow: none;
+}
+
+.markdown-body tr.block-on > :is(td, th) {
+  background-image: linear-gradient(var(--block-light-colour), var(--block-light-colour));
 }
 
 /* The animation and nothing else: a mark that set the box would move the text it points
@@ -1280,14 +1314,16 @@ img.single {
 }
 
 /* Placed by the script, on whole pixels. Every line in it has a height in whole pixels
-   too, so nothing below a line is pushed onto a fraction of one. */
+   too, so nothing below a line is pushed onto a fraction of one. The head stays put and
+   the body under it scrolls, with the panel's own bar. */
 #optionsDialog {
   --opt-control: 112px;
   position: absolute;
-  width: min(560px, 100% - 32px);
+  display: flex;
+  flex-direction: column;
+  width: min(600px, 100% - 32px);
   box-sizing: border-box;
-  overflow: auto;
-  padding: 0 18px 18px;
+  overflow: hidden;
   border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
   border-radius: 6px;
   color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
@@ -1299,17 +1335,23 @@ img.single {
   outline: none;
 }
 
-.opt-head {
-  position: sticky;
-  top: 0;
+#optionsHead {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 0 4px;
-  background: inherit;
+  padding: 12px 18px 8px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
 }
 
-.opt-head h2 {
+#optionsBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 18px 18px;
+}
+
+#optionsHead h2 {
   margin: 0;
   font-size: 1.1em;
   font-weight: 600;
@@ -1324,7 +1366,7 @@ img.single {
 }
 
 .opt-section h3 {
-  margin: 14px 0 4px;
+  margin: 12px 0 4px;
   line-height: 16px;
   font-size: 0.8em;
   font-weight: 600;
@@ -1369,11 +1411,89 @@ img.single {
   line-height: 15px;
 }
 
-/* A tag's letters in the options, the pill the tree shows them in, and a way to change them. */
+/* A tag's letters in the options, the pill the tree shows them in, and the way to its
+   colour and letters. */
 .opt-short {
   --pill: 15px;
   --room: 27px;
   cursor: pointer;
+}
+
+/* The name renames the tag when clicked, as the letters open theirs. */
+.opt-rename {
+  cursor: pointer;
+}
+
+.opt-rename:hover {
+  text-decoration: underline;
+}
+
+/* A row is dragged to move its tag in the order; where it would land is a line. */
+.opt-tag {
+  cursor: grab;
+}
+
+.opt-tag.dragged {
+  opacity: 0.45;
+}
+
+.opt-tag.drop-before {
+  box-shadow: inset 0 1px 0 var(--vscode-focusBorder);
+}
+
+.opt-tag.drop-after {
+  box-shadow: inset 0 -1px 0 var(--vscode-focusBorder);
+}
+
+/* A style button is square and lit while its style is on. */
+.opt-button.opt-toggle {
+  width: 23px;
+  padding: 0;
+}
+
+.opt-button.opt-toggle.active {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+  background: var(--vscode-inputOption-activeBackground, rgba(0, 127, 212, 0.4));
+  border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder));
+}
+
+.opt-toggle svg {
+  display: block;
+}
+
+.opt-white {
+  padding: 0 3px;
+  border-radius: 2px;
+  color: #fff;
+  background: rgba(128, 128, 128, 0.55);
+}
+
+.opt-wrap {
+  width: 34px;
+  height: 23px;
+  box-sizing: border-box;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 0 4px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  font: inherit;
+  text-align: center;
+}
+
+.opt-wrap:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.opt-wrap::placeholder {
+  opacity: 0.4;
+}
+
+/* Delete and Prune are one width, so the one under the tags lines up with theirs. */
+.opt-button.opt-wide {
+  width: 64px;
+  padding: 0;
 }
 
 .opt-short:hover {
@@ -1652,13 +1772,15 @@ img.single {
 /* The pane scrolls itself but shows nothing for it; the bar over it is drawn by hand. */
 #tree,
 #toc,
-#body {
+#body,
+#optionsBody {
   scrollbar-width: none;
 }
 
 #tree::-webkit-scrollbar,
 #toc::-webkit-scrollbar,
-#body::-webkit-scrollbar {
+#body::-webkit-scrollbar,
+#optionsBody::-webkit-scrollbar {
   display: none;
 }
 

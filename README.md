@@ -21,22 +21,25 @@ Then run **Docs Panel: Open** from the command palette.
 | Action | How |
 |---|---|
 | Open a file | Click it in the tree |
-| Follow a link | Click a Markdown link to another file |
+| Follow a link | Click a Markdown link to another file, or a file named in the text: a file of the docs opens in the panel, any other file of the workspace in an editor |
+| Go back or forward | The mouse's back and forward buttons walk the files opened, as in a browser |
 | Jump to a heading | Click it in the contents list on the right |
 | Zoom a picture | Click it; scroll to zoom, drag to pan, `0` to fit, `Escape` to close |
-| Edit a file | Pen button in the file bar, then `Ctrl+S` |
-| Tag a file | `+` in the file bar, or **Tags…** in the tree's menu; type to find or add a tag |
+| Edit a file | Pen button in the file bar, lit while editing, then `Ctrl+S`; a file left in edit mode opens in it again |
+| Tag a file | `+` in the file bar, `Ctrl`+click it in the tree, or **Tags…** in the tree's menu; type to find or add a tag |
 | Search by a tag | Click the tag in the tree; with the search up it takes the place of the tag searched for, and with `Shift` held it is added to them |
 | Colour a file or folder | **Colour…** in the tree's menu |
 | Pin a file or folder | **Pin to top** in the tree's menu |
 | Open in a browser | **Open in browser** in a file's menu in the tree |
-| Find in the page | `Ctrl+F`; `Up` / `Down` or `Enter` / `Shift+Enter` step through the hits |
+| Find in the page | `Ctrl+F`, which starts from the selected text if there is any; `Up` / `Down` or `Enter` / `Shift+Enter` step through the hits |
+| Find a word | Right click it in the page: **Find “word”**, or **Find “word” in all docs** |
 | Step through a Markdown file | `Up` / `Down` light the next or previous block and scroll it into view |
 | Search all docs | `Ctrl+F` twice with `Ctrl` held, or the search button in the tree's top right corner (shown while the pointer is in that corner) |
 | Options | The sliders button in the tree's top right corner |
 | Trash a file | Bin button in the file bar; the trash shows at the foot of the tree, and each folder lists what was trashed from it, along with anything in a `.trash` folder of its own |
 | Empty the trash | Right click a trash folder: **Restore all** or **Delete all** |
 | Move the divider | Drag it; the position is remembered |
+| Come back to a file | Each file opens where it was left, as a share of the way down, so an edited file opens near the same place |
 | Size a list to fit | Right click the divider between the files and the toc: auto size the files, the toc, or neither |
 | Size the side to fit | Right click the divider between the side and the page: auto size the side's width to the files, or not |
 
@@ -86,11 +89,18 @@ a space or a comma in it is quoted: `tag:"to do"`.
 ## Options
 
 The options hold the reading settings (text size, line spacing, font, which list's height
-is auto sized, whether the side's width is, and how strongly the Markdown block under the
-pointer is lit, where off turns the light off), the tree's (its own text size, and which
-side of a name the tags are drawn on), the tags (each one's colour, its letters, rename and delete, and
-**Prune**, which removes the tags no file has), and the data files the panel writes, each
-with its size and a button to purge it.
+is auto sized, whether the side's width is, how strongly the Markdown block under the
+pointer is lit, where off turns the light off, how far the light reaches past the block,
+and how many of a file's mentions show before **Show more**, where off turns the mentions
+off), the tree's (its own text size, and which side of a name the tags are drawn on), the
+tags, and the data files the panel writes, each with its size and a button to purge it.
+
+Each tag is a row: its letters, which open a menu for its colour and its letters; its
+name, which renames it when clicked; its style, any of bold, italic, underline, white
+text and square corners, and one or two characters to put the name between (`[]` draws
+`[plan]`); and **Delete**. Drag a row to move the tag: every list of tags, in the tree,
+the file bar, the tag picker and the search, follows this order. **Prune**, under the
+tags, removes the tags no file has, and shows only while there are some.
 
 ## Settings
 
@@ -104,15 +114,16 @@ The setting has resource scope, so a project can override it in its own
 ## Tags and colours
 
 Tags and colours are stored in `<docs folder>/.docs-panel.json`, so they travel with the
-documents. The colours of files and folders are the theme's own, so they follow the theme
+documents. The panel looks at the file's time stamp every second and a half and reads it
+again when it has moved, so a change made outside the panel shows in the tree. The colours of files and folders are the theme's own, so they follow the theme
 in use; a tag's colours are the panel's own, the same in every theme, and each is light
 enough for the black text on a pill to read at 7:1 or better.
 
 Where a row has no room for its tags beside the file's name, its pills show the tags'
 letters instead, each pill as wide as its letters. Every tag gets letters of its own when
 it is made: the first letter of each word, lengthened while another tag already has them
-(`plan` is `p`, then `priority` is `pr`). The options show them beside each tag; click
-them to choose others, which no other tag may have.
+(`plan` is `p`, then `priority` is `pr`). The options show them at the head of each tag's row;
+click them and **Change letters…** to choose others, which no other tag may have.
 
 Each entry
 carries a content hash: a file moved outside the panel keeps its tags and colour, an
@@ -136,5 +147,8 @@ README.
 
 - Markdown is rendered by VS Code's built-in renderer. Extensions that add drawing to the
   preview, such as mermaid and katex, do not run here.
-- Links to files outside the docs folder are inert.
+- Markdown links to files outside the docs folder are inert; a file of the workspace named
+  in the text, such as `src/panel.ts`, is a link. What each page's names lead to is kept in
+  `.vscode/docs-panel-links.json` and looked up again once the page or the list of docs
+  changes.
 - **Open in browser** works for files on the local machine only, not in a remote window.
