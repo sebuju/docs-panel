@@ -262,12 +262,13 @@ body.dragging-rows {
   top: var(--label-shift, 0px);
 }
 
+/* Colours only: the shorthand would set the background's clip back to the whole row. */
 .row:hover {
-  background: var(--vscode-list-hoverBackground);
+  background-color: var(--vscode-list-hoverBackground);
 }
 
 .row.selected {
-  background: var(--vscode-list-activeSelectionBackground);
+  background-color: var(--vscode-list-activeSelectionBackground);
   color: var(--vscode-list-activeSelectionForeground);
 }
 
@@ -309,8 +310,8 @@ body.dragging-rows {
 }
 
 @keyframes rowFlash {
-  from { background: var(--vscode-editor-findMatchHighlightBackground, rgba(128, 128, 128, 0.3)); }
-  to { background: transparent; }
+  from { background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(128, 128, 128, 0.3)); }
+  to { background-color: transparent; }
 }
 
 .row.found {
