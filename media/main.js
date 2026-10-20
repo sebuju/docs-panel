@@ -405,8 +405,11 @@
   }
 
   // Each row is measured as wide as it would be with nothing cut: its name and its tags
-  // at their own width, and the indent of the folders it is in. Only growing, the side is
-  // never made narrower than it is, unless asked to fit by a click on the divider.
+  // at their own width, and the indent of the folders it is in. A bucket's rows share
+  // their row of buckets, so the buckets are measured instead: laid across, each is as
+  // wide as the widest of them, and there are as many of those as stand in a row. Only
+  // growing, the side is never made narrower than it is, unless asked to fit by a click
+  // on the divider.
   function fitWidth(refit) {
     if (autoWidth === "off") {
       return;
@@ -419,7 +422,16 @@
     treeEl.classList.add("measuring");
     let right = 0;
     for (const row of rows) {
-      right = Math.max(right, row.getBoundingClientRect().right);
+      if (!row.closest(".buckets")) {
+        right = Math.max(right, row.getBoundingClientRect().right);
+      }
+    }
+    for (const grid of treeEl.querySelectorAll(".buckets")) {
+      const boxes = [...grid.children];
+      const widest = Math.max(0, ...boxes.map((box) => box.getBoundingClientRect().width));
+      const across = Math.min(boxes.length, Number(grid.style.getPropertyValue("--per-row")) || 1);
+      const gap = parseFloat(getComputedStyle(grid).columnGap) || 0;
+      right = Math.max(right, grid.getBoundingClientRect().left + across * widest + (across - 1) * gap);
     }
     treeEl.classList.remove("measuring");
     const box = treeEl.getBoundingClientRect();
@@ -616,12 +628,35 @@
     list.appendChild(trashItem(""));
     treeEl.appendChild(list);
     treeEl.scrollTop = top;
+    watchHeight(list);
     markCursor(document.activeElement === treeEl ? cursorRow() : null);
     fitWidth();
     fitTags();
     if (autoSize === "tree") {
       fitSide();
     }
+  }
+
+  // A list's height can change after it is drawn, when the fonts arrive and the rows are
+  // fitted to them, or when the contents wrap to a new width; the list auto sized is then
+  // fitted again.
+  const heightWatch = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.target.isConnected && entry.target.parentElement === (autoSize === "tree" ? treeEl : tocEl)) {
+        fitSide();
+        return;
+      }
+    }
+  });
+  const watched = { tree: null, toc: null };
+
+  function watchHeight(list) {
+    const key = list.parentElement === tocEl ? "toc" : "tree";
+    if (watched[key]) {
+      heightWatch.unobserve(watched[key]);
+    }
+    watched[key] = list;
+    heightWatch.observe(list);
   }
 
   // The trash keeps the folders its files came from, so every folder has a bin of its
@@ -3432,6 +3467,7 @@
       sections.push(section);
     }
     tocEl.appendChild(list);
+    watchHeight(list);
     applyToc();
     scheduleActive();
   }

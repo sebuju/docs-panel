@@ -1914,12 +1914,25 @@ img.single {
 
 /* A folder's tag buckets, at the head of what it holds. Laid across they share a row in
    columns of one width, each row as tall as its tallest; laid down, one to a row. */
+/* Indented as a row's own parts are, so a bucket's edge stands in line with the twisties
+   and dots of the rows beside it. */
 .buckets {
   --per-row: 2;
   display: grid;
   grid-template-columns: repeat(var(--per-row), minmax(0, 1fr));
   gap: 4px;
-  margin: 2px 0 4px;
+  margin: 2px 0 4px 10px;
+}
+
+/* For a moment, while the script finds the width the side needs: each bucket as wide as
+   its rows are with nothing cut, one under another. */
+#tree.measuring .buckets {
+  display: block;
+  width: max-content;
+}
+
+#tree.measuring .bucket {
+  width: max-content;
 }
 
 /* The box a bucket draws is the whole of it, heading and all, or, with the heading
@@ -1988,8 +2001,8 @@ img.single {
 }
 
 /* On the outline: the bucket is a fieldset, ringed by its own border so the line breaks
-   round the legend. A bar of colour is as wide as the box, border and all; a pill or a
-   name has a little room either side of it on the line. */
+   round the legend. A pill or a name has a little room either side of it on the line;
+   filled, the legend is a label of the tag's colour as tall as a row. */
 .buckets.head-over .bucket {
   min-width: 0;
   margin: 0;
@@ -2009,10 +2022,8 @@ img.single {
 }
 
 .buckets.head-fill.head-over .bucket-head {
-  width: calc(100% + 8px);
-  margin: 0 -4px;
-  padding: 0 7px;
-  border-radius: 4px;
+  padding: 0 6px;
+  border-radius: 3px;
 }
 
 /* Filled or plain, the heading is the tag's name in its style, with no pill round it;
