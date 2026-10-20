@@ -180,6 +180,17 @@ module.exports = [
     clip: side
   },
   {
+    name: "buckets-head-outside-fill",
+    state: { bucketHead: "outside", bucketHeadStyle: "fill", buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
+    clip: side
+  },
+  {
+    name: "buckets-head-inside-plain",
+    theme: "light-modern",
+    state: { bucketHeadStyle: "plain", buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
+    clip: side
+  },
+  {
     name: "buckets-picker",
     state: { buckets: { plans: { tags: ["plan", "blocked"], flow: "row", perRow: 2 } } },
     clip: menu,

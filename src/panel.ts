@@ -59,6 +59,13 @@ const AUTO_WIDTHS: AutoWidth[] = ["off", "on", "grow"];
 export type TagSide = "left" | "right";
 const TAG_SIDES: TagSide[] = ["left", "right"];
 
+// Where a bucket's heading stands, in its box or over it, and how it is drawn: as the
+// tag's pill, as a bar of the tag's colour across the top, or as the name alone.
+export type BucketHead = "inside" | "outside";
+const BUCKET_HEADS: BucketHead[] = ["inside", "outside"];
+export type BucketHeadStyle = "pill" | "fill" | "plain";
+const BUCKET_HEAD_STYLES: BucketHeadStyle[] = ["pill", "fill", "plain"];
+
 // A folder's tag buckets: the tags that have one, and whether they are laid across, so
 // many to a row, or down, one under the other.
 export interface Buckets {
@@ -96,6 +103,8 @@ export interface PanelState {
   // How a bucket is drawn: ringed in its tag's colour, and filled with a tint of it.
   bucketOutline: boolean;
   bucketFill: boolean;
+  bucketHead: BucketHead;
+  bucketHeadStyle: BucketHeadStyle;
   selected: string | null;
   // The files left in edit mode, which open in it again.
   editing: string[];
@@ -124,6 +133,8 @@ const DEFAULT_STATE: PanelState = {
   buckets: {},
   bucketOutline: true,
   bucketFill: false,
+  bucketHead: "inside",
+  bucketHeadStyle: "pill",
   selected: null,
   editing: [],
   scrolls: {}
@@ -1553,6 +1564,10 @@ function normalizeState(value: any): PanelState {
     buckets: normalizeBuckets(value?.buckets),
     bucketOutline: typeof value?.bucketOutline === "boolean" ? value.bucketOutline : DEFAULT_STATE.bucketOutline,
     bucketFill: typeof value?.bucketFill === "boolean" ? value.bucketFill : DEFAULT_STATE.bucketFill,
+    bucketHead: BUCKET_HEADS.includes(value?.bucketHead) ? value.bucketHead : DEFAULT_STATE.bucketHead,
+    bucketHeadStyle: BUCKET_HEAD_STYLES.includes(value?.bucketHeadStyle)
+      ? value.bucketHeadStyle
+      : DEFAULT_STATE.bucketHeadStyle,
     selected: typeof value?.selected === "string" ? value.selected : null,
     editing: Array.isArray(value?.editing) ? value.editing.map(String) : [],
     scrolls

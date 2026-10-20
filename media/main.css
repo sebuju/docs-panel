@@ -1922,27 +1922,86 @@ img.single {
   margin: 2px 0 4px;
 }
 
+/* The box a bucket draws is the whole of it, heading and all, or, with the heading
+   standing over it, only what is under the heading. */
 .bucket {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   border-radius: 4px;
   padding: 1px 3px 3px;
 }
 
-.buckets.outlined .bucket {
+.bucket-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.buckets.head-out .bucket {
+  padding: 0;
+}
+
+.buckets.head-out .bucket-body {
+  border-radius: 4px;
+  padding: 2px 3px 3px;
+}
+
+.buckets.outlined:not(.head-out) .bucket,
+.buckets.outlined.head-out .bucket-body {
   box-shadow: inset 0 0 0 1px var(--c);
 }
 
-.buckets.filled .bucket {
+.buckets.filled:not(.head-out) .bucket,
+.buckets.filled.head-out .bucket-body {
   background: color-mix(in srgb, var(--c) 14%, transparent);
 }
 
 .bucket-head {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 4px;
   height: var(--tree-row);
   padding: 2px 3px 0;
   overflow: hidden;
+}
+
+.buckets.head-out .bucket-head {
+  padding: 0 3px;
+  margin-bottom: 2px;
+}
+
+/* A bar of the tag's colour across the top: the box's own top, its corners and all, or a
+   bar of its own over the box. */
+.buckets.head-fill .bucket-head {
+  padding: 0 6px;
+  background: var(--c);
+}
+
+.buckets.head-fill:not(.head-out) .bucket-head {
+  margin: -1px -3px 2px;
+  border-radius: 4px 4px 0 0;
+}
+
+.buckets.head-fill.head-out .bucket-head {
+  border-radius: 4px;
+}
+
+/* Filled or plain, the heading is the tag's name in its style, with no pill round it;
+   plain, it is in the text's own colour. */
+.buckets:is(.head-fill, .head-plain) .bucket-head .tag {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.buckets.head-plain .bucket-head {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.buckets.head-plain .bucket-head .tag {
+  color: inherit;
 }
 
 .bucket-head .tag {

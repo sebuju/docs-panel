@@ -200,6 +200,12 @@
   const MAX_PER_ROW = 12;
   let bucketOutline = true;
   let bucketFill = false;
+  // Where a bucket's heading stands, in the box or over it, and how it is drawn: the tag's
+  // pill, a bar of its colour across the top, or the name alone.
+  let bucketHead = "inside";
+  const BUCKET_HEADS = ["inside", "outside"];
+  let bucketHeadStyle = "pill";
+  const BUCKET_HEAD_STYLES = ["pill", "fill", "plain"];
   // How far down each file was read, as a share of the way, oldest first.
   let scrolls = {};
   const MAX_SCROLLS = 300;
@@ -306,6 +312,12 @@
     if (typeof state.bucketFill === "boolean") {
       bucketFill = state.bucketFill;
     }
+    if (BUCKET_HEADS.includes(state.bucketHead)) {
+      bucketHead = state.bucketHead;
+    }
+    if (BUCKET_HEAD_STYLES.includes(state.bucketHeadStyle)) {
+      bucketHeadStyle = state.bucketHeadStyle;
+    }
     selected = typeof state.selected === "string" ? state.selected : null;
   }
 
@@ -331,6 +343,8 @@
       buckets: buckets,
       bucketOutline: bucketOutline,
       bucketFill: bucketFill,
+      bucketHead: bucketHead,
+      bucketHeadStyle: bucketHeadStyle,
       selected: selected,
       editing: [...editing],
       scrolls: scrolls
@@ -868,6 +882,8 @@
     grid.style.setProperty("--per-row", String(own.flow === "column" ? 1 : own.perRow));
     grid.classList.toggle("outlined", bucketOutline);
     grid.classList.toggle("filled", bucketFill);
+    grid.classList.toggle("head-out", bucketHead === "outside");
+    grid.classList.add("head-" + bucketHeadStyle);
     for (const [tag, files] of held) {
       const box = make("div", "bucket t-" + tagColor(tag));
       box.dataset.folder = at;
@@ -880,6 +896,10 @@
       });
       head.appendChild(pill);
       box.appendChild(head);
+      // The ring and the tint are drawn on the body: the whole bucket with its heading
+      // in it, or only what is under a heading standing over it.
+      const body = make("div", "bucket-body");
+      box.appendChild(body);
       const list = make("ul", "bucket-files");
       for (const node of files) {
         list.appendChild(nodeItem(node, true));
@@ -888,7 +908,7 @@
         const empty = make("li", "bucket-empty", "empty");
         list.appendChild(empty);
       }
-      box.appendChild(list);
+      body.appendChild(list);
       box.addEventListener("contextmenu", (event) => {
         if (event.target.closest(".row")) {
           return;
@@ -4161,6 +4181,20 @@
     optionRow(tree, "Tag bucket background", [
       optionChoice(["none", "tag colour"], bucketFill ? 1 : 0, (choice) => {
         bucketFill = choice === 1;
+        drawTree();
+        persist();
+      })
+    ]);
+    optionRow(tree, "Tag bucket heading placement", [
+      optionChoice(BUCKET_HEADS, BUCKET_HEADS.indexOf(bucketHead), (choice) => {
+        bucketHead = BUCKET_HEADS[choice];
+        drawTree();
+        persist();
+      })
+    ]);
+    optionRow(tree, "Tag bucket heading style", [
+      optionChoice(BUCKET_HEAD_STYLES, BUCKET_HEAD_STYLES.indexOf(bucketHeadStyle), (choice) => {
+        bucketHeadStyle = BUCKET_HEAD_STYLES[choice];
         drawTree();
         persist();
       })
