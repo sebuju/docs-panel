@@ -48,7 +48,7 @@ async function build(repo, out, themeName = "dark-modern", font = FONT, state = 
   const fullState = Object.assign(
     {
       split: 300, sideSplit: 0.62, textScale: 1, lineHeight: 1, mono: false, autoSize: "none",
-      autoWidth: false, tagSide: "right", hoverStrength: 40,
+      autoWidth: "off", tagSide: "right", hoverStrength: 40,
       expanded: ["plans", "notes"], pinned: [], selected: "plans/roadmap.md"
     },
     state

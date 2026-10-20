@@ -79,6 +79,12 @@ html, body {
   margin-left: -4px;
 }
 
+/* The search across the docs covers the pane but not the divider, so the bar's reach over
+   the divider would be left showing beside it as a grey strip. */
+#pane:has(> #finder:not([hidden])) > #header {
+  margin-left: 0;
+}
+
 /* The tree's own buttons sit in its top right corner and only show while the pointer is
    in that corner, so the list keeps its whole height. Hidden, they let the pointer
    through to the rows beneath; the script marks the corner, and their own hover keeps
@@ -329,6 +335,22 @@ body.dragging-rows {
   color: var(--vscode-textLink-foreground, #4c8eda);
 }
 
+/* A pinned file's pin stands in its dot's slot and is coloured and faded as the dot would
+   be: about as wide as the dot's glyph, and centred in the same box. */
+.dot.pinned::before {
+  content: none;
+}
+
+.dot.pinned svg {
+  display: block;
+  flex: none;
+  opacity: 0.85;
+}
+
+.dot.pinned.read svg {
+  opacity: 0.4;
+}
+
 /* The theme's own colours, under the names the extension stores, for files and folders. */
 .c-red { --c: var(--vscode-charts-red, #f14c4c); }
 .c-orange { --c: var(--vscode-charts-orange, #d18616); }
@@ -569,6 +591,24 @@ body.dragging-rows {
 
 #splitter:hover,
 body.dragging #splitter {
+  background: var(--vscode-focusBorder);
+}
+
+/* Sized by the panel, the divider is not dragged; only growing, a click on it fits the
+   side again. */
+body.width-auto #splitter {
+  cursor: default;
+}
+
+body.width-auto #splitter:hover {
+  background: transparent;
+}
+
+body.width-grow #splitter {
+  cursor: pointer;
+}
+
+body.width-grow #splitter:hover {
   background: var(--vscode-focusBorder);
 }
 
@@ -915,9 +955,19 @@ body.dragging {
     var(--vscode-foreground, currentColor) calc(var(--block-light, 0.4) * 16%),
     transparent
   );
+  /* The reach past the block is two shadows, so it can reach further one way than the
+     other; where they overlap a see-through colour would darken, so theirs is the same
+     tint already laid on the page's background. */
+  --block-reach-colour: color-mix(
+    in srgb,
+    var(--vscode-foreground, currentColor) calc(var(--block-light, 0.4) * 16%),
+    var(--vscode-editor-background, #1e1e1e)
+  );
   border-radius: 3px;
   background-image: linear-gradient(var(--block-light-colour), var(--block-light-colour));
-  box-shadow: 0 0 0 var(--block-pad, 4px) var(--block-light-colour);
+  box-shadow:
+    var(--block-pad-dx, 0px) var(--block-pad-dy, 0px) 0 var(--block-pad, 4px) var(--block-reach-colour),
+    calc(-1 * var(--block-pad-dx, 0px)) calc(-1 * var(--block-pad-dy, 0px)) 0 var(--block-pad, 4px) var(--block-reach-colour);
 }
 
 /* A table is lit a row at a time, through its cells: a row draws neither the image nor
@@ -1411,6 +1461,24 @@ img.single {
   line-height: 15px;
 }
 
+/* Every tag's letters stand in a box as wide as the widest, set by the script, so the
+   names after them start on one line. */
+.opt-letters {
+  display: flex;
+  flex: none;
+  align-self: stretch;
+}
+
+/* The tags Prune would remove, while the pointer is on it. */
+.opt-tag.pruning {
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f85149) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-errorForeground, #f85149) 55%, transparent);
+}
+
+.opt-tag.pruning .opt-rename {
+  text-decoration: line-through;
+}
+
 /* A tag's letters in the options, the pill the tree shows them in, and the way to its
    colour and letters. */
 .opt-short {
@@ -1428,8 +1496,13 @@ img.single {
   text-decoration: underline;
 }
 
-/* A row is dragged to move its tag in the order; where it would land is a line. */
+/* A row is dragged to move its tag in the order; where it would land is a line. It
+   reaches a little past the column the other rows stand in, so a mark on it has room
+   either side, and its own padding gives the room back. */
 .opt-tag {
+  margin: 0 -8px;
+  padding: 2px 8px;
+  border-radius: 3px;
   cursor: grab;
 }
 
@@ -1582,6 +1655,18 @@ img.single {
 .opt-button.opt-step {
   flex: 1 1 0;
   padding: 0;
+}
+
+/* Four buttons in the room of two: two pairs of 23px buttons, 6px apart within a pair
+   and 8px between the pairs, 112px in all. */
+.opt-steps.opt-steps-four {
+  gap: 8px;
+}
+
+.opt-pair {
+  display: flex;
+  flex: 1 1 0;
+  gap: 6px;
 }
 
 .opt-step svg {
@@ -1809,14 +1894,139 @@ img.single {
   background: rgba(128, 128, 128, 0.75);
 }
 
+/* The tree's bar runs down the side's own edge, against the file bar beyond the divider. */
+#side > .bar {
+  right: 0;
+}
+
 .row.dragged {
   opacity: 0.45;
 }
 
 /* The folder taking the drop is outlined; the tree itself is the docs root. */
 .row.drop,
+.bucket.drop,
 #tree.drop {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: -1px;
   border-radius: 3px;
+}
+
+/* A folder's tag buckets, at the head of what it holds. Laid across they share a row in
+   columns of one width, each row as tall as its tallest; laid down, one to a row. */
+.buckets {
+  --per-row: 2;
+  display: grid;
+  grid-template-columns: repeat(var(--per-row), minmax(0, 1fr));
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+
+.bucket {
+  min-width: 0;
+  border-radius: 4px;
+  padding: 1px 3px 3px;
+}
+
+.buckets.outlined .bucket {
+  box-shadow: inset 0 0 0 1px var(--c);
+}
+
+.buckets.filled .bucket {
+  background: color-mix(in srgb, var(--c) 14%, transparent);
+}
+
+.bucket-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--tree-row);
+  padding: 2px 3px 0;
+  overflow: hidden;
+}
+
+.bucket-head .tag {
+  --pill: var(--tree-pill);
+  --room: var(--tree-row);
+  align-self: flex-start;
+  margin-top: var(--tag-top, calc((var(--room) - var(--pill)) / 2));
+  cursor: pointer;
+}
+
+#tree ul.bucket-files {
+  padding: 0;
+}
+
+.bucket .row {
+  padding: 2px 6px;
+}
+
+.bucket-empty {
+  padding: 0 8px;
+  line-height: var(--tree-row);
+  font-style: italic;
+  opacity: 0.45;
+}
+
+/* Under a bucket picker's tags: which way the buckets are laid, and how many to a row. */
+#tagPickerFoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  font-size: 0.9em;
+}
+
+#tagPickerFoot[hidden] {
+  display: none;
+}
+
+.bucket-flow {
+  display: flex;
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bucket-flow-button {
+  border: none;
+  padding: 2px 8px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.bucket-flow-button:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.bucket-flow-button.active {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+  background: var(--vscode-inputOption-activeBackground, rgba(0, 127, 212, 0.4));
+}
+
+.bucket-per-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.85;
+}
+
+.bucket-per-row input {
+  width: 42px;
+  box-sizing: border-box;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 1px 4px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  font: inherit;
+}
+
+.bucket-per-row input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
 }

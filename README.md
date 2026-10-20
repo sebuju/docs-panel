@@ -29,7 +29,8 @@ Then run **Docs Panel: Open** from the command palette.
 | Tag a file | `+` in the file bar, `Ctrl`+click it in the tree, or **Tags…** in the tree's menu; type to find or add a tag |
 | Search by a tag | Click the tag in the tree; with the search up it takes the place of the tag searched for, and with `Shift` held it is added to them |
 | Colour a file or folder | **Colour…** in the tree's menu |
-| Pin a file or folder | **Pin to top** in the tree's menu |
+| Pin a file or folder | **Pin to top** in the tree's menu; a pinned file's pin takes the place of its dot |
+| Sort a folder's files into tag buckets | **Tag buckets…** in a folder's menu; see below |
 | Open in a browser | **Open in browser** in a file's menu in the tree |
 | Find in the page | `Ctrl+F`, which starts from the selected text if there is any; `Up` / `Down` or `Enter` / `Shift+Enter` step through the hits |
 | Find a word | Right click it in the page: **Find “word”**, or **Find “word” in all docs** |
@@ -41,7 +42,8 @@ Then run **Docs Panel: Open** from the command palette.
 | Move the divider | Drag it; the position is remembered |
 | Come back to a file | Each file opens where it was left, as a share of the way down, so an edited file opens near the same place |
 | Size a list to fit | Right click the divider between the files and the toc: auto size the files, the toc, or neither |
-| Size the side to fit | Right click the divider between the side and the page: auto size the side's width to the files, or not |
+| Hide the toc | Right click the divider between the files and the toc: **Show toc**; it comes back from the options |
+| Size the side to fit | Right click the divider between the side and the page: auto size the side's width to the files, auto size it only growing, or neither. While it is auto sized the divider is not dragged; only growing, a click on it fits the side to the files again |
 
 ## Keys in the tree
 
@@ -88,19 +90,44 @@ a space or a comma in it is quoted: `tag:"to do"`.
 
 ## Options
 
-The options hold the reading settings (text size, line spacing, font, which list's height
-is auto sized, whether the side's width is, how strongly the Markdown block under the
-pointer is lit, where off turns the light off, how far the light reaches past the block,
-and how many of a file's mentions show before **Show more**, where off turns the mentions
-off), the tree's (its own text size, and which side of a name the tags are drawn on), the
-tags, and the data files the panel writes, each with its size and a button to purge it.
+The options hold the reading settings (text size, line spacing, font, whether the
+contents list shows, which list's height is auto sized and the least share of the side
+the other list keeps, whether the side's width is auto sized and whether only to grow,
+how strongly the Markdown block under the pointer is lit, where off turns the light off,
+how far the light reaches past the block above and below it and either side of it, and
+how many of a file's mentions show before **Show more**, where off turns the mentions
+off), the tree's (its own text size, which side of a name the tags are drawn on, and
+whether tag buckets are outlined and tinted in their tag's colour), the tags, and the data
+files the panel writes, each with its size and a button to purge it.
 
 Each tag is a row: its letters, which open a menu for its colour and its letters; its
 name, which renames it when clicked; its style, any of bold, italic, underline, white
 text and square corners, and one or two characters to put the name between (`[]` draws
 `[plan]`); and **Delete**. Drag a row to move the tag: every list of tags, in the tree,
 the file bar, the tag picker and the search, follows this order. **Prune**, under the
-tags, removes the tags no file has, and shows only while there are some.
+tags, removes the tags no file has, and shows only while there are some; with the pointer
+on it the tags it would remove are marked.
+
+## Tag buckets
+
+**Tag buckets…** in a folder's menu picks the tags that have a bucket in that folder. The
+buckets stand at the head of the folder, in the order of the tags, each headed by its tag
+and ringed in its colour. A file directly in the folder goes in the bucket of the first of
+its tags, in that order, that has one; it shows there without its tags, which the file bar
+still shows, and pinned files come first. The folder's other files follow the buckets as
+usual.
+
+| Drag a file | Does |
+|---|---|
+| From one bucket to another | Takes off the first bucket's tag and puts on the second's |
+| From a bucket to the folder's other files | Takes off the bucket's tag |
+| From the folder's other files to a bucket | Puts on the bucket's tag |
+| From another folder to a bucket | Moves the file into the folder and puts on the bucket's tag |
+
+Under the tags the picker sets the layout: **Across**, so many buckets to a row, each as
+wide as the others and as tall as the tallest in its row, or **Down**, one under another.
+The buckets and their layout are kept for each folder, and follow it when it is renamed
+or moved.
 
 ## Settings
 

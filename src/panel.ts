@@ -51,9 +51,22 @@ const MAX_SCROLLS = 300;
 export type AutoSize = "none" | "tree" | "toc";
 const AUTO_SIZES: AutoSize[] = ["none", "tree", "toc"];
 
+// Whether the side's width follows the tree: not at all, exactly, or only ever wider.
+export type AutoWidth = "off" | "on" | "grow";
+const AUTO_WIDTHS: AutoWidth[] = ["off", "on", "grow"];
+
 // Which side of a file's name its tags are drawn on in the tree.
 export type TagSide = "left" | "right";
 const TAG_SIDES: TagSide[] = ["left", "right"];
+
+// A folder's tag buckets: the tags that have one, and whether they are laid across, so
+// many to a row, or down, one under the other.
+export interface Buckets {
+  tags: string[];
+  flow: "row" | "column";
+  perRow: number;
+}
+const MAX_PER_ROW = 12;
 
 export interface PanelState {
   split: number;
@@ -63,15 +76,26 @@ export interface PanelState {
   lineHeight: number;
   mono: boolean;
   autoSize: AutoSize;
-  autoWidth: boolean;
+  // The least share of the side, in percent, the list an auto size squeezes is left.
+  autoMin: number;
+  autoWidth: AutoWidth;
+  // Whether the contents list shows under the tree at all.
+  showToc: boolean;
   tagSide: TagSide;
   hoverStrength: number;
-  // How far the block light reaches past the block, in pixels.
-  blockPad: number;
+  // How far the block light reaches past the block, in pixels, above and below it and
+  // either side of it.
+  blockPadY: number;
+  blockPadX: number;
   // How many of the newest mentions a file shows before "Show more"; none turns them off.
   mentionLines: number;
   expanded: string[];
   pinned: string[];
+  // The tag buckets of each folder that has some, by its path.
+  buckets: Record<string, Buckets>;
+  // How a bucket is drawn: ringed in its tag's colour, and filled with a tint of it.
+  bucketOutline: boolean;
+  bucketFill: boolean;
   selected: string | null;
   // The files left in edit mode, which open in it again.
   editing: string[];
@@ -87,13 +111,19 @@ const DEFAULT_STATE: PanelState = {
   lineHeight: 1,
   mono: false,
   autoSize: "none",
-  autoWidth: false,
+  autoMin: 25,
+  autoWidth: "off",
+  showToc: true,
   tagSide: "right",
   hoverStrength: 40,
-  blockPad: 4,
+  blockPadY: 4,
+  blockPadX: 4,
   mentionLines: 5,
   expanded: [],
   pinned: [],
+  buckets: {},
+  bucketOutline: true,
+  bucketFill: false,
   selected: null,
   editing: [],
   scrolls: {}
@@ -406,7 +436,7 @@ export class DocsPanel {
         await this.clone(String(message.path), !!message.dir);
         return;
       case "relocate":
-        await this.relocate(String(message.from), String(message.to), !!message.dir);
+        await this.relocate(String(message.from), String(message.to), !!message.dir, cleanTag(message.tag));
         return;
       case "reveal":
         await this.reveal(String(message.path));
@@ -497,6 +527,12 @@ export class DocsPanel {
     if (next === undefined || cleanTag(next) === name) {
       return;
     }
+    // The buckets name their tags, so they follow the tag to its new name.
+    const to = cleanTag(next);
+    for (const buckets of Object.values(this.state.buckets)) {
+      buckets.tags = [...new Set(buckets.tags.map((tag) => (tag === name ? to : tag)))];
+    }
+    this.post({ type: "tagRenamed", from: name, to });
     this.postMarks(await renameTag(marksLedger(this.root.uri), name, next));
   }
 
@@ -967,8 +1003,9 @@ export class DocsPanel {
   }
 
   // A drag drops one entry into one folder; "" is the root. The ledger keys of a folder's
-  // files are read before the move, because afterwards the old paths are gone.
-  private async relocate(from: string, to: string, dir: boolean): Promise<void> {
+  // files are read before the move, because afterwards the old paths are gone. A file
+  // dropped in one of the folder's tag buckets takes the bucket's tag as it lands.
+  private async relocate(from: string, to: string, dir: boolean, tag = ""): Promise<void> {
     const root = this.root?.uri;
     const parent = from.split("/").slice(0, -1).join("/");
     if (!root || to === parent || to === from || to.startsWith(`${from}/`)) {
@@ -991,6 +1028,13 @@ export class DocsPanel {
           await rekeyFolders(spec, from, toPath);
         } else {
           await rekey(spec, from, toPath);
+        }
+      }
+      if (tag && !dir) {
+        const spec = marksLedger(root);
+        const own = (await load(spec)).files[toPath]?.tags ?? [];
+        if (!own.includes(tag)) {
+          await setTags(spec, toPath, [...own, tag]);
         }
       }
       this.repin(from, toPath);
@@ -1130,11 +1174,20 @@ export class DocsPanel {
   }
 
   // A pin names a path, and a renamed or moved file no longer answers to the one it was
-  // pinned under, so the pins follow it the way the ledgers do.
+  // pinned under, so the pins follow it the way the ledgers do; so do the open folders and
+  // the buckets. The page is told first: whatever it sends back after this, a rename or a
+  // move it hears of next among them, must carry the new paths, not the ones it had.
   private repin(from: string, to: string): void {
-    this.state.pinned = this.state.pinned.map((path) =>
-      path === from ? to : path.startsWith(`${from}/`) ? to + path.slice(from.length) : path
-    );
+    const move = (path: string) =>
+      path === from ? to : path.startsWith(`${from}/`) ? to + path.slice(from.length) : path;
+    this.state.pinned = this.state.pinned.map(move);
+    this.state.expanded = this.state.expanded.map(move);
+    const buckets: Record<string, Buckets> = {};
+    for (const [path, value] of Object.entries(this.state.buckets)) {
+      buckets[move(path)] = value;
+    }
+    this.state.buckets = buckets;
+    this.post({ type: "repath", from, to });
   }
 
   // The reading pane cannot show a file that has just been moved out from under it.
@@ -1312,6 +1365,7 @@ export class DocsPanel {
   <div id="tagPickerTitle"></div>
   <input id="tagInput" type="text" placeholder="Find or add a tag" spellcheck="false">
   <div id="tagList"></div>
+  <div id="tagPickerFoot" hidden></div>
 </div>
 <div id="optionsLayer" hidden>
   <div id="optionsDialog" role="dialog" aria-label="Docs Panel options" tabindex="-1">
@@ -1452,7 +1506,11 @@ function normalizeState(value: any): PanelState {
   const treeScale = Number(value?.treeScale);
   const lineHeight = Number(value?.lineHeight);
   const hoverStrength = Number(value?.hoverStrength);
+  // One padding, before it was split in two, stands for both.
   const blockPad = Number(value?.blockPad);
+  const blockPadY = Number(value?.blockPadY ?? blockPad);
+  const blockPadX = Number(value?.blockPadX ?? blockPad);
+  const autoMin = Number(value?.autoMin);
   const mentionLines = Number(value?.mentionLines);
   const scrolls: Record<string, number> = {};
   for (const [path, ratio] of Object.entries(value?.scrolls ?? {}).slice(-MAX_SCROLLS)) {
@@ -1473,21 +1531,53 @@ function normalizeState(value: any): PanelState {
       : value?.tocAuto === true
         ? "toc"
         : DEFAULT_STATE.autoSize,
-    autoWidth: typeof value?.autoWidth === "boolean" ? value.autoWidth : DEFAULT_STATE.autoWidth,
+    autoMin: Number.isFinite(autoMin) ? Math.min(Math.max(Math.round(autoMin), 0), 50) : DEFAULT_STATE.autoMin,
+    // Before it could only grow, the width was sized or not.
+    autoWidth: AUTO_WIDTHS.includes(value?.autoWidth)
+      ? value.autoWidth
+      : value?.autoWidth === true
+        ? "on"
+        : DEFAULT_STATE.autoWidth,
+    showToc: typeof value?.showToc === "boolean" ? value.showToc : DEFAULT_STATE.showToc,
     tagSide: TAG_SIDES.includes(value?.tagSide) ? value.tagSide : DEFAULT_STATE.tagSide,
     hoverStrength: Number.isFinite(hoverStrength)
       ? Math.min(Math.max(hoverStrength, 0), 100)
       : DEFAULT_STATE.hoverStrength,
-    blockPad: Number.isFinite(blockPad) ? Math.min(Math.max(Math.round(blockPad), 0), 16) : DEFAULT_STATE.blockPad,
+    blockPadY: Number.isFinite(blockPadY) ? Math.min(Math.max(Math.round(blockPadY), 0), 16) : DEFAULT_STATE.blockPadY,
+    blockPadX: Number.isFinite(blockPadX) ? Math.min(Math.max(Math.round(blockPadX), 0), 16) : DEFAULT_STATE.blockPadX,
     mentionLines: Number.isFinite(mentionLines)
       ? Math.min(Math.max(Math.round(mentionLines), 0), 100)
       : DEFAULT_STATE.mentionLines,
     expanded: Array.isArray(value?.expanded) ? value.expanded.map(String) : [],
     pinned: Array.isArray(value?.pinned) ? value.pinned.map(String) : [],
+    buckets: normalizeBuckets(value?.buckets),
+    bucketOutline: typeof value?.bucketOutline === "boolean" ? value.bucketOutline : DEFAULT_STATE.bucketOutline,
+    bucketFill: typeof value?.bucketFill === "boolean" ? value.bucketFill : DEFAULT_STATE.bucketFill,
     selected: typeof value?.selected === "string" ? value.selected : null,
     editing: Array.isArray(value?.editing) ? value.editing.map(String) : [],
     scrolls
   };
+}
+
+// A folder keeps its buckets only while it has a tag with one.
+function normalizeBuckets(value: unknown): Record<string, Buckets> {
+  const out: Record<string, Buckets> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return out;
+  }
+  for (const [path, raw] of Object.entries(value as Record<string, any>)) {
+    const tags = Array.isArray(raw?.tags) ? [...new Set(raw.tags.map(String))] as string[] : [];
+    if (!tags.length) {
+      continue;
+    }
+    const perRow = Number(raw?.perRow);
+    out[path] = {
+      tags,
+      flow: raw?.flow === "column" ? "column" : "row",
+      perRow: Number.isFinite(perRow) ? Math.min(Math.max(Math.round(perRow), 1), MAX_PER_ROW) : 2
+    };
+  }
+  return out;
 }
 
 function makeNonce(): string {

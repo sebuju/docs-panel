@@ -42,6 +42,7 @@
   const tagPickerTitleEl = document.getElementById("tagPickerTitle");
   const tagInputEl = document.getElementById("tagInput");
   const tagListEl = document.getElementById("tagList");
+  const tagPickerFootEl = document.getElementById("tagPickerFoot");
   const optionsLayerEl = document.getElementById("optionsLayer");
   const optionsDialogEl = document.getElementById("optionsDialog");
   const optionsHeadEl = document.getElementById("optionsHead");
@@ -165,17 +166,28 @@
   let autoSize = "none";
   const AUTO_SIZES = ["none", "tree", "toc"];
   const AUTO_LABELS = ["off", "files", "toc"];
+  // The least share of the side, in percent, an auto size leaves the list it squeezes.
+  let autoMin = 25;
+  const AUTO_MIN_STEP = 5;
+  const MAX_AUTO_MIN = 50;
   // The side's width follows the widest row of the tree, so no name is cut short; past
-  // half the window the page would be squeezed, so it stops there.
-  let autoWidth = false;
+  // half the window the page would be squeezed, so it stops there. "grow" only ever
+  // widens it, and a click on the divider fits it again.
+  let autoWidth = "off";
+  const AUTO_WIDTHS = ["off", "on", "grow"];
+  const AUTO_WIDTH_LABELS = ["off", "on", "only grow"];
   const FIT_WIDTH_SHARE = 0.5;
+  // Whether the contents list shows under the tree.
+  let showToc = true;
   // Which side of a file's name its tags are drawn on in the tree.
   let tagSide = "right";
   const TAG_SIDES = ["left", "right"];
   let hoverStrength = 40;
   const HOVER_STEP = 10;
-  // How far the block light reaches past the block's own edges.
-  let blockPad = 4;
+  // How far the block light reaches past the block's own edges: above and below it, and
+  // either side of it.
+  let blockPadY = 4;
+  let blockPadX = 4;
   const MAX_BLOCK_PAD = 16;
   // How many of a file's newest mentions show before the rest wait behind a button; none
   // turns the mentions off.
@@ -183,6 +195,11 @@
   const MAX_MENTION_LINES = 100;
   // The files left in edit mode, which open in it again.
   let editing = new Set();
+  // Each folder's tag buckets, by its path: the tags with one, and how they are laid out.
+  let buckets = {};
+  const MAX_PER_ROW = 12;
+  let bucketOutline = true;
+  let bucketFill = false;
   // How far down each file was read, as a share of the way, oldest first.
   let scrolls = {};
   const MAX_SCROLLS = 300;
@@ -211,8 +228,9 @@
   setLineHeight(lineHeight);
   setMono(mono);
   setHoverStrength(hoverStrength);
-  setBlockPad(blockPad);
+  setBlockPad(blockPadY, blockPadX);
   setTagSide(tagSide);
+  markAutoWidth();
 
   function applyState(state) {
     if (typeof state.split === "number") {
@@ -238,8 +256,16 @@
     } else if (state.tocAuto === true) {
       autoSize = "toc";
     }
-    if (typeof state.autoWidth === "boolean") {
+    if (typeof state.autoMin === "number") {
+      autoMin = state.autoMin;
+    }
+    if (AUTO_WIDTHS.includes(state.autoWidth)) {
       autoWidth = state.autoWidth;
+    } else if (typeof state.autoWidth === "boolean") {
+      autoWidth = state.autoWidth ? "on" : "off";
+    }
+    if (typeof state.showToc === "boolean") {
+      showToc = state.showToc;
     }
     if (TAG_SIDES.includes(state.tagSide)) {
       tagSide = state.tagSide;
@@ -248,7 +274,13 @@
       hoverStrength = state.hoverStrength;
     }
     if (typeof state.blockPad === "number") {
-      blockPad = state.blockPad;
+      blockPadY = blockPadX = state.blockPad;
+    }
+    if (typeof state.blockPadY === "number") {
+      blockPadY = state.blockPadY;
+    }
+    if (typeof state.blockPadX === "number") {
+      blockPadX = state.blockPadX;
     }
     if (typeof state.mentionLines === "number") {
       mentionLines = state.mentionLines;
@@ -265,6 +297,15 @@
     if (Array.isArray(state.pinned)) {
       pinned = new Set(state.pinned);
     }
+    if (state.buckets && typeof state.buckets === "object") {
+      buckets = Object.assign({}, state.buckets);
+    }
+    if (typeof state.bucketOutline === "boolean") {
+      bucketOutline = state.bucketOutline;
+    }
+    if (typeof state.bucketFill === "boolean") {
+      bucketFill = state.bucketFill;
+    }
     selected = typeof state.selected === "string" ? state.selected : null;
   }
 
@@ -277,13 +318,19 @@
       lineHeight: lineHeight,
       mono: mono,
       autoSize: autoSize,
+      autoMin: autoMin,
       autoWidth: autoWidth,
+      showToc: showToc,
       tagSide: tagSide,
       hoverStrength: hoverStrength,
-      blockPad: blockPad,
+      blockPadY: blockPadY,
+      blockPadX: blockPadX,
       mentionLines: mentionLines,
       expanded: [...expanded],
       pinned: [...pinned],
+      buckets: buckets,
+      bucketOutline: bucketOutline,
+      bucketFill: bucketFill,
       selected: selected,
       editing: [...editing],
       scrolls: scrolls
@@ -311,11 +358,9 @@
     refreshBars();
   }
 
-  const FIT_MAX_SHARE = 0.75;
-
   // Auto size gives one list, the files or the contents, exactly the height its entries
-  // need, so it never scrolls; past three quarters of the side the other one would be
-  // squeezed out, so it stops there.
+  // need, so it never scrolls; it stops short of squeezing the other one below the least
+  // share the options give it.
   function fitSide() {
     const pane = autoSize === "tree" ? treeEl : autoSize === "toc" ? tocEl : null;
     const list = pane && pane.querySelector(":scope > ul");
@@ -327,7 +372,7 @@
     // The list inside it is not a scroller, and its height is the height actually wanted.
     const style = getComputedStyle(pane);
     const pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-    const wanted = Math.min(FIT_MAX_SHARE, (list.getBoundingClientRect().height + pad + 3) / (sideBodyEl.clientHeight || 1));
+    const wanted = Math.min(1 - autoMin / 100, (list.getBoundingClientRect().height + pad + 3) / (sideBodyEl.clientHeight || 1));
     setSideSplit(autoSize === "tree" ? wanted : 1 - wanted);
   }
 
@@ -337,10 +382,18 @@
     persist();
   }
 
+  function stepAutoMin(delta) {
+    autoMin = Math.min(Math.max(autoMin + delta, 0), MAX_AUTO_MIN);
+    fitSide();
+    persist();
+    drawOptions();
+  }
+
   // Each row is measured as wide as it would be with nothing cut: its name and its tags
-  // at their own width, and the indent of the folders it is in.
-  function fitWidth() {
-    if (!autoWidth) {
+  // at their own width, and the indent of the folders it is in. Only growing, the side is
+  // never made narrower than it is, unless asked to fit by a click on the divider.
+  function fitWidth(refit) {
+    if (autoWidth === "off") {
       return;
     }
     const rows = treeEl.querySelectorAll(".row");
@@ -356,7 +409,8 @@
     treeEl.classList.remove("measuring");
     const box = treeEl.getBoundingClientRect();
     const wanted = right - box.left + parseFloat(getComputedStyle(treeEl).paddingRight);
-    setSplit(Math.min(Math.ceil(wanted), Math.floor(window.innerWidth * FIT_WIDTH_SHARE)));
+    const fit = Math.min(Math.ceil(wanted), Math.floor(window.innerWidth * FIT_WIDTH_SHARE));
+    setSplit(autoWidth === "grow" && !refit ? Math.max(split, fit) : fit);
     // The contents wrap to the width they are given, so their height is found again.
     if (autoSize === "toc") {
       fitSide();
@@ -364,9 +418,18 @@
   }
 
   function setAutoWidth(value) {
-    autoWidth = !!value;
-    fitWidth();
+    autoWidth = AUTO_WIDTHS.includes(value) ? value : "off";
+    markAutoWidth();
+    fitWidth(true);
     persist();
+  }
+
+  // While the width is sized for it the divider cannot be dragged; only growing, a click
+  // on it fits the side to the files again.
+  function markAutoWidth() {
+    document.body.classList.toggle("width-auto", autoWidth !== "off");
+    document.body.classList.toggle("width-grow", autoWidth === "grow");
+    splitter.title = autoWidth === "grow" ? "Click to fit the side to the files" : "";
   }
 
   // One scale for every file, so the reading size is a property of the panel.
@@ -407,9 +470,18 @@
     layout.style.setProperty("--block-light", String(hoverStrength / 100));
   }
 
-  function setBlockPad(value) {
-    blockPad = Math.min(Math.max(Math.round(value) || 0, 0), MAX_BLOCK_PAD);
-    layout.style.setProperty("--block-pad", blockPad + "px");
+  // A shadow spreads as far every way, so a light reaching further one way than the other
+  // is two shadows, each the nearer reach, pushed apart along the further one. Overlapping
+  // they would darken where they meet, so their colour is solid, the tint already mixed
+  // into the page's own background.
+  function setBlockPad(y, x) {
+    const clamp = (value) => Math.min(Math.max(Math.round(value) || 0, 0), MAX_BLOCK_PAD);
+    blockPadY = clamp(y);
+    blockPadX = clamp(x);
+    const spread = Math.min(blockPadX, blockPadY);
+    layout.style.setProperty("--block-pad", spread + "px");
+    layout.style.setProperty("--block-pad-dx", blockPadX - spread + "px");
+    layout.style.setProperty("--block-pad-dy", blockPadY - spread + "px");
   }
 
   function setMono(value) {
@@ -620,7 +692,9 @@
     vscode.postMessage({ type: type, at: at });
   }
 
-  function buildList(items, text) {
+  // "at" is the folder the list is the inside of, when it is one, so its buckets, if it
+  // has any, are put at the head of it; the files they take are not listed again below.
+  function buildList(items, text, at) {
     const ul = document.createElement("ul");
     if (text) {
       const li = document.createElement("li");
@@ -631,119 +705,202 @@
       ul.appendChild(li);
       return ul;
     }
-    for (const node of sortPinned(items)) {
-      const li = document.createElement("li");
-      const row = document.createElement("div");
-      row.className = "row";
-      row.dataset.path = node.path;
-      row.dataset.dir = node.dir ? "1" : "";
-      row.dataset.open = node.dir && expanded.has(node.path) ? "1" : "";
-      row.draggable = true;
-
-      // A file has no twisty, so the dot takes that slot and costs the row no width.
-      if (node.dir) {
-        const twisty = document.createElement("span");
-        twisty.className = "twisty";
-        twisty.textContent = expanded.has(node.path) ? "▾" : "▸";
-        row.appendChild(twisty);
-      } else {
-        const dot = document.createElement("span");
-        const noted = (mentions[node.path] || []).length;
-        const seen = reads.has(node.path);
-        dot.className = seen ? "dot read" : noted ? "dot noted" : "dot";
-        dot.title = seen ? "Read" : noted ? "Talked about " + noted + " times" : "Not read yet";
-        row.appendChild(dot);
-      }
-
-      const label = document.createElement("span");
-      label.className = "label";
-      label.textContent = node.name;
-      row.appendChild(label);
-
-      if (colors[node.path]) {
-        row.classList.add("colored", "c-" + colors[node.path]);
-      }
-
-      if (pinned.has(node.path)) {
-        const pin = document.createElement("span");
-        pin.className = "pin";
-        pin.title = "Pinned";
-        pin.innerHTML = PIN_ICON;
-        row.appendChild(pin);
-      }
-
-      if (!node.dir && node.path === selected) {
-        row.classList.add("selected");
-      }
-      if (!node.dir && drafts.has(node.path)) {
-        row.classList.add("unsaved");
-      }
-      if (!node.dir && (tags[node.path] || []).length) {
-        const box = document.createElement("span");
-        box.className = "tags";
-        for (const tag of byOrder(tags[node.path])) {
-          const pill = tagPill(tag);
-          pill.addEventListener("click", (event) => {
-            event.stopPropagation();
-            searchTag(tag, event.shiftKey);
-          });
-          box.appendChild(pill);
+    let rest = sortPinned(items);
+    const kept = at === undefined ? [] : bucketTags(at);
+    if (kept.length) {
+      const held = new Map(kept.map((tag) => [tag, []]));
+      rest = rest.filter((node) => {
+        const tag = node.dir ? null : bucketOf(node.path, kept);
+        if (tag) {
+          held.get(tag).push(node);
         }
-        row.appendChild(box);
-      }
-
-      // With Ctrl held a file's tags come up where it was clicked, and the file stays shut.
-      row.addEventListener("click", (event) => {
-        if (!node.dir && (event.ctrlKey || event.metaKey) && !inTrash(node.path)) {
-          openTagPicker(node.path, event.clientX, event.clientY);
-          return;
-        }
-        if (node.dir) {
-          if (expanded.has(node.path)) {
-            expanded.delete(node.path);
-          } else {
-            expanded.add(node.path);
-          }
-          drawTree();
-          persist();
-        } else {
-          openFile(node.path);
-        }
+        return !tag;
       });
-
-      row.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        openMenu(event.clientX, event.clientY, nodeMenu(node, event.clientX, event.clientY));
-      });
-
-      row.addEventListener("dragstart", (event) => {
-        dragging = { path: node.path, dir: !!node.dir };
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", node.path);
-        row.classList.add("dragged");
-      });
-
-      row.addEventListener("dragend", () => {
-        dragging = null;
-        row.classList.remove("dragged");
-        highlightDrop(null);
-      });
-
-      li.appendChild(row);
-      if (node.dir && expanded.has(node.path)) {
-        const children = node.children || [];
-        const binned = inTrash(node.path) ? [] : trashFor(node.path);
-        if (children.length || binned.length) {
-          const inner = buildList(children);
-          if (binned.length) {
-            inner.appendChild(trashItem(node.path));
-          }
-          li.appendChild(inner);
-        }
-      }
-      ul.appendChild(li);
+      ul.appendChild(bucketItem(at, held));
+    }
+    for (const node of rest) {
+      ul.appendChild(nodeItem(node, false));
     }
     return ul;
+  }
+
+  // One entry of the tree: its row and, for an open folder, what it holds. A file in a
+  // bucket is "bare": the bucket is its tag, so its tags are not drawn again.
+  function nodeItem(node, bare) {
+    const li = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "row";
+    row.dataset.path = node.path;
+    row.dataset.dir = node.dir ? "1" : "";
+    row.dataset.open = node.dir && expanded.has(node.path) ? "1" : "";
+    row.draggable = true;
+
+    // A file has no twisty, so the dot takes that slot and costs the row no width. A pin
+    // takes the dot's place, and its colour says what the dot's would.
+    if (node.dir) {
+      const twisty = document.createElement("span");
+      twisty.className = "twisty";
+      twisty.textContent = expanded.has(node.path) ? "▾" : "▸";
+      row.appendChild(twisty);
+    } else {
+      const dot = document.createElement("span");
+      const noted = (mentions[node.path] || []).length;
+      const seen = reads.has(node.path);
+      dot.className = seen ? "dot read" : noted ? "dot noted" : "dot";
+      dot.title = seen ? "Read" : noted ? "Talked about " + noted + " times" : "Not read yet";
+      if (pinned.has(node.path)) {
+        dot.classList.add("pinned");
+        dot.innerHTML = PIN_ICON;
+        dot.title = "Pinned, " + dot.title.toLowerCase();
+      }
+      row.appendChild(dot);
+    }
+
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = node.name;
+    row.appendChild(label);
+
+    if (colors[node.path]) {
+      row.classList.add("colored", "c-" + colors[node.path]);
+    }
+
+    if (node.dir && pinned.has(node.path)) {
+      const pin = document.createElement("span");
+      pin.className = "pin";
+      pin.title = "Pinned";
+      pin.innerHTML = PIN_ICON;
+      row.appendChild(pin);
+    }
+
+    if (!node.dir && node.path === selected) {
+      row.classList.add("selected");
+    }
+    if (!node.dir && drafts.has(node.path)) {
+      row.classList.add("unsaved");
+    }
+    if (!bare && !node.dir && (tags[node.path] || []).length) {
+      const box = document.createElement("span");
+      box.className = "tags";
+      for (const tag of byOrder(tags[node.path])) {
+        const pill = tagPill(tag);
+        pill.addEventListener("click", (event) => {
+          event.stopPropagation();
+          searchTag(tag, event.shiftKey);
+        });
+        box.appendChild(pill);
+      }
+      row.appendChild(box);
+    }
+
+    // With Ctrl held a file's tags come up where it was clicked, and the file stays shut.
+    row.addEventListener("click", (event) => {
+      if (!node.dir && (event.ctrlKey || event.metaKey) && !inTrash(node.path)) {
+        openTagPicker(node.path, event.clientX, event.clientY);
+        return;
+      }
+      if (node.dir) {
+        if (expanded.has(node.path)) {
+          expanded.delete(node.path);
+        } else {
+          expanded.add(node.path);
+        }
+        drawTree();
+        persist();
+      } else {
+        openFile(node.path);
+      }
+    });
+
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openMenu(event.clientX, event.clientY, nodeMenu(node, event.clientX, event.clientY));
+    });
+
+    row.addEventListener("dragstart", (event) => {
+      dragging = { path: node.path, dir: !!node.dir };
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", node.path);
+      row.classList.add("dragged");
+    });
+
+    row.addEventListener("dragend", () => {
+      dragging = null;
+      row.classList.remove("dragged");
+      highlightDrop(null);
+    });
+
+    li.appendChild(row);
+    if (node.dir && expanded.has(node.path)) {
+      const children = node.children || [];
+      const trashed = inTrash(node.path);
+      const binned = trashed ? [] : trashFor(node.path);
+      if (children.length || binned.length || (!trashed && bucketTags(node.path).length)) {
+        const inner = buildList(children, "", trashed ? undefined : node.path);
+        if (binned.length) {
+          inner.appendChild(trashItem(node.path));
+        }
+        li.appendChild(inner);
+      }
+    }
+    return li;
+  }
+
+  // The tags with a bucket in a folder, in the order tags are listed in; a tag gone since
+  // keeps its place in the folder's list but has no bucket.
+  function bucketTags(at) {
+    const own = buckets[at];
+    return own ? byOrder(own.tags.filter((tag) => tag in tagColors)) : [];
+  }
+
+  // The bucket a file goes in: that of the first of its tags, in the tags' order, that has
+  // one.
+  function bucketOf(path, kept) {
+    return byOrder(tags[path] || []).find((tag) => kept.includes(tag)) || null;
+  }
+
+  // A folder's buckets, one to each tag that has one, under a heading of the tag and ringed
+  // in its colour. Laid across, they are as wide as each other, and those in a row as tall.
+  function bucketItem(at, held) {
+    const own = buckets[at];
+    const li = make("li", "bucket-holder");
+    const grid = make("div", "buckets" + (own.flow === "column" ? " down" : ""));
+    grid.style.setProperty("--per-row", String(own.flow === "column" ? 1 : own.perRow));
+    grid.classList.toggle("outlined", bucketOutline);
+    grid.classList.toggle("filled", bucketFill);
+    for (const [tag, files] of held) {
+      const box = make("div", "bucket t-" + tagColor(tag));
+      box.dataset.folder = at;
+      box.dataset.tag = tag;
+      const head = make("div", "bucket-head");
+      const pill = tagPill(tag);
+      pill.addEventListener("click", (event) => {
+        event.stopPropagation();
+        searchTag(tag, event.shiftKey);
+      });
+      head.appendChild(pill);
+      box.appendChild(head);
+      const list = make("ul", "bucket-files");
+      for (const node of files) {
+        list.appendChild(nodeItem(node, true));
+      }
+      if (!files.length) {
+        const empty = make("li", "bucket-empty", "empty");
+        list.appendChild(empty);
+      }
+      box.appendChild(list);
+      box.addEventListener("contextmenu", (event) => {
+        if (event.target.closest(".row")) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        openBucketPicker(at, event.clientX, event.clientY);
+      });
+      grid.appendChild(box);
+    }
+    li.appendChild(grid);
+    return li;
   }
 
   // A pin puts its entry above everything else the folder holds; several of them are read
@@ -1211,6 +1368,9 @@
         label: pinned.has(node.path) ? "Unpin" : "Pin to top",
         run: () => togglePin(node.path)
       });
+      if (node.dir) {
+        items.push({ label: "Tag buckets…", run: () => openBucketPicker(node.path, x, y) });
+      }
       items.push({ separator: true });
     }
     if (node.dir && !trashed) {
@@ -1739,9 +1899,15 @@
     }
   }
 
+  // The entry holding a row's own: the nearest one up that has a row, past a bucket.
   function parentRow(row) {
-    const li = row.parentElement.parentElement.parentElement;
-    return li && li.tagName === "LI" ? li.querySelector(":scope > .row") : null;
+    for (let li = row.parentElement.parentElement.closest("li"); li; li = li.parentElement.closest("li")) {
+      const own = li.querySelector(":scope > .row");
+      if (own) {
+        return own;
+      }
+    }
+    return null;
   }
 
   function enterFile(path) {
@@ -1836,22 +2002,40 @@
   treeEl.addEventListener("focus", () => markCursor(cursorRow()));
 
   // A drop lands in a folder, and the tree's own background is the docs root. A file row
-  // stands for the folder holding it, so the whole list is a target and nothing is dead.
+  // stands for the folder holding it, so the whole list is a target and nothing is dead;
+  // a bucket stands for its folder too.
+  //
+  // A file moved about inside its own folder, while that folder has buckets, is given
+  // tags instead: dropped in a bucket it takes the bucket's tag in place of the one of the
+  // bucket it came from, and dropped among the folder's other files it loses that one. A
+  // file dropped in a bucket from another folder is moved and takes the bucket's tag.
   function dropInfo(target) {
     if (!dragging || !target || !target.closest) {
       return null;
     }
     const row = target.closest(".row");
-    const path = !row
-      ? ""
-      : row.dataset.dir
-        ? row.dataset.path
-        : row.dataset.path.split("/").slice(0, -1).join("/");
+    const bucket = target.closest(".bucket");
+    const path = bucket
+      ? bucket.dataset.folder
+      : !row
+        ? ""
+        : row.dataset.dir
+          ? row.dataset.path
+          : row.dataset.path.split("/").slice(0, -1).join("/");
     const parent = dragging.path.split("/").slice(0, -1).join("/");
+    const kept = !dragging.dir && path === parent ? bucketTags(parent) : [];
+    if (kept.length) {
+      const from = bucketOf(dragging.path, kept);
+      const to = bucket ? bucket.dataset.tag : row && !row.dataset.dir ? null : undefined;
+      if (to === undefined || to === from) {
+        return null;
+      }
+      return { el: bucket || row, add: to, remove: from };
+    }
     if (path === parent || path === dragging.path || path.startsWith(dragging.path + "/")) {
       return null;
     }
-    return { row: row, path: path };
+    return { el: bucket || row, path: path, tag: bucket && !dragging.dir ? bucket.dataset.tag : "" };
   }
 
   let dropEl = null;
@@ -1871,7 +2055,7 @@
 
   treeEl.addEventListener("dragover", (event) => {
     const info = dropInfo(event.target);
-    highlightDrop(info ? info.row || treeEl : null);
+    highlightDrop(info ? info.el || treeEl : null);
     if (!info) {
       return;
     }
@@ -1892,14 +2076,32 @@
       return;
     }
     event.preventDefault();
-    vscode.postMessage({
-      type: "relocate",
-      from: dragging.path,
-      to: info.path,
-      dir: dragging.dir
-    });
+    if (info.path === undefined) {
+      retag(dragging.path, info.add, info.remove);
+    } else {
+      vscode.postMessage({
+        type: "relocate",
+        from: dragging.path,
+        to: info.path,
+        dir: dragging.dir,
+        tag: info.tag
+      });
+    }
     dragging = null;
   });
+
+  function retag(path, add, remove) {
+    const next = (tags[path] || []).filter((tag) => tag !== remove);
+    if (add && !next.includes(add)) {
+      next.push(add);
+    }
+    tags = Object.assign({}, tags, { [path]: next });
+    vscode.postMessage({ type: "tags", path: path, tags: next });
+    drawTree();
+    if (current && current.path === path) {
+      drawHeaderTags();
+    }
+  }
 
   const MIN_THUMB = 20;
 
@@ -1980,17 +2182,26 @@
   splitter.addEventListener("contextmenu", (event) => {
     event.preventDefault();
     openMenu(event.clientX, event.clientY, [
-      { label: "No auto size of the side width", checked: !autoWidth, run: () => setAutoWidth(false) },
-      { label: "Auto size the side width to the files", checked: autoWidth, run: () => setAutoWidth(true) }
+      { label: "No auto size of the side width", checked: autoWidth === "off", run: () => setAutoWidth("off") },
+      { label: "Auto size the side width to the files", checked: autoWidth === "on", run: () => setAutoWidth("on") },
+      { label: "Auto size the side width, only growing", checked: autoWidth === "grow", run: () => setAutoWidth("grow") }
     ]);
   });
 
-  // Dragging the divider is a width chosen by hand, so the automatic one steps aside.
+  // The divider is dragged only while the width is the reader's own to choose. Sized only
+  // to grow, a click on it fits the side to the files, narrower if they allow it.
   splitter.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) {
       return;
     }
-    autoWidth = false;
+    if (autoWidth !== "off") {
+      event.preventDefault();
+      if (autoWidth === "grow") {
+        fitWidth(true);
+        persist();
+      }
+      return;
+    }
     splitter.setPointerCapture(event.pointerId);
     const move = (moveEvent) => setSplit(moveEvent.clientX);
     const up = (upEvent) => {
@@ -2011,7 +2222,9 @@
     openMenu(event.clientX, event.clientY, [
       { label: "Auto size the files", checked: autoSize === "tree", run: () => setAutoSize("tree") },
       { label: "Auto size toc", checked: autoSize === "toc", run: () => setAutoSize("toc") },
-      { label: "No auto size", checked: autoSize === "none", run: () => setAutoSize("none") }
+      { label: "No auto size", checked: autoSize === "none", run: () => setAutoSize("none") },
+      { separator: true },
+      { label: "Show toc", checked: showToc, run: () => setShowToc(!showToc) }
     ]);
   });
 
@@ -2557,12 +2770,36 @@
       setLineHeight(lineHeight);
       setMono(mono);
       setHoverStrength(hoverStrength);
-      setBlockPad(blockPad);
+      setBlockPad(blockPadY, blockPadX);
       setTagSide(tagSide);
+      markAutoWidth();
+      applyToc();
       if (selected) {
         visit(selected);
       }
       drawTree();
+    } else if (message.type === "repath") {
+      // Sent before anything else about a rename or a move, so what is persisted from
+      // here on carries the paths as they are now.
+      const move = (path) =>
+        path === message.from ? message.to
+          : path.startsWith(message.from + "/") ? message.to + path.slice(message.from.length)
+            : path;
+      pinned = new Set([...pinned].map(move));
+      expanded = new Set([...expanded].map(move));
+      const moved = {};
+      for (const [path, value] of Object.entries(buckets)) {
+        moved[move(path)] = value;
+      }
+      buckets = moved;
+      persist();
+    } else if (message.type === "tagRenamed") {
+      for (const [path, value] of Object.entries(buckets)) {
+        buckets[path] = Object.assign({}, value, {
+          tags: [...new Set(value.tags.map((tag) => (tag === message.from ? message.to : tag)))]
+        });
+      }
+      persist();
     } else if (message.type === "saved") {
       drafts.delete(message.path);
       drawTree();
@@ -3170,10 +3407,24 @@
       sections.push(section);
     }
     tocEl.appendChild(list);
-    tocEl.hidden = false;
-    sideBodyEl.classList.remove("no-toc");
-    fitSide();
+    applyToc();
     scheduleActive();
+  }
+
+  // The list is built whether or not it shows, so paging by heading works either way; it
+  // shows only when there is one and the options let it.
+  function applyToc() {
+    tocEl.hidden = !showToc || !tocEl.firstChild;
+    sideBodyEl.classList.toggle("no-toc", tocEl.hidden);
+    fitSide();
+    refreshBars();
+  }
+
+  function setShowToc(value) {
+    showToc = !!value;
+    applyToc();
+    persist();
+    drawOptions();
   }
 
   // A block that opens in bold is a heading the author never marked up as one, so it is
@@ -3393,17 +3644,103 @@
 
   let pickerPath = null;
   let pickerIndex = 0;
+  // The folder whose buckets the picker is choosing, when it is choosing those instead of
+  // a file's tags.
+  let pickerFolder = null;
 
   function openTagPicker(path, x, y) {
     closeMenu();
     pickerPath = path;
+    pickerFolder = null;
     pickerIndex = 0;
     tagPickerTitleEl.textContent = "Tags of " + path.split("/").pop();
+    tagInputEl.placeholder = "Find or add a tag";
     tagInputEl.value = "";
+    tagPickerFootEl.hidden = true;
+    tagPickerFootEl.textContent = "";
     tagPickerEl.hidden = false;
     drawTagPicker();
     place(tagPickerEl, x, y);
     tagInputEl.focus();
+  }
+
+  // The same box picks the tags a folder has buckets for, and under them how the buckets
+  // are laid out. The folder is opened, so the buckets come and go in sight.
+  function openBucketPicker(at, x, y) {
+    closeMenu();
+    pickerPath = null;
+    pickerFolder = at;
+    pickerIndex = 0;
+    if (!expanded.has(at)) {
+      expanded.add(at);
+      drawTree();
+      persist();
+    }
+    tagPickerTitleEl.textContent = "Tag buckets in " + at.split("/").pop();
+    tagInputEl.placeholder = "Find a tag";
+    tagInputEl.value = "";
+    tagPickerEl.hidden = false;
+    drawTagPicker();
+    drawBucketFoot();
+    place(tagPickerEl, x, y);
+    tagInputEl.focus();
+  }
+
+  function folderBuckets(at) {
+    return buckets[at] || { tags: [], flow: "row", perRow: 2 };
+  }
+
+  function setBuckets(at, change) {
+    buckets = Object.assign({}, buckets, { [at]: Object.assign({}, folderBuckets(at), change) });
+    drawTree();
+    persist();
+  }
+
+  // Across, so many to a row, with a box for how many; or down, one under the other.
+  function drawBucketFoot() {
+    const own = folderBuckets(pickerFolder);
+    tagPickerFootEl.textContent = "";
+    tagPickerFootEl.hidden = false;
+    const at = pickerFolder;
+    const flow = make("span", "bucket-flow");
+    for (const [value, label, title] of [["row", "Across", "Buckets side by side"], ["column", "Down", "Buckets one under another"]]) {
+      const button = make("button", "bucket-flow-button" + (own.flow === value ? " active" : ""), label);
+      button.type = "button";
+      button.title = title;
+      button.addEventListener("pointerdown", (event) => event.preventDefault());
+      button.addEventListener("click", () => {
+        setBuckets(at, { flow: value });
+        drawBucketFoot();
+      });
+      flow.appendChild(button);
+    }
+    tagPickerFootEl.appendChild(flow);
+    if (own.flow === "row") {
+      const label = make("label", "bucket-per-row", "per row");
+      const input = make("input");
+      input.type = "number";
+      input.min = "1";
+      input.max = String(MAX_PER_ROW);
+      input.value = String(own.perRow);
+      input.title = "How many buckets stand side by side";
+      input.addEventListener("input", () => {
+        const value = Math.round(Number(input.value));
+        if (value >= 1 && value <= MAX_PER_ROW) {
+          setBuckets(at, { perRow: value });
+        }
+      });
+      input.addEventListener("change", () => {
+        input.value = String(folderBuckets(at).perRow);
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          tagInputEl.focus();
+        }
+      });
+      label.prepend(input);
+      tagPickerFootEl.appendChild(label);
+    }
   }
 
   function closeTagPicker() {
@@ -3412,6 +3749,9 @@
     }
     tagPickerEl.hidden = true;
     pickerPath = null;
+    pickerFolder = null;
+    tagPickerFootEl.hidden = true;
+    tagPickerFootEl.textContent = "";
     tagListEl.textContent = "";
     const back = pickerReturn;
     pickerReturn = null;
@@ -3425,28 +3765,29 @@
   function pickerChoices() {
     const text = tagInputEl.value.replace(/\s+/g, " ").trim();
     const lower = text.toLowerCase();
-    const names = byOrder([...new Set(Object.keys(tagColors).concat(tags[pickerPath] || []))]);
+    const names = byOrder([...new Set(Object.keys(tagColors).concat(pickerFolder === null ? tags[pickerPath] || [] : []))]);
     const choices = names
       .filter((name) => name.toLowerCase().includes(lower))
       .map((name) => ({ name: name }));
-    if (text && !names.some((name) => name.toLowerCase() === lower)) {
+    // A bucket is for a tag files can already have, so none is made from here.
+    if (pickerFolder === null && text && !names.some((name) => name.toLowerCase() === lower)) {
       choices.push({ name: text, fresh: true });
     }
     return choices;
   }
 
   function drawTagPicker() {
-    if (tagPickerEl.hidden || !pickerPath) {
+    if (tagPickerEl.hidden || (!pickerPath && pickerFolder === null)) {
       return;
     }
     const choices = pickerChoices();
     pickerIndex = Math.min(Math.max(pickerIndex, 0), Math.max(choices.length - 1, 0));
-    const own = new Set(tags[pickerPath] || []);
+    const own = new Set(pickerFolder === null ? tags[pickerPath] || [] : folderBuckets(pickerFolder).tags);
     tagListEl.textContent = "";
     if (!choices.length) {
       const empty = document.createElement("p");
       empty.className = "notice";
-      empty.textContent = "Type a name to make a tag.";
+      empty.textContent = pickerFolder === null ? "Type a name to make a tag." : "No tag by that name.";
       tagListEl.appendChild(empty);
       return;
     }
@@ -3491,6 +3832,14 @@
   }
 
   function toggleTag(choice) {
+    if (pickerFolder !== null) {
+      const own = folderBuckets(pickerFolder).tags.filter((name) => name in tagColors);
+      setBuckets(pickerFolder, {
+        tags: own.includes(choice.name) ? own.filter((name) => name !== choice.name) : own.concat(choice.name)
+      });
+      drawTagPicker();
+      return;
+    }
     if (!pickerPath) {
       return;
     }
@@ -3686,8 +4035,8 @@
     return (bytes / 1024 / 1024).toFixed(1) + " MB";
   }
 
-  function stepBlockPad(delta) {
-    setBlockPad(blockPad + delta);
+  function stepBlockPad(dy, dx) {
+    setBlockPad(blockPadY + dy, blockPadX + dx);
     persist();
     drawOptions();
   }
@@ -3752,11 +4101,22 @@
         scheduleActive();
       })
     ]);
+    optionRow(reading, "Contents list", [
+      optionChoice(["hidden", "shown"], showToc ? 1 : 0, (choice) => setShowToc(choice === 1))
+    ]);
     optionRow(reading, "Auto size list height", [
       optionChoice(AUTO_LABELS, AUTO_SIZES.indexOf(autoSize), (choice) => setAutoSize(AUTO_SIZES[choice]))
     ]);
+    optionRow(reading, "Auto size minimum for the other list", optionStepper(
+      autoMin + "%",
+      ["Less of the side kept for the list auto size shrinks", "More of the side kept for the list auto size shrinks"],
+      () => stepAutoMin(-AUTO_MIN_STEP),
+      () => stepAutoMin(AUTO_MIN_STEP),
+      autoMin <= 0,
+      autoMin >= MAX_AUTO_MIN
+    ));
     optionRow(reading, "Auto size side width", [
-      optionChoice(["off", "on"], autoWidth ? 1 : 0, (choice) => setAutoWidth(choice === 1))
+      optionChoice(AUTO_WIDTH_LABELS, AUTO_WIDTHS.indexOf(autoWidth), (choice) => setAutoWidth(AUTO_WIDTHS[choice]))
     ]);
     optionRow(reading, "Block highlight", optionStepper(
       hoverStrength ? hoverStrength + "%" : "off",
@@ -3766,14 +4126,7 @@
       hoverStrength <= 0,
       hoverStrength >= 100
     ));
-    optionRow(reading, "Block highlight padding", optionStepper(
-      blockPad + "px",
-      ["Less padding", "More padding"],
-      () => stepBlockPad(-1),
-      () => stepBlockPad(1),
-      blockPad <= 0,
-      blockPad >= MAX_BLOCK_PAD
-    ));
+    optionRow(reading, "Block highlight padding", padStepper());
     optionRow(reading, "Mentions shown", optionStepper(
       mentionLines ? String(mentionLines) : "off",
       ["Fewer mentions before Show more, none turns them off", "More mentions before Show more"],
@@ -3798,6 +4151,20 @@
         persist();
       })
     ]);
+    optionRow(tree, "Tag bucket outline", [
+      optionChoice(["off", "on"], bucketOutline ? 1 : 0, (choice) => {
+        bucketOutline = choice === 1;
+        drawTree();
+        persist();
+      })
+    ]);
+    optionRow(tree, "Tag bucket background", [
+      optionChoice(["none", "tag colour"], bucketFill ? 1 : 0, (choice) => {
+        bucketFill = choice === 1;
+        drawTree();
+        persist();
+      })
+    ]);
 
     const folder = optionSection("Folder");
     optionRow(folder, [make("span", "opt-path cap", rootPrefix || "the workspace root")], [
@@ -3814,11 +4181,21 @@
       list.appendChild(tagOptionRow(name, names));
     }
     tagBox.appendChild(list);
-    const unused = names.filter((name) => !Object.values(tags).some((own) => own.includes(name))).length;
-    if (unused) {
+    const unused = names.filter((name) => !Object.values(tags).some((own) => own.includes(name)));
+    if (unused.length) {
       const prune = makeButton("Prune", () => vscode.postMessage({ type: "pruneTags" }), "opt-button opt-wide");
       prune.title = "Remove the tags no file has";
-      optionRow(tagBox, "Tags on no file", [make("span", "opt-dim cap", String(unused)), prune]);
+      // The rows that would go are marked while the pointer is on the button.
+      const mark = (on) => {
+        for (const row of list.querySelectorAll(".opt-tag")) {
+          row.classList.toggle("pruning", on && unused.includes(row.dataset.name));
+        }
+      };
+      prune.addEventListener("pointerenter", () => mark(true));
+      prune.addEventListener("pointerleave", () => mark(false));
+      prune.addEventListener("focus", () => mark(true));
+      prune.addEventListener("blur", () => mark(false));
+      optionRow(tagBox, "Tags on no file", [make("span", "opt-dim cap", String(unused.length)), prune]);
     }
 
     const data = optionSection("Data files");
@@ -3840,7 +4217,49 @@
       }
     }
     fitPillHeights(optionsBodyEl);
+    lineUpLetters(list);
     optionsBodyEl.scrollTop = scroll;
+  }
+
+  // Every tag's letters stand in a box as wide as the widest of them, so the names after
+  // them start on one line.
+  function lineUpLetters(list) {
+    const boxes = [...list.querySelectorAll(".opt-letters")];
+    let widest = 0;
+    for (const box of boxes) {
+      widest = Math.max(widest, Math.ceil(box.firstChild.getBoundingClientRect().width));
+    }
+    for (const box of boxes) {
+      box.style.width = widest + "px";
+    }
+  }
+
+  // Above and below the block, then either side of it: two pairs of buttons in the room
+  // of one, the pairs set a little further apart than the buttons in them.
+  function padStepper() {
+    const value = make("span", "opt-value cap", "↕" + blockPadY + " ↔" + blockPadX + "px");
+    value.title = blockPadY + "px above and below, " + blockPadX + "px either side";
+    const button = (icon, title, run, disabled) => {
+      const el = makeButton("", run, "opt-button opt-step");
+      el.innerHTML = icon;
+      el.title = title;
+      el.disabled = disabled;
+      return el;
+    };
+    const pair = (titles, step, at) => {
+      const box = make("span", "opt-pair");
+      box.append(
+        button(MINUS_ICON, titles[0], () => step(-1), at <= 0),
+        button(PLUS_ICON, titles[1], () => step(1), at >= MAX_BLOCK_PAD)
+      );
+      return box;
+    };
+    const steps = make("span", "opt-steps opt-steps-four");
+    steps.append(
+      pair(["Less padding above and below", "More padding above and below"], (d) => stepBlockPad(d, 0), blockPadY),
+      pair(["Less padding either side", "More padding either side"], (d) => stepBlockPad(0, d), blockPadX)
+    );
+    return [value, steps];
   }
 
   // The style a tag's pill can take besides its colour, each a button that is lit while on.
@@ -3904,7 +4323,9 @@
       }
     });
 
-    const row = optionRow(make("div"), [letters, label], [
+    const holder = make("span", "opt-letters");
+    holder.appendChild(letters);
+    const row = optionRow(make("div"), [holder, label], [
       make("span", "opt-dim cap", used + (used === 1 ? " file" : " files")),
       ...buttons,
       wrap,

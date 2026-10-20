@@ -154,6 +154,47 @@ module.exports = [
     clip: { x: 300, y: 0, width: 700, height: 300 },
     act: async (page) => page.click(".markdown-body table td >> nth=1", { button: "right" })
   },
+  {
+    name: "options-prune-hover",
+    hover: true,
+    act: async (page) => {
+      await press("openOptions")(page);
+      await page.evaluate(() => {
+        const box = document.getElementById("optionsBody");
+        box.scrollTop = box.scrollHeight;
+      });
+      await page.hover("#optionsDialog button:has-text('Prune')");
+    }
+  },
+  { name: "tree-pins", state: { pinned: ["guide.md", "plans/roadmap.md", "notes"] }, clip: side },
+  { name: "tree-scrollbar-edge", state: { expanded: ["plans", "notes", "plans/archive"] }, clip: { x: 270, y: 0, width: 60, height: 60 } },
+  { name: "search-edge", clip: { x: 280, y: 0, width: 120, height: 60 }, act: press("findAll") },
+  {
+    name: "buckets-across",
+    state: { pinned: ["plans/roadmap.md"], buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
+    clip: side
+  },
+  {
+    name: "buckets-down-filled",
+    state: { bucketFill: true, buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "column", perRow: 2 } } },
+    clip: side
+  },
+  {
+    name: "buckets-picker",
+    state: { buckets: { plans: { tags: ["plan", "blocked"], flow: "row", perRow: 2 } } },
+    clip: menu,
+    act: async (page) => {
+      await page.click('.row[data-path="plans"] .label', { button: "right" });
+      await page.click("#menu button:has-text('Tag buckets')");
+    }
+  },
+  {
+    name: "page-block-pad",
+    state: { selected: "guide.md", blockPadY: 2, blockPadX: 12, hoverStrength: 100 },
+    clip: { x: 300, y: 0, width: 700, height: 300 },
+    hover: true,
+    act: async (page) => page.mouse.move(500, 85)
+  },
   { name: "header-tags", clip: header },
   { name: "header-tags-light", theme: "light-modern", clip: header }
 ];
