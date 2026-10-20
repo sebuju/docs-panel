@@ -242,7 +242,8 @@ body.dragging-rows {
   padding: 1px 10px;
   border-block: 1px solid transparent;
   background-clip: padding-box;
-  border-radius: 3px;
+  /* 4px down the clear border's pixel leaves the lit part round corners of 3px each way. */
+  border-radius: 3px / 4px;
   cursor: pointer;
   white-space: nowrap;
   line-height: var(--tree-row);
@@ -273,9 +274,10 @@ body.dragging-rows {
 }
 
 /* The row the keys are on, shown while the tree has the focus. */
+/* Drawn as a shadow inside the clear border, so the ring is the lit part's own edge,
+   corners and all, wherever the row is lit or not. */
 #tree:focus .row.cursor {
-  outline: 1px solid var(--vscode-list-focusOutline, var(--vscode-focusBorder));
-  outline-offset: -2px;
+  box-shadow: inset 0 0 0 1px var(--vscode-list-focusOutline, var(--vscode-focusBorder));
 }
 
 /* The name gives way in step with the pills after it, and never all the way. */
@@ -1919,7 +1921,6 @@ img.single {
 }
 
 /* The folder taking the drop is outlined; the tree itself is the docs root. */
-.row.drop,
 .bucket.drop,
 #tree.drop {
   outline: 1px solid var(--vscode-focusBorder);
@@ -1927,9 +1928,9 @@ img.single {
   border-radius: 3px;
 }
 
-/* On the lit part of the row, inside its clear border. */
+/* On the lit part of the row, as the keys' ring is. */
 .row.drop {
-  outline-offset: -2px;
+  box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
 }
 
 /* A folder's tag buckets, at the head of what it holds. They share a row in columns of
