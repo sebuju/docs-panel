@@ -171,33 +171,43 @@ module.exports = [
   { name: "search-edge", clip: { x: 280, y: 0, width: 120, height: 60 }, act: press("findAll") },
   {
     name: "buckets-across",
-    state: { pinned: ["plans/roadmap.md"], buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
+    state: { pinned: ["plans/roadmap.md"], buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 2 } } },
     clip: side
   },
   {
     name: "buckets-down-filled",
-    state: { bucketFill: true, buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "column", perRow: 2 } } },
+    state: { bucketFill: 30, buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 1 } } },
+    clip: side
+  },
+  {
+    name: "buckets-span-ordered",
+    state: { buckets: { plans: { tags: ["q3", "plan", "blocked"], perRow: 2, spans: { q3: 2 }, ordered: true } } },
+    clip: side
+  },
+  {
+    name: "buckets-head-tinted-bold",
+    state: { bucketHeadStyle: "plain", bucketHeadTint: true, bucketHeadBold: true, bucketFill: 8, buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 2 } } },
     clip: side
   },
   {
     name: "buckets-head-outside-fill",
-    state: { bucketHead: "outside", bucketHeadStyle: "fill", buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
+    state: { bucketHead: "outside", bucketHeadStyle: "fill", buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 2 } } },
     clip: side
   },
   {
     name: "buckets-head-over-plain",
-    state: { bucketHead: "over", bucketHeadStyle: "plain", buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
+    state: { bucketHead: "over", bucketHeadStyle: "plain", buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 2 } } },
     clip: side
   },
   {
     name: "buckets-head-inside-plain",
     theme: "light-modern",
-    state: { bucketHeadStyle: "plain", buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
+    state: { bucketHeadStyle: "plain", buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 2 } } },
     clip: side
   },
   {
     name: "buckets-picker",
-    state: { buckets: { plans: { tags: ["plan", "blocked"], flow: "row", perRow: 2 } } },
+    state: { buckets: { plans: { tags: ["plan", "blocked"], perRow: 2, spans: { blocked: 2 }, ordered: true } } },
     clip: menu,
     act: async (page) => {
       await page.click('.row[data-path="plans"] .label', { button: "right" });

@@ -93,15 +93,16 @@ a space or a comma in it is quoted: `tag:"to do"`.
 The options hold the reading settings (text size, line spacing, font, whether the
 contents list shows, which list's height is auto sized and the least share of the side
 the other list keeps, whether the side's width is auto sized and whether only to grow,
-how strongly the Markdown block under the pointer is lit, where off turns the light off,
+and the least share of the window the page keeps then, how strongly the Markdown block under the pointer is lit, where off turns the light off,
 how far the light reaches past the block above and below it and either side of it, and
 how many of a file's mentions show before **Show more**, where off turns the mentions
 off), the tree's (its own text size, which side of a name the tags are drawn on, and
-whether tag buckets are outlined and tinted in their tag's colour, and whether a
-bucket's heading stands inside its box, on its outline as a fieldset's legend does, or
-above it, drawn as the tag's pill, as a bar of
-its colour across the top, or as the plain name), the tags, and the data
-files the panel writes, each with its size and a button to purge it.
+whether tag buckets are outlined in their tag's colour, how strongly they are tinted
+with it, where off leaves them bare, and whether a bucket's heading stands inside its
+box, on its outline as a fieldset's legend does, or above it, drawn as the tag's pill, as
+a bar of its colour across the top, or as the plain name, written in the text's colour or
+the tag's, and bold or not), the tags, and the data files the panel writes, each with its
+size and a button to purge it. Both auto size minimums go up to 75%.
 
 Each tag is a row: its letters, which open a menu for its colour and its letters; its
 name, which renames it when clicked; its style, any of bold, italic, underline, white
@@ -113,8 +114,9 @@ on it the tags it would remove are marked.
 
 ## Tag buckets
 
-**Tag buckets…** in a folder's menu picks the tags that have a bucket in that folder. The
-buckets stand at the head of the folder, in the order of the tags, each headed by its tag
+**Tag buckets…** in a folder's menu, or a bucket's own, picks the tags that have a bucket
+in that folder. The buckets stand at the head of the folder, in the order of the tags
+until you drag them into one of the folder's own in the picker, each headed by its tag
 and ringed in its colour. A file directly in the folder goes in the bucket of the first of
 its tags, in that order, that has one; it shows there without its tags, which the file bar
 still shows, and pinned files come first. The folder's other files follow the buckets as
@@ -127,10 +129,13 @@ usual.
 | From the folder's other files to a bucket | Puts on the bucket's tag |
 | From another folder to a bucket | Moves the file into the folder and puts on the bucket's tag |
 
-Under the tags the picker sets the layout: **Across**, so many buckets to a row, each as
-wide as the others and as tall as the tallest in its row, or **Down**, one under another.
-The buckets and their layout are kept for each folder, and follow it when it is renamed
-or moved.
+In the picker each bucket's tag has **−** and **+** for how many columns the bucket spans,
+and under the tags is how many columns stand in a row: each as wide as the others, and
+each row as tall as its tallest bucket; one to a row puts the buckets one under another.
+Drag a bucket's tag above or below another's to move the bucket; from then on the folder
+keeps its own order, and **Tag order** under the tags has it follow the order of the tags
+in the options again. The buckets and their layout are kept for each folder, and follow
+it when it is renamed or moved.
 
 ## Settings
 

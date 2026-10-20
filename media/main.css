@@ -284,8 +284,10 @@ body.dragging-rows {
   color: color-mix(in srgb, var(--vscode-foreground) 80%, #fff);
 }
 
-/* The colour sits on the name alone; on a selected row the selection's colour wins. */
-.row.colored:not(.selected) > .label {
+/* The colour sits on the name, and on a folder's twisty; on a selected row the
+   selection's colour wins. */
+.row.colored:not(.selected) > .label,
+.row.colored:not(.selected) > .twisty {
   color: var(--c);
 }
 
@@ -1912,12 +1914,13 @@ img.single {
   border-radius: 3px;
 }
 
-/* A folder's tag buckets, at the head of what it holds. Laid across they share a row in
-   columns of one width, each row as tall as its tallest; laid down, one to a row. */
+/* A folder's tag buckets, at the head of what it holds. They share a row in columns of
+   one width, each row as tall as its tallest, and a bucket may span several columns. */
 /* Indented as a row's own parts are, so a bucket's edge stands in line with the twisties
    and dots of the rows beside it. */
 .buckets {
   --per-row: 2;
+  --fill: 14%;
   display: grid;
   grid-template-columns: repeat(var(--per-row), minmax(0, 1fr));
   gap: 4px;
@@ -1933,6 +1936,7 @@ img.single {
 
 #tree.measuring .bucket {
   width: max-content;
+  grid-column: auto !important;
 }
 
 /* The box a bucket draws is the whole of it, heading and all, or, with the heading
@@ -1966,7 +1970,7 @@ img.single {
 
 .buckets.filled:not(.head-out) .bucket,
 .buckets.filled.head-out .bucket-body {
-  background: color-mix(in srgb, var(--c) 14%, transparent);
+  background: color-mix(in srgb, var(--c) var(--fill), transparent);
 }
 
 .bucket-head {
@@ -2043,6 +2047,15 @@ img.single {
   color: inherit;
 }
 
+/* The heading written in the tag's own colour, whatever it stands on, and bold. */
+.buckets.head-tinted .bucket-head .tag {
+  color: var(--c);
+}
+
+.buckets.head-bold .bucket-head .tag {
+  font-weight: 700;
+}
+
 .bucket-head .tag {
   --pill: var(--tree-pill);
   --room: var(--tree-row);
@@ -2066,7 +2079,7 @@ img.single {
   opacity: 0.45;
 }
 
-/* Under a bucket picker's tags: which way the buckets are laid, and how many to a row. */
+/* Under a bucket picker's tags: how many to a row, and a way back to the tags' order. */
 #tagPickerFoot {
   display: flex;
   align-items: center;
@@ -2081,29 +2094,79 @@ img.single {
   display: none;
 }
 
-.bucket-flow {
-  display: flex;
+.bucket-reset {
+  margin-left: auto;
   border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
   border-radius: 3px;
-  overflow: hidden;
-}
-
-.bucket-flow-button {
-  border: none;
-  padding: 2px 8px;
+  padding: 1px 8px;
   color: inherit;
   background: transparent;
   font: inherit;
   cursor: pointer;
 }
 
-.bucket-flow-button:hover {
+.bucket-reset:hover {
   background: var(--vscode-list-hoverBackground);
 }
 
-.bucket-flow-button.active {
-  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
-  background: var(--vscode-inputOption-activeBackground, rgba(0, 127, 212, 0.4));
+/* A bucket's tag in the picker is dragged to move the bucket, and says how many columns
+   the bucket spans, with a button either side to change it. */
+.tag-choice[draggable="true"] {
+  cursor: grab;
+}
+
+.tag-choice.dragged {
+  opacity: 0.45;
+}
+
+.tag-choice.drop-before {
+  box-shadow: inset 0 1px 0 var(--vscode-focusBorder);
+}
+
+.tag-choice.drop-after {
+  box-shadow: inset 0 -1px 0 var(--vscode-focusBorder);
+}
+
+.bucket-span {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.bucket-span-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.bucket-span-button:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.25);
+}
+
+.bucket-span-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.bucket-span-button svg {
+  display: block;
+  flex: none;
+}
+
+.bucket-span-value {
+  min-width: 1.8em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 .bucket-per-row {

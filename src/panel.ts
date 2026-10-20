@@ -67,14 +67,19 @@ const BUCKET_HEADS: BucketHead[] = ["inside", "over", "outside"];
 export type BucketHeadStyle = "pill" | "fill" | "plain";
 const BUCKET_HEAD_STYLES: BucketHeadStyle[] = ["pill", "fill", "plain"];
 
-// A folder's tag buckets: the tags that have one, and whether they are laid across, so
-// many to a row, or down, one under the other.
+// A folder's tag buckets: the tags that have one, how many stand in a row, how many
+// columns a bucket spans where that is more than one, and whether the tags are in an order
+// of the folder's own or follow the order tags are listed in.
 export interface Buckets {
   tags: string[];
-  flow: "row" | "column";
   perRow: number;
+  spans: Record<string, number>;
+  ordered: boolean;
 }
 const MAX_PER_ROW = 12;
+const MAX_AUTO_MIN = 75;
+// How strongly a bucket was tinted when its background was only on or off.
+const OLD_BUCKET_FILL = 14;
 
 export interface PanelState {
   split: number;
@@ -87,6 +92,8 @@ export interface PanelState {
   // The least share of the side, in percent, the list an auto size squeezes is left.
   autoMin: number;
   autoWidth: AutoWidth;
+  // The least share of the window, in percent, an auto sized side width leaves the page.
+  autoWidthMin: number;
   // Whether the contents list shows under the tree at all.
   showToc: boolean;
   tagSide: TagSide;
@@ -101,9 +108,13 @@ export interface PanelState {
   pinned: string[];
   // The tag buckets of each folder that has some, by its path.
   buckets: Record<string, Buckets>;
-  // How a bucket is drawn: ringed in its tag's colour, and filled with a tint of it.
+  // How a bucket is drawn: ringed in its tag's colour, and tinted with it this strongly,
+  // in percent, where none leaves it bare; and whether its heading is written in the tag's
+  // colour, and bold.
   bucketOutline: boolean;
-  bucketFill: boolean;
+  bucketFill: number;
+  bucketHeadTint: boolean;
+  bucketHeadBold: boolean;
   bucketHead: BucketHead;
   bucketHeadStyle: BucketHeadStyle;
   selected: string | null;
@@ -123,6 +134,7 @@ const DEFAULT_STATE: PanelState = {
   autoSize: "none",
   autoMin: 25,
   autoWidth: "off",
+  autoWidthMin: 50,
   showToc: true,
   tagSide: "right",
   hoverStrength: 40,
@@ -133,7 +145,9 @@ const DEFAULT_STATE: PanelState = {
   pinned: [],
   buckets: {},
   bucketOutline: true,
-  bucketFill: false,
+  bucketFill: 0,
+  bucketHeadTint: false,
+  bucketHeadBold: false,
   bucketHead: "inside",
   bucketHeadStyle: "pill",
   selected: null,
@@ -543,6 +557,10 @@ export class DocsPanel {
     const to = cleanTag(next);
     for (const buckets of Object.values(this.state.buckets)) {
       buckets.tags = [...new Set(buckets.tags.map((tag) => (tag === name ? to : tag)))];
+      if (name in buckets.spans) {
+        buckets.spans[to] = buckets.spans[name];
+        delete buckets.spans[name];
+      }
     }
     this.post({ type: "tagRenamed", from: name, to });
     this.postMarks(await renameTag(marksLedger(this.root.uri), name, next));
@@ -1523,6 +1541,11 @@ function normalizeState(value: any): PanelState {
   const blockPadY = Number(value?.blockPadY ?? blockPad);
   const blockPadX = Number(value?.blockPadX ?? blockPad);
   const autoMin = Number(value?.autoMin);
+  const autoWidthMin = Number(value?.autoWidthMin);
+  // A background only on or off, before it had a strength, is on at the tint it had.
+  const bucketFill = typeof value?.bucketFill === "boolean"
+    ? (value.bucketFill ? OLD_BUCKET_FILL : 0)
+    : Number(value?.bucketFill);
   const mentionLines = Number(value?.mentionLines);
   const scrolls: Record<string, number> = {};
   for (const [path, ratio] of Object.entries(value?.scrolls ?? {}).slice(-MAX_SCROLLS)) {
@@ -1543,13 +1566,16 @@ function normalizeState(value: any): PanelState {
       : value?.tocAuto === true
         ? "toc"
         : DEFAULT_STATE.autoSize,
-    autoMin: Number.isFinite(autoMin) ? Math.min(Math.max(Math.round(autoMin), 0), 50) : DEFAULT_STATE.autoMin,
+    autoMin: Number.isFinite(autoMin) ? Math.min(Math.max(Math.round(autoMin), 0), MAX_AUTO_MIN) : DEFAULT_STATE.autoMin,
     // Before it could only grow, the width was sized or not.
     autoWidth: AUTO_WIDTHS.includes(value?.autoWidth)
       ? value.autoWidth
       : value?.autoWidth === true
         ? "on"
         : DEFAULT_STATE.autoWidth,
+    autoWidthMin: Number.isFinite(autoWidthMin)
+      ? Math.min(Math.max(Math.round(autoWidthMin), 0), MAX_AUTO_MIN)
+      : DEFAULT_STATE.autoWidthMin,
     showToc: typeof value?.showToc === "boolean" ? value.showToc : DEFAULT_STATE.showToc,
     tagSide: TAG_SIDES.includes(value?.tagSide) ? value.tagSide : DEFAULT_STATE.tagSide,
     hoverStrength: Number.isFinite(hoverStrength)
@@ -1564,7 +1590,9 @@ function normalizeState(value: any): PanelState {
     pinned: Array.isArray(value?.pinned) ? value.pinned.map(String) : [],
     buckets: normalizeBuckets(value?.buckets),
     bucketOutline: typeof value?.bucketOutline === "boolean" ? value.bucketOutline : DEFAULT_STATE.bucketOutline,
-    bucketFill: typeof value?.bucketFill === "boolean" ? value.bucketFill : DEFAULT_STATE.bucketFill,
+    bucketFill: Number.isFinite(bucketFill) ? Math.min(Math.max(Math.round(bucketFill), 0), 100) : DEFAULT_STATE.bucketFill,
+    bucketHeadTint: typeof value?.bucketHeadTint === "boolean" ? value.bucketHeadTint : DEFAULT_STATE.bucketHeadTint,
+    bucketHeadBold: typeof value?.bucketHeadBold === "boolean" ? value.bucketHeadBold : DEFAULT_STATE.bucketHeadBold,
     bucketHead: BUCKET_HEADS.includes(value?.bucketHead) ? value.bucketHead : DEFAULT_STATE.bucketHead,
     bucketHeadStyle: BUCKET_HEAD_STYLES.includes(value?.bucketHeadStyle)
       ? value.bucketHeadStyle
@@ -1575,7 +1603,8 @@ function normalizeState(value: any): PanelState {
   };
 }
 
-// A folder keeps its buckets only while it has a tag with one.
+// A folder keeps its buckets only while it has a tag with one. Buckets laid down, one
+// under another, before there was only a count to a row, are laid one to a row.
 function normalizeBuckets(value: unknown): Record<string, Buckets> {
   const out: Record<string, Buckets> = {};
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1586,11 +1615,19 @@ function normalizeBuckets(value: unknown): Record<string, Buckets> {
     if (!tags.length) {
       continue;
     }
-    const perRow = Number(raw?.perRow);
+    const perRow = raw?.flow === "column" ? 1 : Number(raw?.perRow);
+    const spans: Record<string, number> = {};
+    for (const [tag, span] of Object.entries(raw?.spans ?? {})) {
+      const count = Math.round(Number(span));
+      if (tags.includes(tag) && Number.isFinite(count) && count > 1) {
+        spans[tag] = Math.min(count, MAX_PER_ROW);
+      }
+    }
     out[path] = {
       tags,
-      flow: raw?.flow === "column" ? "column" : "row",
-      perRow: Number.isFinite(perRow) ? Math.min(Math.max(Math.round(perRow), 1), MAX_PER_ROW) : 2
+      perRow: Number.isFinite(perRow) ? Math.min(Math.max(Math.round(perRow), 1), MAX_PER_ROW) : 2,
+      spans,
+      ordered: raw?.ordered === true
     };
   }
   return out;

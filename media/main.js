@@ -169,14 +169,14 @@
   // The least share of the side, in percent, an auto size leaves the list it squeezes.
   let autoMin = 25;
   const AUTO_MIN_STEP = 5;
-  const MAX_AUTO_MIN = 50;
-  // The side's width follows the widest row of the tree, so no name is cut short; past
-  // half the window the page would be squeezed, so it stops there. "grow" only ever
-  // widens it, and a click on the divider fits it again.
+  const MAX_AUTO_MIN = 75;
+  // The side's width follows the widest row of the tree, so no name is cut short; it stops
+  // short of squeezing the page below the least share of the window the options give it.
+  // "grow" only ever widens it, and a click on the divider fits it again.
   let autoWidth = "off";
   const AUTO_WIDTHS = ["off", "on", "grow"];
   const AUTO_WIDTH_LABELS = ["off", "on", "only grow"];
-  const FIT_WIDTH_SHARE = 0.5;
+  let autoWidthMin = 50;
   // Whether the contents list shows under the tree.
   let showToc = true;
   // Which side of a file's name its tags are drawn on in the tree.
@@ -195,11 +195,19 @@
   const MAX_MENTION_LINES = 100;
   // The files left in edit mode, which open in it again.
   let editing = new Set();
-  // Each folder's tag buckets, by its path: the tags with one, and how they are laid out.
+  // Each folder's tag buckets, by its path: the tags with one, how many stand in a row and
+  // how many columns each spans, and whether the tags are in an order of the folder's own.
   let buckets = {};
   const MAX_PER_ROW = 12;
   let bucketOutline = true;
-  let bucketFill = false;
+  // How strongly, in percent, a bucket is tinted with its tag's colour; none leaves it bare.
+  let bucketFill = 0;
+  const BUCKET_FILL_STEP = 5;
+  // The tint the background had when it was only on or off.
+  const OLD_BUCKET_FILL = 14;
+  // Whether a bucket's heading is written in its tag's colour instead of its own, and bold.
+  let bucketHeadTint = false;
+  let bucketHeadBold = false;
   // Where a bucket's heading stands, in the box, on its outline as a fieldset's legend
   // does, or above it, and how it is drawn: the tag's pill, a bar of its colour across the
   // top, or the name alone.
@@ -266,6 +274,9 @@
     if (typeof state.autoMin === "number") {
       autoMin = state.autoMin;
     }
+    if (typeof state.autoWidthMin === "number") {
+      autoWidthMin = state.autoWidthMin;
+    }
     if (AUTO_WIDTHS.includes(state.autoWidth)) {
       autoWidth = state.autoWidth;
     } else if (typeof state.autoWidth === "boolean") {
@@ -305,13 +316,24 @@
       pinned = new Set(state.pinned);
     }
     if (state.buckets && typeof state.buckets === "object") {
-      buckets = Object.assign({}, state.buckets);
+      buckets = {};
+      for (const [path, value] of Object.entries(state.buckets)) {
+        buckets[path] = loadBuckets(value);
+      }
     }
     if (typeof state.bucketOutline === "boolean") {
       bucketOutline = state.bucketOutline;
     }
-    if (typeof state.bucketFill === "boolean") {
+    if (typeof state.bucketFill === "number") {
       bucketFill = state.bucketFill;
+    } else if (typeof state.bucketFill === "boolean") {
+      bucketFill = state.bucketFill ? OLD_BUCKET_FILL : 0;
+    }
+    if (typeof state.bucketHeadTint === "boolean") {
+      bucketHeadTint = state.bucketHeadTint;
+    }
+    if (typeof state.bucketHeadBold === "boolean") {
+      bucketHeadBold = state.bucketHeadBold;
     }
     if (BUCKET_HEADS.includes(state.bucketHead)) {
       bucketHead = state.bucketHead;
@@ -320,6 +342,17 @@
       bucketHeadStyle = state.bucketHeadStyle;
     }
     selected = typeof state.selected === "string" ? state.selected : null;
+  }
+
+  // Buckets laid down, one under another, before there was only a count to a row, are
+  // laid one to a row.
+  function loadBuckets(value) {
+    const own = Object.assign({ tags: [], perRow: 2, spans: {}, ordered: false }, value);
+    if (own.flow === "column") {
+      own.perRow = 1;
+    }
+    delete own.flow;
+    return own;
   }
 
   function currentState() {
@@ -333,6 +366,7 @@
       autoSize: autoSize,
       autoMin: autoMin,
       autoWidth: autoWidth,
+      autoWidthMin: autoWidthMin,
       showToc: showToc,
       tagSide: tagSide,
       hoverStrength: hoverStrength,
@@ -344,6 +378,8 @@
       buckets: buckets,
       bucketOutline: bucketOutline,
       bucketFill: bucketFill,
+      bucketHeadTint: bucketHeadTint,
+      bucketHeadBold: bucketHeadBold,
       bucketHead: bucketHead,
       bucketHeadStyle: bucketHeadStyle,
       selected: selected,
@@ -404,12 +440,19 @@
     drawOptions();
   }
 
+  function stepAutoWidthMin(delta) {
+    autoWidthMin = Math.min(Math.max(autoWidthMin + delta, 0), MAX_AUTO_MIN);
+    fitWidth(true);
+    persist();
+    drawOptions();
+  }
+
   // Each row is measured as wide as it would be with nothing cut: its name and its tags
   // at their own width, and the indent of the folders it is in. A bucket's rows share
-  // their row of buckets, so the buckets are measured instead: laid across, each is as
-  // wide as the widest of them, and there are as many of those as stand in a row. Only
-  // growing, the side is never made narrower than it is, unless asked to fit by a click
-  // on the divider.
+  // their row of buckets, so the buckets are measured instead: each column is as wide as
+  // the widest bucket needs of the columns it spans, and there are as many columns as
+  // stand in a row. Only growing, the side is never made narrower than it is, unless asked
+  // to fit by a click on the divider.
   function fitWidth(refit) {
     if (autoWidth === "off") {
       return;
@@ -428,15 +471,17 @@
     }
     for (const grid of treeEl.querySelectorAll(".buckets")) {
       const boxes = [...grid.children];
-      const widest = Math.max(0, ...boxes.map((box) => box.getBoundingClientRect().width));
-      const across = Math.min(boxes.length, Number(grid.style.getPropertyValue("--per-row")) || 1);
+      const perRow = Number(grid.style.getPropertyValue("--per-row")) || 1;
       const gap = parseFloat(getComputedStyle(grid).columnGap) || 0;
-      right = Math.max(right, grid.getBoundingClientRect().left + across * widest + (across - 1) * gap);
+      const span = (box) => Math.min(Number(box.dataset.span) || 1, perRow);
+      const column = Math.max(0, ...boxes.map((box) => (box.getBoundingClientRect().width - (span(box) - 1) * gap) / span(box)));
+      const across = Math.min(perRow, boxes.reduce((sum, box) => sum + span(box), 0));
+      right = Math.max(right, grid.getBoundingClientRect().left + across * column + (across - 1) * gap);
     }
     treeEl.classList.remove("measuring");
     const box = treeEl.getBoundingClientRect();
     const wanted = right - box.left + parseFloat(getComputedStyle(treeEl).paddingRight);
-    const fit = Math.min(Math.ceil(wanted), Math.floor(window.innerWidth * FIT_WIDTH_SHARE));
+    const fit = Math.min(Math.ceil(wanted), Math.floor(window.innerWidth * (1 - autoWidthMin / 100)));
     setSplit(autoWidth === "grow" && !refit ? Math.max(split, fit) : fit);
     // The contents wrap to the width they are given, so their height is found again.
     if (autoSize === "toc") {
@@ -896,17 +941,28 @@
     return li;
   }
 
-  // The tags with a bucket in a folder, in the order tags are listed in; a tag gone since
-  // keeps its place in the folder's list but has no bucket.
+  // The tags with a bucket in a folder, in the folder's own order once one is set by
+  // dragging them in the picker, else in the order tags are listed in, which they then
+  // follow; a tag gone since keeps its place in the folder's list but has no bucket.
   function bucketTags(at) {
     const own = buckets[at];
-    return own ? byOrder(own.tags.filter((tag) => tag in tagColors)) : [];
+    if (!own) {
+      return [];
+    }
+    const live = own.tags.filter((tag) => tag in tagColors);
+    return own.ordered ? live : byOrder(live);
   }
 
-  // The bucket a file goes in: that of the first of its tags, in the tags' order, that has
-  // one.
+  // The bucket a file goes in: that of the first of its tags, in the buckets' order, that
+  // has one.
   function bucketOf(path, kept) {
-    return byOrder(tags[path] || []).find((tag) => kept.includes(tag)) || null;
+    const own = tags[path] || [];
+    return kept.find((tag) => own.includes(tag)) || null;
+  }
+
+  // How many of the row's columns a bucket spans, no more than there are in a row.
+  function bucketSpan(own, tag) {
+    return Math.min(Math.max((own.spans || {})[tag] || 1, 1), own.perRow);
   }
 
   // A folder's buckets, one to each tag that has one, under a heading of the tag and ringed
@@ -914,10 +970,13 @@
   function bucketItem(at, held) {
     const own = buckets[at];
     const li = make("li", "bucket-holder");
-    const grid = make("div", "buckets" + (own.flow === "column" ? " down" : ""));
-    grid.style.setProperty("--per-row", String(own.flow === "column" ? 1 : own.perRow));
+    const grid = make("div", "buckets");
+    grid.style.setProperty("--per-row", String(own.perRow));
+    grid.style.setProperty("--fill", bucketFill + "%");
     grid.classList.toggle("outlined", bucketOutline);
-    grid.classList.toggle("filled", bucketFill);
+    grid.classList.toggle("filled", bucketFill > 0);
+    grid.classList.toggle("head-tinted", bucketHeadTint);
+    grid.classList.toggle("head-bold", bucketHeadBold);
     grid.classList.toggle("head-out", bucketHead === "outside");
     grid.classList.toggle("head-over", bucketHead === "over");
     grid.classList.add("head-" + bucketHeadStyle);
@@ -928,6 +987,11 @@
       const box = make(over ? "fieldset" : "div", "bucket t-" + tagColor(tag));
       box.dataset.folder = at;
       box.dataset.tag = tag;
+      const span = bucketSpan(own, tag);
+      box.dataset.span = String(span);
+      if (span > 1) {
+        box.style.gridColumn = "span " + span;
+      }
       const head = make(over ? "legend" : "div", "bucket-head");
       const pill = tagPill(tag);
       pill.addEventListener("click", (event) => {
@@ -2855,8 +2919,14 @@
       persist();
     } else if (message.type === "tagRenamed") {
       for (const [path, value] of Object.entries(buckets)) {
+        const spans = Object.assign({}, value.spans);
+        if (message.from in spans) {
+          spans[message.to] = spans[message.from];
+          delete spans[message.from];
+        }
         buckets[path] = Object.assign({}, value, {
-          tags: [...new Set(value.tags.map((tag) => (tag === message.from ? message.to : tag)))]
+          tags: [...new Set(value.tags.map((tag) => (tag === message.from ? message.to : tag)))],
+          spans: spans
         });
       }
       persist();
@@ -3725,8 +3795,9 @@
     tagInputEl.focus();
   }
 
-  // The same box picks the tags a folder has buckets for, and under them how the buckets
-  // are laid out. The folder is opened, so the buckets come and go in sight.
+  // The same box picks the tags a folder has buckets for, how many columns each spans and
+  // the order they stand in, and under them how many stand in a row. The folder is opened,
+  // so the buckets come and go in sight.
   function openBucketPicker(at, x, y) {
     closeMenu();
     pickerPath = null;
@@ -3748,7 +3819,7 @@
   }
 
   function folderBuckets(at) {
-    return buckets[at] || { tags: [], flow: "row", perRow: 2 };
+    return buckets[at] || { tags: [], perRow: 2, spans: {}, ordered: false };
   }
 
   function setBuckets(at, change) {
@@ -3757,50 +3828,49 @@
     persist();
   }
 
-  // Across, so many to a row, with a box for how many; or down, one under the other.
+  // How many buckets stand in a row, one making them stand one under another; and, once
+  // the folder has an order of its own, a button to have them follow the tags' order again.
   function drawBucketFoot() {
     const own = folderBuckets(pickerFolder);
     tagPickerFootEl.textContent = "";
     tagPickerFootEl.hidden = false;
     const at = pickerFolder;
-    const flow = make("span", "bucket-flow");
-    for (const [value, label, title] of [["row", "Across", "Buckets side by side"], ["column", "Down", "Buckets one under another"]]) {
-      const button = make("button", "bucket-flow-button" + (own.flow === value ? " active" : ""), label);
-      button.type = "button";
-      button.title = title;
-      button.addEventListener("pointerdown", (event) => event.preventDefault());
-      button.addEventListener("click", () => {
-        setBuckets(at, { flow: value });
+    const label = make("label", "bucket-per-row", "per row");
+    const input = make("input");
+    input.type = "number";
+    input.min = "1";
+    input.max = String(MAX_PER_ROW);
+    input.value = String(own.perRow);
+    input.title = "How many buckets stand side by side";
+    input.addEventListener("input", () => {
+      const value = Math.round(Number(input.value));
+      if (value >= 1 && value <= MAX_PER_ROW) {
+        setBuckets(at, { perRow: value });
+        drawTagPicker();
+      }
+    });
+    input.addEventListener("change", () => {
+      input.value = String(folderBuckets(at).perRow);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        tagInputEl.focus();
+      }
+    });
+    label.prepend(input);
+    tagPickerFootEl.appendChild(label);
+    if (own.ordered) {
+      const reset = make("button", "bucket-reset", "Tag order");
+      reset.type = "button";
+      reset.title = "Order the buckets as the tags are ordered in the options again";
+      reset.addEventListener("pointerdown", (event) => event.preventDefault());
+      reset.addEventListener("click", () => {
+        setBuckets(at, { ordered: false });
+        drawTagPicker();
         drawBucketFoot();
       });
-      flow.appendChild(button);
-    }
-    tagPickerFootEl.appendChild(flow);
-    if (own.flow === "row") {
-      const label = make("label", "bucket-per-row", "per row");
-      const input = make("input");
-      input.type = "number";
-      input.min = "1";
-      input.max = String(MAX_PER_ROW);
-      input.value = String(own.perRow);
-      input.title = "How many buckets stand side by side";
-      input.addEventListener("input", () => {
-        const value = Math.round(Number(input.value));
-        if (value >= 1 && value <= MAX_PER_ROW) {
-          setBuckets(at, { perRow: value });
-        }
-      });
-      input.addEventListener("change", () => {
-        input.value = String(folderBuckets(at).perRow);
-      });
-      input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          tagInputEl.focus();
-        }
-      });
-      label.prepend(input);
-      tagPickerFootEl.appendChild(label);
+      tagPickerFootEl.appendChild(reset);
     }
   }
 
@@ -3826,7 +3896,10 @@
   function pickerChoices() {
     const text = tagInputEl.value.replace(/\s+/g, " ").trim();
     const lower = text.toLowerCase();
-    const names = byOrder([...new Set(Object.keys(tagColors).concat(pickerFolder === null ? tags[pickerPath] || [] : []))]);
+    const all = byOrder([...new Set(Object.keys(tagColors).concat(pickerFolder === null ? tags[pickerPath] || [] : []))]);
+    // For buckets, the folder's own come first, in the order they stand in, to be dragged.
+    const kept = pickerFolder === null ? [] : bucketTags(pickerFolder);
+    const names = kept.concat(all.filter((name) => !kept.includes(name)));
     const choices = names
       .filter((name) => name.toLowerCase().includes(lower))
       .map((name) => ({ name: name }));
@@ -3877,12 +3950,22 @@
       name.className = "name";
       name.textContent = choice.fresh ? "Add “" + choice.name + "”" : choice.name;
       row.appendChild(name);
+      if (pickerFolder !== null && own.has(choice.name)) {
+        row.appendChild(spanStepper(choice.name));
+        dragBucketChoice(row, choice.name);
+      }
 
-      // The input keeps the focus, so typing carries on after a click.
-      row.addEventListener("pointerdown", (event) => event.preventDefault());
+      // The input keeps the focus, so typing carries on after a click. A row that can be
+      // dragged lets the press through, which drags start from, and gives the focus back.
+      row.addEventListener("pointerdown", (event) => {
+        if (!row.draggable) {
+          event.preventDefault();
+        }
+      });
       row.addEventListener("click", () => {
         pickerIndex = index;
         toggleTag(choice);
+        tagInputEl.focus({ preventScroll: true });
       });
       tagListEl.appendChild(row);
     });
@@ -3892,9 +3975,99 @@
     }
   }
 
+  // How many columns a bucket spans, from one to as many as stand in a row.
+  function spanStepper(tag) {
+    const own = folderBuckets(pickerFolder);
+    const at = pickerFolder;
+    const span = bucketSpan(own, tag);
+    const box = make("span", "bucket-span");
+    const step = (icon, title, delta, disabled) => {
+      const button = make("button", "bucket-span-button");
+      button.type = "button";
+      button.innerHTML = icon;
+      button.title = title;
+      button.disabled = disabled;
+      button.addEventListener("pointerdown", (event) => event.preventDefault());
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const spans = Object.assign({}, folderBuckets(at).spans);
+        const next = Math.min(Math.max(span + delta, 1), MAX_PER_ROW);
+        if (next > 1) {
+          spans[tag] = next;
+        } else {
+          delete spans[tag];
+        }
+        setBuckets(at, { spans: spans });
+        drawTagPicker();
+      });
+      return button;
+    };
+    const value = make("span", "bucket-span-value", "×" + span);
+    value.title = "Spans " + span + " of " + own.perRow + (own.perRow === 1 ? " column" : " columns");
+    box.append(step(MINUS_ICON, "Span fewer columns", -1, span <= 1), value, step(PLUS_ICON, "Span more columns", 1, span >= own.perRow));
+    return box;
+  }
+
+  // A bucket's tag is dragged above or below another's to move the bucket; from then on
+  // the folder keeps that order, and no longer follows the tags' order in the options.
+  let bucketDrag = null;
+
+  function dragBucketChoice(row, name) {
+    const at = pickerFolder;
+    row.draggable = true;
+    row.addEventListener("dragstart", (event) => {
+      bucketDrag = name;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", name);
+      row.classList.add("dragged");
+    });
+    row.addEventListener("dragend", () => {
+      bucketDrag = null;
+      row.classList.remove("dragged");
+      markBucketDrop(null);
+      tagInputEl.focus({ preventScroll: true });
+    });
+    row.addEventListener("dragover", (event) => {
+      if (!bucketDrag) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      markBucketDrop(row, dropsAfter(row, event));
+    });
+    row.addEventListener("drop", (event) => {
+      if (!bucketDrag) {
+        return;
+      }
+      event.preventDefault();
+      const moved = bucketDrag;
+      const after = dropsAfter(row, event);
+      bucketDrag = null;
+      markBucketDrop(null);
+      if (moved === name) {
+        return;
+      }
+      const order = bucketTags(at).filter((other) => other !== moved);
+      order.splice(order.indexOf(name) + (after ? 1 : 0), 0, moved);
+      setBuckets(at, { tags: order, ordered: true });
+      drawTagPicker();
+      drawBucketFoot();
+      tagInputEl.focus();
+    });
+  }
+
+  function markBucketDrop(row, after) {
+    for (const el of tagListEl.querySelectorAll(".drop-before, .drop-after")) {
+      el.classList.remove("drop-before", "drop-after");
+    }
+    if (row) {
+      row.classList.add(after ? "drop-after" : "drop-before");
+    }
+  }
+
   function toggleTag(choice) {
     if (pickerFolder !== null) {
-      const own = folderBuckets(pickerFolder).tags.filter((name) => name in tagColors);
+      const own = bucketTags(pickerFolder);
       setBuckets(pickerFolder, {
         tags: own.includes(choice.name) ? own.filter((name) => name !== choice.name) : own.concat(choice.name)
       });
@@ -4096,6 +4269,13 @@
     return (bytes / 1024 / 1024).toFixed(1) + " MB";
   }
 
+  function stepBucketFill(delta) {
+    bucketFill = Math.min(Math.max(Math.round(bucketFill / BUCKET_FILL_STEP) * BUCKET_FILL_STEP + delta, 0), 100);
+    drawTree();
+    persist();
+    drawOptions();
+  }
+
   function stepBlockPad(dy, dx) {
     setBlockPad(blockPadY + dy, blockPadX + dx);
     persist();
@@ -4179,6 +4359,14 @@
     optionRow(reading, "Auto size side width", [
       optionChoice(AUTO_WIDTH_LABELS, AUTO_WIDTHS.indexOf(autoWidth), (choice) => setAutoWidth(AUTO_WIDTHS[choice]))
     ]);
+    optionRow(reading, "Auto size minimum for the page", optionStepper(
+      autoWidthMin + "%",
+      ["Less of the window kept for the page when the side's width is auto sized", "More of the window kept for the page when the side's width is auto sized"],
+      () => stepAutoWidthMin(-AUTO_MIN_STEP),
+      () => stepAutoWidthMin(AUTO_MIN_STEP),
+      autoWidthMin <= 0,
+      autoWidthMin >= MAX_AUTO_MIN
+    ));
     optionRow(reading, "Block highlight", optionStepper(
       hoverStrength ? hoverStrength + "%" : "off",
       ["Dimmer", "Brighter"],
@@ -4219,13 +4407,14 @@
         persist();
       })
     ]);
-    optionRow(tree, "Tag bucket background", [
-      optionChoice(["none", "tag colour"], bucketFill ? 1 : 0, (choice) => {
-        bucketFill = choice === 1;
-        drawTree();
-        persist();
-      })
-    ]);
+    optionRow(tree, "Tag bucket background", optionStepper(
+      bucketFill ? bucketFill + "%" : "off",
+      ["Fainter tint of the tag's colour, none hides the background", "Stronger tint of the tag's colour"],
+      () => stepBucketFill(-BUCKET_FILL_STEP),
+      () => stepBucketFill(BUCKET_FILL_STEP),
+      bucketFill <= 0,
+      bucketFill >= 100
+    ));
     optionRow(tree, "Tag bucket heading placement", [
       optionChoice(BUCKET_HEADS, BUCKET_HEADS.indexOf(bucketHead), (choice) => {
         bucketHead = BUCKET_HEADS[choice];
@@ -4236,6 +4425,20 @@
     optionRow(tree, "Tag bucket heading style", [
       optionChoice(BUCKET_HEAD_STYLES, BUCKET_HEAD_STYLES.indexOf(bucketHeadStyle), (choice) => {
         bucketHeadStyle = BUCKET_HEAD_STYLES[choice];
+        drawTree();
+        persist();
+      })
+    ]);
+    optionRow(tree, "Tag bucket heading text", [
+      optionChoice(["text colour", "tag colour"], bucketHeadTint ? 1 : 0, (choice) => {
+        bucketHeadTint = choice === 1;
+        drawTree();
+        persist();
+      })
+    ]);
+    optionRow(tree, "Tag bucket heading weight", [
+      optionChoice(["normal", "bold"], bucketHeadBold ? 1 : 0, (choice) => {
+        bucketHeadBold = choice === 1;
         drawTree();
         persist();
       })
