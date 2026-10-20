@@ -36,6 +36,30 @@ module.exports = [
   { name: "tree-focused", clip: side, act: async (page) => page.focus("#tree") },
   { name: "tree-text-size", state: { treeScale: 1.3 }, clip: wide },
   { name: "tree-light", theme: "light-modern", clip: side },
+  // The pointer on the file next to the one selected: the two lit rows keep apart.
+  {
+    name: "tree-hover-by-selected",
+    hover: true,
+    clip: { x: 0, y: 120, width: 300, height: 90 },
+    act: async (page) => page.hover('.row[data-path="plans/migration-plan-for-the-new-storage-layer.md"] .label')
+  },
+  {
+    name: "tree-hover-by-selected-light",
+    theme: "light-modern",
+    hover: true,
+    clip: { x: 0, y: 120, width: 300, height: 90 },
+    act: async (page) => page.hover('.row[data-path="plans/migration-plan-for-the-new-storage-layer.md"] .label')
+  },
+  {
+    name: "tree-cursor-by-selected",
+    hover: true,
+    clip: { x: 0, y: 120, width: 300, height: 90 },
+    act: async (page) => {
+      await page.focus("#tree");
+      await page.keyboard.press("ArrowUp");
+      await page.hover('.row[data-path="plans/archive"] .label');
+    }
+  },
   {
     name: "menu-file",
     clip: menu,

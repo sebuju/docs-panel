@@ -230,12 +230,18 @@ body.dragging-rows {
 
 /* One line box for every child: with each of them the same height, centring them puts
    text, twisty and dot all on the row's centre line. */
+/* The hover and the selection are painted a pixel short of the row's top and bottom: a
+   clear border, which the background is kept off, takes that pixel from the padding, so a
+   row is as tall as ever and its contents stay where they were, and two lit rows side by
+   side keep a gap between them. */
 .row {
   overflow: hidden;
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 10px;
+  padding: 1px 10px;
+  border-block: 1px solid transparent;
+  background-clip: padding-box;
   border-radius: 3px;
   cursor: pointer;
   white-space: nowrap;
@@ -268,7 +274,7 @@ body.dragging-rows {
 /* The row the keys are on, shown while the tree has the focus. */
 #tree:focus .row.cursor {
   outline: 1px solid var(--vscode-list-focusOutline, var(--vscode-focusBorder));
-  outline-offset: -1px;
+  outline-offset: -2px;
 }
 
 /* The name gives way in step with the pills after it, and never all the way. */
@@ -1920,6 +1926,11 @@ img.single {
   border-radius: 3px;
 }
 
+/* On the lit part of the row, inside its clear border. */
+.row.drop {
+  outline-offset: -2px;
+}
+
 /* A folder's tag buckets, at the head of what it holds. They share a row in columns of
    one width, each row as tall as its tallest, and a bucket may span several columns. */
 /* Indented as a row's own parts are, so a bucket's edge stands in line with the twisties
@@ -2075,7 +2086,7 @@ img.single {
 }
 
 .bucket .row {
-  padding: 2px 6px;
+  padding: 1px 6px;
 }
 
 .bucket-empty {
