@@ -462,7 +462,13 @@ export class DocsPanel {
         await this.clone(String(message.path), !!message.dir);
         return;
       case "relocate":
-        await this.relocate(String(message.from), String(message.to), !!message.dir, cleanTag(message.tag));
+        await this.relocate(
+          String(message.from),
+          String(message.to),
+          !!message.dir,
+          cleanTag(message.tag),
+          message.untag === true
+        );
         return;
       case "reveal":
         await this.reveal(String(message.path));
@@ -1034,8 +1040,9 @@ export class DocsPanel {
 
   // A drag drops one entry into one folder; "" is the root. The ledger keys of a folder's
   // files are read before the move, because afterwards the old paths are gone. A file
-  // dropped in one of the folder's tag buckets takes the bucket's tag as it lands.
-  private async relocate(from: string, to: string, dir: boolean, tag = ""): Promise<void> {
+  // dropped in one of the folder's tag buckets takes the bucket's tag as it lands, or, in
+  // its untagged bucket, loses all its tags.
+  private async relocate(from: string, to: string, dir: boolean, tag = "", untag = false): Promise<void> {
     const root = this.root?.uri;
     const parent = from.split("/").slice(0, -1).join("/");
     if (!root || to === parent || to === from || to.startsWith(`${from}/`)) {
@@ -1060,7 +1067,9 @@ export class DocsPanel {
           await rekey(spec, from, toPath);
         }
       }
-      if (tag && !dir) {
+      if (untag && !dir) {
+        await setTags(marksLedger(root), toPath, []);
+      } else if (tag && !dir) {
         const spec = marksLedger(root);
         const own = (await load(spec)).files[toPath]?.tags ?? [];
         if (!own.includes(tag)) {

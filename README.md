@@ -122,12 +122,17 @@ its tags, in that order, that has one; it shows there without its tags, which th
 still shows, and pinned files come first. The folder's other files follow the buckets as
 usual.
 
+After the tags the picker offers *untagged*, a bucket for the folder's files that have no
+tags at all. It is no tag, so it is grey and has no colour, letters or style of its own,
+but it is turned on, spans columns and is ordered as a tag's bucket is.
+
 | Drag a file | Does |
 |---|---|
 | From one bucket to another | Takes off the first bucket's tag and puts on the second's |
 | From a bucket to the folder's other files | Takes off the bucket's tag |
 | From the folder's other files to a bucket | Puts on the bucket's tag |
 | From another folder to a bucket | Moves the file into the folder and puts on the bucket's tag |
+| To the untagged bucket | Takes off all the file's tags, moving it first if it is from another folder |
 
 In the picker each bucket's tag has **−** and **+** for how many columns the bucket spans,
 and under the tags is how many columns stand in a row: each as wide as the others, and

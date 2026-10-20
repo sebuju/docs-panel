@@ -185,6 +185,19 @@ module.exports = [
     clip: side
   },
   {
+    name: "buckets-untagged",
+    state: {
+      expanded: ["plans", "plans/archive"],
+      buckets: { plans: { tags: ["q3", " untagged"], perRow: 2 }, "plans/archive": { tags: [" untagged"], perRow: 1 } }
+    },
+    clip: side
+  },
+  {
+    name: "buckets-untagged-picker",
+    state: { expanded: ["plans", "plans/archive"], buckets: { "plans/archive": { tags: [" untagged"], perRow: 1 } } },
+    act: async (page) => page.click('.bucket[data-folder="plans/archive"] .bucket-head', { button: "right" })
+  },
+  {
     name: "buckets-head-tinted-bold",
     state: { bucketHeadStyle: "plain", bucketHeadTint: true, bucketHeadBold: true, bucketFill: 8, buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 2 } } },
     clip: side

@@ -1354,6 +1354,12 @@ img.single {
   text-overflow: ellipsis;
 }
 
+/* The untagged bucket is no tag, and is set apart from a tag that happens to be named so. */
+.tag-choice .name.untagged,
+.tag.untagged {
+  font-style: italic;
+}
+
 #optionsLayer {
   position: fixed;
   inset: 0;

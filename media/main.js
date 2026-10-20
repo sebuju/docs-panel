@@ -215,6 +215,10 @@
   const BUCKET_HEADS = ["inside", "over", "outside"];
   let bucketHeadStyle = "pill";
   const BUCKET_HEAD_STYLES = ["pill", "fill", "plain"];
+  // The bucket of a folder's files that have no tag at all. It is chosen, laid out and
+  // ordered as a tag's is, but is no tag: a tag's name is trimmed, so none starts with a
+  // space, and this one cannot be given to a file.
+  const UNTAGGED = " untagged";
   // How far down each file was read, as a share of the way, oldest first.
   let scrolls = {};
   const MAX_SCROLLS = 300;
@@ -949,14 +953,17 @@
     if (!own) {
       return [];
     }
-    const live = own.tags.filter((tag) => tag in tagColors);
+    const live = own.tags.filter((tag) => tag === UNTAGGED || tag in tagColors);
     return own.ordered ? live : byOrder(live);
   }
 
   // The bucket a file goes in: that of the first of its tags, in the buckets' order, that
-  // has one.
+  // has one, or the untagged one for a file with no tags.
   function bucketOf(path, kept) {
     const own = tags[path] || [];
+    if (!own.length) {
+      return kept.includes(UNTAGGED) ? UNTAGGED : null;
+    }
     return kept.find((tag) => own.includes(tag)) || null;
   }
 
@@ -994,10 +1001,12 @@
       }
       const head = make(over ? "legend" : "div", "bucket-head");
       const pill = tagPill(tag);
-      pill.addEventListener("click", (event) => {
-        event.stopPropagation();
-        searchTag(tag, event.shiftKey);
-      });
+      if (tag !== UNTAGGED) {
+        pill.addEventListener("click", (event) => {
+          event.stopPropagation();
+          searchTag(tag, event.shiftKey);
+        });
+      }
       head.appendChild(pill);
       box.appendChild(head);
       // The ring and the tint are drawn on the body: the whole bucket with its heading
@@ -1065,21 +1074,27 @@
     const style = tagStyles[name] || {};
     const pill = document.createElement("span");
     pill.className = "tag t-" + tagColor(name);
+    pill.classList.toggle("untagged", name === UNTAGGED);
     for (const flag of STYLE_FLAGS) {
       pill.classList.toggle("tag-" + flag, !!style[flag]);
     }
     const wrap = Array.from(style.wrap || "");
     const open = wrap[0] || "";
     const close = wrap[1] || open;
-    pill.appendChild(make("span", "tag-text", open + name + close));
-    pill.title = name;
-    pill.dataset.name = open + name + close;
+    const label = tagLabel(name);
+    pill.appendChild(make("span", "tag-text", open + label + close));
+    pill.title = name === UNTAGGED ? "Files with no tags" : name;
+    pill.dataset.name = open + label + close;
     pill.dataset.short = open + shortOf(name) + close;
     return pill;
   }
 
+  function tagLabel(name) {
+    return name === UNTAGGED ? "untagged" : name;
+  }
+
   function shortOf(name) {
-    return tagShorts[name] || initials(name);
+    return tagShorts[name] || initials(tagLabel(name));
   }
 
   // A tag just typed in has no letters from the extension until it answers, and shows its
@@ -2151,7 +2166,8 @@
     if (kept.length) {
       const from = bucketOf(dragging.path, kept);
       const to = bucket ? bucket.dataset.tag : row && !row.dataset.dir ? null : undefined;
-      if (to === undefined || to === from) {
+      // A file with no tags has none to lose, so it stays in the untagged bucket.
+      if (to === undefined || to === from || (to === null && from === UNTAGGED)) {
         return null;
       }
       return { el: bucket || row, add: to, remove: from };
@@ -2159,7 +2175,8 @@
     if (path === parent || path === dragging.path || path.startsWith(dragging.path + "/")) {
       return null;
     }
-    return { el: bucket || row, path: path, tag: bucket && !dragging.dir ? bucket.dataset.tag : "" };
+    const tag = bucket && !dragging.dir ? bucket.dataset.tag : "";
+    return { el: bucket || row, path: path, tag: tag === UNTAGGED ? "" : tag, untag: tag === UNTAGGED };
   }
 
   let dropEl = null;
@@ -2208,15 +2225,18 @@
         from: dragging.path,
         to: info.path,
         dir: dragging.dir,
-        tag: info.tag
+        tag: info.tag,
+        untag: info.untag
       });
     }
     dragging = null;
   });
 
+  // Dropped in the untagged bucket, a file loses all its tags, not only the one it had
+  // a bucket for.
   function retag(path, add, remove) {
-    const next = (tags[path] || []).filter((tag) => tag !== remove);
-    if (add && !next.includes(add)) {
+    const next = add === UNTAGGED ? [] : (tags[path] || []).filter((tag) => tag !== remove);
+    if (add && add !== UNTAGGED && !next.includes(add)) {
       next.push(add);
     }
     tags = Object.assign({}, tags, { [path]: next });
@@ -3897,11 +3917,15 @@
     const text = tagInputEl.value.replace(/\s+/g, " ").trim();
     const lower = text.toLowerCase();
     const all = byOrder([...new Set(Object.keys(tagColors).concat(pickerFolder === null ? tags[pickerPath] || [] : []))]);
-    // For buckets, the folder's own come first, in the order they stand in, to be dragged.
+    // For buckets, the folder's own come first, in the order they stand in, to be dragged,
+    // and the untagged bucket is offered after the tags.
     const kept = pickerFolder === null ? [] : bucketTags(pickerFolder);
     const names = kept.concat(all.filter((name) => !kept.includes(name)));
+    if (pickerFolder !== null && !kept.includes(UNTAGGED)) {
+      names.push(UNTAGGED);
+    }
     const choices = names
-      .filter((name) => name.toLowerCase().includes(lower))
+      .filter((name) => tagLabel(name).toLowerCase().includes(lower))
       .map((name) => ({ name: name }));
     // A bucket is for a tag files can already have, so none is made from here.
     if (pickerFolder === null && text && !names.some((name) => name.toLowerCase() === lower)) {
@@ -3934,9 +3958,11 @@
       tick.textContent = own.has(choice.name) ? "✓" : "";
       row.appendChild(tick);
 
+      // The untagged bucket is no tag, so it has no colour of its own to pick.
+      const virtual = choice.name === UNTAGGED;
       const swatch = document.createElement("span");
-      swatch.className = "swatch pick t-" + tagColor(choice.name);
-      if (!choice.fresh) {
+      swatch.className = "swatch t-" + tagColor(choice.name) + (virtual ? "" : " pick");
+      if (!choice.fresh && !virtual) {
         swatch.title = "Colour";
         swatch.addEventListener("click", (event) => {
           event.stopPropagation();
@@ -3948,7 +3974,11 @@
 
       const name = document.createElement("span");
       name.className = "name";
-      name.textContent = choice.fresh ? "Add “" + choice.name + "”" : choice.name;
+      name.textContent = choice.fresh ? "Add “" + choice.name + "”" : tagLabel(choice.name);
+      if (virtual) {
+        name.classList.add("untagged");
+        name.title = "Files with no tags";
+      }
       row.appendChild(name);
       if (pickerFolder !== null && own.has(choice.name)) {
         row.appendChild(spanStepper(choice.name));
