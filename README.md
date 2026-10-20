@@ -98,7 +98,8 @@ how far the light reaches past the block above and below it and either side of i
 how many of a file's mentions show before **Show more**, where off turns the mentions
 off), the tree's (its own text size, which side of a name the tags are drawn on, and
 whether tag buckets are outlined and tinted in their tag's colour, and whether a
-bucket's heading stands inside its box or over it, drawn as the tag's pill, as a bar of
+bucket's heading stands inside its box, on its outline as a fieldset's legend does, or
+above it, drawn as the tag's pill, as a bar of
 its colour across the top, or as the plain name), the tags, and the data
 files the panel writes, each with its size and a button to purge it.
 

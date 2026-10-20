@@ -200,10 +200,11 @@
   const MAX_PER_ROW = 12;
   let bucketOutline = true;
   let bucketFill = false;
-  // Where a bucket's heading stands, in the box or over it, and how it is drawn: the tag's
-  // pill, a bar of its colour across the top, or the name alone.
+  // Where a bucket's heading stands, in the box, on its outline as a fieldset's legend
+  // does, or above it, and how it is drawn: the tag's pill, a bar of its colour across the
+  // top, or the name alone.
   let bucketHead = "inside";
-  const BUCKET_HEADS = ["inside", "outside"];
+  const BUCKET_HEADS = ["inside", "over", "outside"];
   let bucketHeadStyle = "pill";
   const BUCKET_HEAD_STYLES = ["pill", "fill", "plain"];
   // How far down each file was read, as a share of the way, oldest first.
@@ -883,12 +884,16 @@
     grid.classList.toggle("outlined", bucketOutline);
     grid.classList.toggle("filled", bucketFill);
     grid.classList.toggle("head-out", bucketHead === "outside");
+    grid.classList.toggle("head-over", bucketHead === "over");
     grid.classList.add("head-" + bucketHeadStyle);
     for (const [tag, files] of held) {
-      const box = make("div", "bucket t-" + tagColor(tag));
+      // On the outline, the bucket is a fieldset and its heading the legend, so the
+      // browser breaks the line round the heading and starts the tint at its middle.
+      const over = bucketHead === "over";
+      const box = make(over ? "fieldset" : "div", "bucket t-" + tagColor(tag));
       box.dataset.folder = at;
       box.dataset.tag = tag;
-      const head = make("div", "bucket-head");
+      const head = make(over ? "legend" : "div", "bucket-head");
       const pill = tagPill(tag);
       pill.addEventListener("click", (event) => {
         event.stopPropagation();

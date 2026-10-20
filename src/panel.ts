@@ -59,10 +59,11 @@ const AUTO_WIDTHS: AutoWidth[] = ["off", "on", "grow"];
 export type TagSide = "left" | "right";
 const TAG_SIDES: TagSide[] = ["left", "right"];
 
-// Where a bucket's heading stands, in its box or over it, and how it is drawn: as the
+// Where a bucket's heading stands, in its box, on its outline as a fieldset's legend
+// does, or above it, and how it is drawn: as the
 // tag's pill, as a bar of the tag's colour across the top, or as the name alone.
-export type BucketHead = "inside" | "outside";
-const BUCKET_HEADS: BucketHead[] = ["inside", "outside"];
+export type BucketHead = "inside" | "over" | "outside";
+const BUCKET_HEADS: BucketHead[] = ["inside", "over", "outside"];
 export type BucketHeadStyle = "pill" | "fill" | "plain";
 const BUCKET_HEAD_STYLES: BucketHeadStyle[] = ["pill", "fill", "plain"];
 

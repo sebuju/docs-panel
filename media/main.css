@@ -1946,7 +1946,7 @@ img.single {
   padding: 2px 3px 3px;
 }
 
-.buckets.outlined:not(.head-out) .bucket,
+.buckets.outlined:not(.head-out, .head-over) .bucket,
 .buckets.outlined.head-out .bucket-body {
   box-shadow: inset 0 0 0 1px var(--c);
 }
@@ -1978,12 +1978,40 @@ img.single {
   background: var(--c);
 }
 
-.buckets.head-fill:not(.head-out) .bucket-head {
+.buckets.head-fill:not(.head-out, .head-over) .bucket-head {
   margin: -1px -3px 2px;
   border-radius: 4px 4px 0 0;
 }
 
 .buckets.head-fill.head-out .bucket-head {
+  border-radius: 4px;
+}
+
+/* On the outline: the bucket is a fieldset, ringed by its own border so the line breaks
+   round the legend. A bar of colour is as wide as the box, border and all; a pill or a
+   name has a little room either side of it on the line. */
+.buckets.head-over .bucket {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid transparent;
+  padding: 0 3px 3px;
+}
+
+.buckets.head-over.outlined .bucket {
+  border-color: var(--c);
+}
+
+.buckets.head-over .bucket-head {
+  box-sizing: border-box;
+  height: var(--tree-row);
+  margin-left: 3px;
+  padding: 0 3px;
+}
+
+.buckets.head-fill.head-over .bucket-head {
+  width: calc(100% + 8px);
+  margin: 0 -4px;
+  padding: 0 7px;
   border-radius: 4px;
 }
 

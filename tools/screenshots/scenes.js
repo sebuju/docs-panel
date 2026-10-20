@@ -185,6 +185,11 @@ module.exports = [
     clip: side
   },
   {
+    name: "buckets-head-over-plain",
+    state: { bucketHead: "over", bucketHeadStyle: "plain", buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
+    clip: side
+  },
+  {
     name: "buckets-head-inside-plain",
     theme: "light-modern",
     state: { bucketHeadStyle: "plain", buckets: { plans: { tags: ["plan", "blocked", "q3"], flow: "row", perRow: 2 } } },
