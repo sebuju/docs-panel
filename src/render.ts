@@ -86,11 +86,64 @@ function bodyOf(html: string): string {
 export async function renderMarkdown(text: string): Promise<string | undefined> {
   try {
     await vscode.extensions.getExtension("vscode.markdown-language-features")?.activate();
-    const html = await vscode.commands.executeCommand<string>("markdown.api.render", text);
+    const html = await vscode.commands.executeCommand<string>("markdown.api.render", closeTableGaps(text));
     return typeof html === "string" ? html : undefined;
   } catch {
     return undefined;
   }
+}
+
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const ROW = /^ {0,3}\|/;
+const DELIMITER = /^ {0,3}\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+const BLANK = /^\s*$/;
+
+// A blank line ends a table, so a row written after one would be shown as a paragraph of
+// pipes. Inside a table such a line is dropped instead, unless the row after it is the
+// head of a table of its own, which then stays a table of its own.
+export function closeTableGaps(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const out: string[] = [];
+  let fence = "";
+  let inTable = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const open = FENCE.exec(line);
+    if (fence) {
+      if (open && open[1][0] === fence[0] && open[1].length >= fence.length && BLANK.test(line.slice(open[0].length))) {
+        fence = "";
+      }
+      out.push(line);
+      continue;
+    }
+    if (open) {
+      fence = open[1];
+      inTable = false;
+      out.push(line);
+      continue;
+    }
+    if (inTable && BLANK.test(line)) {
+      let next = i;
+      while (next < lines.length && BLANK.test(lines[next])) {
+        next++;
+      }
+      if (next < lines.length && ROW.test(lines[next]) && !isDelimiter(lines[next + 1])) {
+        i = next - 1;
+        continue;
+      }
+    }
+    if (!inTable && line.includes("|") && isDelimiter(lines[i + 1])) {
+      inTable = true;
+    } else if (!line.includes("|")) {
+      inTable = false;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+function isDelimiter(line: string | undefined): boolean {
+  return line !== undefined && line.includes("|") && DELIMITER.test(line);
 }
 
 // Anything markdown-language-features and its companion extensions contribute to the

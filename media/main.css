@@ -1115,6 +1115,11 @@ body.dragging {
   border-collapse: collapse;
 }
 
+/* Two tables in a row are two tables, not one with a doubled rule across it. */
+.markdown-body table + table {
+  margin-top: 1em;
+}
+
 .markdown-body th,
 .markdown-body td {
   border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));

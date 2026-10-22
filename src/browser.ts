@@ -27,6 +27,7 @@ pre { padding: 10px 12px; overflow: auto; border-radius: 4px; line-height: 1.45;
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
 :not(pre) > code { padding: 0.1em 0.35em; border-radius: 3px; background: rgba(128, 128, 128, 0.14); }
 table { border-collapse: collapse; }
+table + table { margin-top: 1em; }
 th, td { padding: 4px 8px; border: 1px solid rgba(128, 128, 128, 0.35); }
 blockquote { margin: 1em 0; padding: 0.4em 1em; border-left: 3px solid rgba(128, 128, 128, 0.5); }
 h1, h2 { padding-bottom: 0.2em; border-bottom: 1px solid rgba(128, 128, 128, 0.25); }
