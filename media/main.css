@@ -947,6 +947,12 @@ body.dragging {
   opacity: 1;
 }
 
+/* White is lost on a light theme's side, so there the active entry goes to black. */
+body.vscode-light #toc li.active > a,
+body.vscode-high-contrast-light #toc li.active > a {
+  color: #000;
+}
+
 @keyframes headingFlash {
   from { background: rgba(128, 128, 128, 0.22); }
   to { background: transparent; }
