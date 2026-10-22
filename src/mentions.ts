@@ -13,6 +13,8 @@ export interface Mention {
 
 interface Cache {
   version: number;
+  // The extension's version that wrote it: another version may read the logs differently.
+  build: string;
   sessions: Record<string, number>;
   hits: Mention[];
 }
@@ -39,20 +41,20 @@ export function cacheUri(workspace: vscode.Uri): vscode.Uri {
   return vscode.Uri.joinPath(workspace, ".vscode", CACHE_FILE);
 }
 
-function emptyCache(): Cache {
-  return { version: 1, sessions: {}, hits: [] };
+function emptyCache(build: string): Cache {
+  return { version: 1, build, sessions: {}, hits: [] };
 }
 
-async function loadCache(workspace: vscode.Uri): Promise<Cache> {
+async function loadCache(workspace: vscode.Uri, build: string): Promise<Cache> {
   try {
     const bytes = await vscode.workspace.fs.readFile(cacheUri(workspace));
     const parsed = JSON.parse(new TextDecoder().decode(bytes));
-    if (parsed?.version !== 1 || !parsed.sessions || !Array.isArray(parsed.hits)) {
-      return emptyCache();
+    if (parsed?.version !== 1 || parsed.build !== build || !parsed.sessions || !Array.isArray(parsed.hits)) {
+      return emptyCache(build);
     }
-    return { version: 1, sessions: parsed.sessions, hits: parsed.hits };
+    return { version: 1, build, sessions: parsed.sessions, hits: parsed.hits };
   } catch {
-    return emptyCache();
+    return emptyCache(build);
   }
 }
 
@@ -67,9 +69,9 @@ async function saveCache(workspace: vscode.Uri, cache: Cache): Promise<void> {
 
 // Session logs only ever grow, so a file whose size has not moved is never opened and
 // one that has grown is read from where the last pass stopped.
-export async function refresh(workspace: vscode.Uri): Promise<Mention[]> {
+export async function refresh(workspace: vscode.Uri, build: string): Promise<Mention[]> {
   const dir = sessionsDir(workspace);
-  const cache = await loadCache(workspace);
+  const cache = await loadCache(workspace, build);
 
   let names: string[];
   try {

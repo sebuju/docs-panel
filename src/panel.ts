@@ -214,7 +214,7 @@ export class DocsPanel {
   private state: PanelState;
   private ready = false;
   private readonly corpus = new Corpus();
-  private readonly links = new Links();
+  private readonly links: Links;
   // The files of the docs as the tree last showed them, which names in a page link to.
   private docFiles = new Set<string>();
   private docStamp = "";
@@ -251,6 +251,7 @@ export class DocsPanel {
     state: PanelState
   ) {
     this.state = state;
+    this.links = new Links(this.build);
     this.root = resolveRoot();
 
     this.panel.webview.options = {
@@ -395,6 +396,11 @@ export class DocsPanel {
     this.post({ type: "prefixes", prefixes });
   }
 
+  // The version the caches are stamped with, so an update never reads what an older one wrote.
+  private get build(): string {
+    return String(this.context.extension.packageJSON.version ?? "");
+  }
+
   private async sendMentions(): Promise<void> {
     if (!this.ready || !this.root) {
       return;
@@ -403,7 +409,7 @@ export class DocsPanel {
       this.post({ type: "mentions", mentions: {} });
       return;
     }
-    const hits = await refresh(this.root.workspace);
+    const hits = await refresh(this.root.workspace, this.build);
     this.post({ type: "mentions", mentions: match(hits, await listFiles(this.root.uri)) });
   }
 
@@ -414,7 +420,7 @@ export class DocsPanel {
         // A page loaded again has none of the marks, whatever was sent to the last one.
         this.marksSent = "";
         this.post({ type: "state", ...this.state });
-        this.post({ type: "version", version: String(this.context.extension.packageJSON.version ?? "") });
+        this.post({ type: "version", version: this.build });
         this.sendPrefixes();
         await this.sendTree();
         if (this.state.selected) {

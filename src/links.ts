@@ -17,6 +17,8 @@ interface Entry {
 
 interface Cache {
   version: number;
+  // The extension's version that wrote it: another version may resolve names differently.
+  build: string;
   files: Record<string, Entry>;
 }
 
@@ -36,6 +38,8 @@ export function treeStamp(files: Set<string>): string {
 // names lead to is kept, per document, beside the panel's other caches.
 export class Links {
   private cache: Cache | undefined;
+
+  constructor(private readonly build: string) {}
 
   async of(
     workspace: vscode.Uri,
@@ -73,11 +77,11 @@ export class Links {
     try {
       const parsed = JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(linksUri(workspace))));
       this.cache =
-        parsed?.version === 1 && parsed.files && typeof parsed.files === "object"
-          ? { version: 1, files: parsed.files }
-          : { version: 1, files: {} };
+        parsed?.version === 1 && parsed.build === this.build && parsed.files && typeof parsed.files === "object"
+          ? { version: 1, build: this.build, files: parsed.files }
+          : { version: 1, build: this.build, files: {} };
     } catch {
-      this.cache = { version: 1, files: {} };
+      this.cache = { version: 1, build: this.build, files: {} };
     }
     return this.cache;
   }
