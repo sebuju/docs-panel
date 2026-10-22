@@ -151,6 +151,12 @@ it when it is renamed or moved.
 The setting has resource scope, so a project can override it in its own
 `.vscode/settings.json`.
 
+Everything set in the panel itself - its look, the splits, the buckets, the pins, the open
+folders and where each file was left - is saved to `.vscode/docs-panel-settings.json` a
+moment after each change, and read back whenever the panel opens: after closing the tab,
+in a new window, and after installing a new version. **Purge** in the options' data files
+puts every one of them back to its default.
+
 ## Tags and colours
 
 Tags and colours are stored in `<docs folder>/.docs-panel.json`, so they travel with the

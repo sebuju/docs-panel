@@ -233,6 +233,7 @@
   let walking = false;
   const MAX_VISITS = 200;
 
+  let stateHeard = false;
   const saved = vscode.getState();
   if (saved) {
     applyState(saved);
@@ -392,10 +393,14 @@
     };
   }
 
+  // The host keeps the state in a file, and sends it once the page is ready. Until then
+  // the page holds only its defaults or the tab's own copy, which must not overwrite it.
   function persist() {
     const state = currentState();
     vscode.setState(state);
-    vscode.postMessage({ type: "persist", ...state });
+    if (stateHeard) {
+      vscode.postMessage({ type: "persist", ...state });
+    }
   }
 
   function setSplit(value) {
@@ -2906,6 +2911,7 @@
         }
       }
     } else if (message.type === "state") {
+      stateHeard = true;
       applyState(message);
       setSplit(split);
       setSideSplit(sideSplit);

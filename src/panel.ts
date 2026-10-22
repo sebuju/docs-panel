@@ -37,6 +37,7 @@ import { cacheUri, match, refresh, sessionsDir } from "./mentions";
 import { Links, linksUri, treeStamp } from "./links";
 import { openInBrowser } from "./browser";
 import { Corpus } from "./corpus";
+import { loadSettings, saveSettings, settingsUri } from "./settings";
 
 export const VIEW_TYPE = "docsPanel";
 export const TRASH_DIR = ".trash";
@@ -44,6 +45,8 @@ const SESSION_DEBOUNCE_MS = 500;
 // The marks file can be rewritten by anything, a watcher may not hear of it, so one timer
 // looks at its time stamp now and then and reads it only once that has moved.
 const MARKS_POLL_MS = 1500;
+// A drag sends its state on every step; the file is written once it has stopped.
+const SETTINGS_DELAY_MS = 300;
 // The places kept in files once read, most recent last; past this many the oldest go.
 const MAX_SCROLLS = 300;
 
@@ -221,6 +224,12 @@ export class DocsPanel {
   private marksPoll: NodeJS.Timeout | undefined;
   private marksStamp = "";
   private marksSent = "";
+  // The settings file is read before the page is told its state, and written a moment
+  // after each change, one write after another.
+  private readonly settingsLoaded: Promise<void>;
+  private settingsTimer: NodeJS.Timeout | undefined;
+  private settingsWrite: Promise<void> = Promise.resolve();
+  private settingsFailed = false;
 
   static open(context: vscode.ExtensionContext): void {
     if (DocsPanel.current) {
@@ -233,7 +242,7 @@ export class DocsPanel {
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    DocsPanel.current = new DocsPanel(panel, context, DEFAULT_STATE);
+    DocsPanel.current = new DocsPanel(panel, context, normalizeState(undefined), false);
   }
 
   static restore(
@@ -242,17 +251,19 @@ export class DocsPanel {
     state: unknown
   ): void {
     DocsPanel.current?.panel.dispose();
-    DocsPanel.current = new DocsPanel(panel, context, normalizeState(state));
+    DocsPanel.current = new DocsPanel(panel, context, normalizeState(state), Boolean(state));
   }
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
     private readonly context: vscode.ExtensionContext,
-    state: PanelState
+    state: PanelState,
+    restored: boolean
   ) {
     this.state = state;
     this.links = new Links(this.build);
     this.root = resolveRoot();
+    this.settingsLoaded = this.loadSettings(restored);
 
     this.panel.webview.options = {
       enableScripts: true,
@@ -396,6 +407,50 @@ export class DocsPanel {
     this.post({ type: "prefixes", prefixes });
   }
 
+  // The file has the last word. A tab VS Code brought back from before there was a file
+  // hands its own state over, so nothing set in it is lost.
+  private async loadSettings(restored: boolean): Promise<void> {
+    if (!this.root) {
+      return;
+    }
+    const saved = await loadSettings(this.root.workspace);
+    if (saved) {
+      this.state = normalizeState(saved);
+    } else if (restored) {
+      this.saveSettingsNow();
+    }
+  }
+
+  private saveSettingsSoon(): void {
+    clearTimeout(this.settingsTimer);
+    this.settingsTimer = setTimeout(() => this.saveSettingsNow(), SETTINGS_DELAY_MS);
+  }
+
+  // Each write takes the state as it is when its turn comes, so the last one is the newest.
+  private saveSettingsNow(): void {
+    clearTimeout(this.settingsTimer);
+    this.settingsTimer = undefined;
+    const workspace = this.root?.workspace;
+    if (!workspace) {
+      return;
+    }
+    this.settingsWrite = this.settingsWrite
+      .then(() => saveSettings(workspace, this.state))
+      .then(
+        () => {
+          this.settingsFailed = false;
+        },
+        (error) => {
+          if (!this.settingsFailed) {
+            this.settingsFailed = true;
+            void vscode.window.showErrorMessage(
+              `Docs Panel could not save its settings to ${settingsUri(workspace).fsPath}: ${error}`
+            );
+          }
+        }
+      );
+  }
+
   // The version the caches are stamped with, so an update never reads what an older one wrote.
   private get build(): string {
     return String(this.context.extension.packageJSON.version ?? "");
@@ -416,6 +471,7 @@ export class DocsPanel {
   private async onMessage(message: any): Promise<void> {
     switch (message?.type) {
       case "ready":
+        await this.settingsLoaded;
         this.ready = true;
         // A page loaded again has none of the marks, whatever was sent to the last one.
         this.marksSent = "";
@@ -433,8 +489,10 @@ export class DocsPanel {
         await this.sendContent(this.state.selected);
         return;
       case "persist": {
+        await this.settingsLoaded;
         const mentioned = this.state.mentionLines > 0;
         this.state = normalizeState(message);
+        this.saveSettingsSoon();
         if (mentioned !== this.state.mentionLines > 0) {
           await this.sendMentions();
         }
@@ -1143,6 +1201,12 @@ export class DocsPanel {
         uri: readsLedger(this.root.workspace, this.root.uri).store
       },
       {
+        id: "settings",
+        label: "Settings",
+        note: "every setting and bucket goes back to its default",
+        uri: settingsUri(this.root.workspace)
+      },
+      {
         id: "mentions",
         label: "Mention cache",
         note: "rebuilt from the session logs on the next scan",
@@ -1204,6 +1268,12 @@ export class DocsPanel {
     if (answer !== "Purge") {
       return;
     }
+    if (files.some((file) => file.id === "settings")) {
+      clearTimeout(this.settingsTimer);
+      this.settingsTimer = undefined;
+      await this.settingsWrite;
+      this.state = { ...normalizeState(undefined), selected: this.state.selected };
+    }
     for (const file of files) {
       try {
         await vscode.workspace.fs.delete(file.uri, { useTrash: false });
@@ -1212,6 +1282,9 @@ export class DocsPanel {
       }
     }
     this.links.forget();
+    if (files.some((file) => file.id === "settings")) {
+      this.post({ type: "state", ...this.state });
+    }
     this.postMarks(await load(marksLedger(this.root.uri)));
     this.postReads(await load(readsLedger(this.root.workspace, this.root.uri)));
     await this.sendMentions();
@@ -1232,6 +1305,7 @@ export class DocsPanel {
       buckets[move(path)] = value;
     }
     this.state.buckets = buckets;
+    this.saveSettingsSoon();
     this.post({ type: "repath", from, to });
   }
 
@@ -1430,6 +1504,9 @@ export class DocsPanel {
 
   private dispose(): void {
     DocsPanel.current = undefined;
+    if (this.settingsTimer) {
+      this.saveSettingsNow();
+    }
     if (this.marksPoll) {
       clearInterval(this.marksPoll);
     }
