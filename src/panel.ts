@@ -84,6 +84,11 @@ const MAX_AUTO_MIN = 75;
 // How strongly a bucket was tinted when its background was only on or off.
 const OLD_BUCKET_FILL = 14;
 
+// Everything the reader can set or arrange in the panel is kept here, and so in
+// .vscode/docs-panel-settings.json, so it is never lost to a closed tab, a new window or an
+// update. A new option is added in four places: this interface, DEFAULT_STATE,
+// normalizeState, and currentState and applyState in media/main.js, which also persists it
+// when it changes. Only what is passing - an open menu, a typed search, a zoom - stays out.
 export interface PanelState {
   split: number;
   sideSplit: number;

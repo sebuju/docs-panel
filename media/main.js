@@ -395,6 +395,9 @@
     return own;
   }
 
+  // Every option the reader can change belongs in here and in applyState, with a persist()
+  // where it changes: the host writes this to .vscode/docs-panel-settings.json, and an
+  // option left out is lost with the tab. See PanelState in src/panel.ts.
   function currentState() {
     return {
       split: split,
