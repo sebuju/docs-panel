@@ -98,6 +98,18 @@
           "workspace": true
         }
       }
+    },
+    "plans/migration-plan-for-the-new-storage-layer.md": {
+      "kind": "md",
+      "html": "<h1 data-line=\"0\">Migration plan</h1><p data-line=\"2\">The storage layer moves in three steps; the review comes first. The dates are in plans/roadmap.md and the decisions behind them in meeting-notes.md.</p><h2 data-line=\"4\">Steps</h2><table data-line=\"6\"><thead><tr><th>Step</th><th>What</th><th>Owner</th><th>State</th></tr></thead><tbody><tr><td>1</td><td>Freeze writes to the old store</td><td>Ana</td><td>done</td></tr><tr><td>2</td><td>Copy the records and check their hashes</td><td>Bo</td><td>in review</td></tr><tr><td>3</td><td>Switch reads over, then remove the old store</td><td>Cy</td><td>blocked</td></tr></tbody></table><h2 data-line=\"12\">Risks</h2><ul data-line=\"14\"><li>The copy takes longer than the freeze window.</li><li>A record fails its hash check and has to be copied again.</li></ul><h2 data-line=\"17\">Rollback</h2><p data-line=\"19\">Reads go back to the old store; nothing written since the switch is lost:</p><pre data-line=\"21\"><code class=\"language-sh\">./scripts/rollback.sh --to old-store\n</code></pre><blockquote data-line=\"25\"><p>Step 3 waits on the review of step 2.</p></blockquote>",
+      "links": {
+        "plans/roadmap.md": {
+          "path": "plans/roadmap.md"
+        },
+        "meeting-notes.md": {
+          "path": "notes/meeting-notes.md"
+        }
+      }
     }
   },
   "dataFiles": [

@@ -1,200 +1,372 @@
 # Docs Panel
 
-Read a project's `docs` folder inside VS Code as one editor tab: a folder tree on the
-left, the picked file rendered on the right, both refreshing themselves when files change
-on disk.
+A VS Code extension that shows one folder of the workspace (`docs` by default) in a
+single webview tab: a file tree and a contents list on the left, the selected file
+rendered on the right. Both sides follow changes made on disk. Files can be tagged,
+coloured, pinned, grouped into tag buckets, searched by text or by tag, edited and
+trashed from the panel.
+
+![The panel with a Markdown file open](.github/readme/overview.png)
+
+- [Requirements](#requirements)
+- [Install](#install)
+- [Layout](#layout)
+- [Tree](#tree)
+- [Page](#page)
+- [Tags](#tags)
+- [Tag buckets](#tag-buckets)
+- [Search all docs](#search-all-docs)
+- [Mentions from Claude Code sessions](#mentions-from-claude-code-sessions)
+- [Options](#options)
+- [Settings](#settings)
+- [Files the panel writes](#files-the-panel-writes)
+- [Source layout](#source-layout)
+- [Development](#development)
+- [Screenshots](#screenshots)
+- [Releasing](#releasing)
+- [Limits](#limits)
+
+## Requirements
+
+- VS Code 1.90 or later.
+- The built-in `vscode.markdown-language-features` extension, which renders Markdown.
 
 ## Install
 
-Download the `.vsix` from the releases page, or build it yourself:
+From a release: download `docs-panel-<version>.vsix` from the
+[releases page](https://github.com/sebuju/docs-panel/releases) and install it:
+
+```sh
+code --install-extension docs-panel-<version>.vsix
+```
+
+From source:
 
 ```sh
 npm install
-npx @vscode/vsce package
-code --install-extension docs-panel-0.1.0.vsix
+npm run package          # writes docs-panel-<version>.vsix
+code --install-extension docs-panel-<version>.vsix
 ```
 
-Then run **Docs Panel: Open** from the command palette.
+Open the panel with **Docs Panel: Open** (`docsPanel.open`) from the command palette. The
+tab is restored with the window.
 
-## Use
+## Layout
+
+| Part | Contents |
+|---|---|
+| Tree | The docs folder. Folders first, sorted by name, then files, most recently modified first. Dot-files, dot-folders and `node_modules` are not shown; folders deeper than 12 levels are cut off. |
+| Contents list | The headings of the open Markdown file. The entries whose sections are on screen are highlighted; a click scrolls to the heading. |
+| File bar | File name, created and modified time, age, and buttons for find, edit, tags and trash, followed by the file's tags and `+` to add one. Clicking the file name copies its path relative to the workspace (see `docsPanel.copyPrefix`). |
+| Page | The rendered file. |
+
+How each file type is shown:
+
+| Extension | Shown as |
+|---|---|
+| `.md`, `.markdown` | Rendered by VS Code's Markdown renderer |
+| `.html`, `.htm` | The document's `<body>`, with scripts and styles removed and relative links resolved |
+| `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp` | Image |
+| anything else | Plain text |
+
+Each file reopens at the scroll position it was left at, stored as a fraction of the
+page height so it stays close after edits.
+
+The dot in front of a file in the tree shows its read state: unread, read, or unread and
+mentioned in a Claude Code session (see [Mentions](#mentions-from-claude-code-sessions)).
+A file is marked read when opened, and unread again when it changes on disk while not open.
+
+The panel also works in a light theme:
+
+![The panel in a light theme](.github/readme/overview-light.png)
+
+## Tree
+
+![Tree with tags](.github/readme/tree-tags.png)
+
+When a row is too narrow for its tags' names, the tags are drawn with their letters:
+
+![Tree with tag letters](.github/readme/tree-letters.png)
+
+Right click a row, or press `Space`, `Shift+F10` or the menu key on it, for its menu:
+
+![A file's menu in the tree](.github/readme/tree-menu.png)
 
 | Action | How |
 |---|---|
-| Open a file | Click it in the tree |
-| Follow a link | Click a Markdown link to another file, or a file named in the text: a file of the docs opens in the panel, any other file of the workspace in an editor |
-| Go back or forward | The mouse's back and forward buttons walk the files opened, as in a browser |
-| Jump to a heading | Click it in the contents list on the right |
-| Zoom a picture | Click it; scroll to zoom, drag to pan, `0` to fit, `Escape` to close |
-| Edit a file | Pen button in the file bar, lit while editing, then `Ctrl+S`; a file left in edit mode opens in it again |
-| Tag a file | `+` in the file bar, `Ctrl`+click it in the tree, or **Tags…** in the tree's menu; type to find or add a tag |
-| Search by a tag | Click the tag in the tree; with the search up it takes the place of the tag searched for, and with `Shift` held it is added to them |
-| Colour a file or folder | **Colour…** in the tree's menu |
-| Pin a file or folder | **Pin to top** in the tree's menu; a pinned file's pin takes the place of its dot |
-| Sort a folder's files into tag buckets | **Tag buckets…** in a folder's menu; see below |
-| Open in a browser | **Open in browser** in a file's menu in the tree |
-| Find in the page | `Ctrl+F`, which starts from the selected text if there is any; `Up` / `Down` or `Enter` / `Shift+Enter` step through the hits |
-| Find a word | Right click it in the page: **Find “word”**, or **Find “word” in all docs** |
-| Step through a Markdown file | `Up` / `Down` light the next or previous block and scroll it into view |
-| Search all docs | `Ctrl+F` twice with `Ctrl` held, or the search button in the tree's top right corner (shown while the pointer is in that corner) |
-| Options | The sliders button in the tree's top right corner |
-| Trash a file | Bin button in the file bar; the trash shows at the foot of the tree, and each folder lists what was trashed from it, along with anything in a `.trash` folder of its own |
-| Empty the trash | Right click a trash folder: **Restore all** or **Delete all** |
-| Move the divider | Drag it; the position is remembered |
-| Come back to a file | Each file opens where it was left, as a share of the way down, so an edited file opens near the same place |
-| Size a list to fit | Right click the divider between the files and the toc: auto size the files, the toc, or neither |
-| Hide the toc | Right click the divider between the files and the toc: **Show toc**; it comes back from the options |
-| Size the side to fit | Right click the divider between the side and the page: auto size the side's width to the files, auto size it only growing, or neither. While it is auto sized the divider is not dragged; only growing, a click on it fits the side to the files again |
+| Open a file | Click it |
+| Tag a file | `Ctrl`+click it, **Tags…** in its menu, or `+` in the file bar |
+| Colour a file or folder | **Colour…** in its menu. Colours come from the active theme. |
+| Pin a file or folder to the top of its folder | **Pin to top** in its menu. A pinned file shows a pin in place of its dot. |
+| Group a folder's files by tag | **Tag buckets…** in the folder's menu; see [Tag buckets](#tag-buckets) |
+| Open a file in the system browser | **Open in browser** in its menu |
+| New file or folder | **New file…** / **New folder…** in a folder's menu, or in the menu of the empty space under the tree for the docs root |
+| Rename, clone, copy path, reveal in the OS file manager | The row's menu |
+| Move a file or folder | Drag it onto a folder |
+| Trash a file | **Move to the trash** in its menu, or the bin button in the file bar |
+| Restore or delete trashed files | Right click a trash folder: **Restore all** or **Delete all**; or an entry's own menu |
+| Resize the side | Drag the divider between the side and the page |
+| Auto size the side's width | Right click that divider: auto size to the files, auto size growing only, or off. While auto sized the divider cannot be dragged; in grow-only mode a click on it refits the side. |
+| Auto size the tree or the contents list | Right click the divider between them: auto size the files, the contents, or neither. The same menu hides the contents list (**Show toc**); the options bring it back. |
 
-## Keys in the tree
+Trashed files go to a `.trash` folder next to them. The root's `.trash` is shown at the
+foot of the tree, and each folder lists its own `.trash` as **Trash**.
 
-With the tree focused (click it, or `Tab` to it):
+Keys, with the tree focused (click it or `Tab` to it):
 
-| Key | Does |
+| Key | Action |
 |---|---|
-| `Up` / `Down` | Move to the previous or next row; a file you stop on opens |
-| `Right` | On a closed folder, open it; on an open one, go to its first entry; on a Markdown file, go into the page at its first block; on any other file, go into the page so `Up` / `Down` scroll it |
-| `Left` | On an open folder, close it; otherwise go up to the folder holding the row |
-| `Space`, `Shift+F10` or the menu key | Open the row's menu: `Up` / `Down` pick, `Enter` runs, `Escape` closes; the focus comes back to the tree either way |
+| `Up` / `Down` | Previous / next row; a file selected this way opens |
+| `Right` | Closed folder: open it. Open folder: go to its first entry. Markdown file: move into the page at its first block. Other file: move into the page so `Up` / `Down` scroll it. |
+| `Left` | Open folder: close it. Otherwise go to the parent folder. |
+| `Space`, `Shift+F10`, menu key | Open the row's menu. `Up` / `Down` select, `Enter` runs, `Escape` closes. |
 
-In a file being read (not edited), `Left` goes back to the tree at the row you left. In
-a Markdown file, `Right` from there comes back to the block you were on.
+From the page (while reading, not editing), `Left` returns to the tree at the row that was
+left. In a Markdown file, `Right` from there returns to the block that was selected.
 
-## Search all docs
+## Page
 
-The search looks at the names of files and folders and at the text of every file, and
-lists what it finds by file, one line per row. A file or folder whose name matches is
-listed even when nothing inside it does.
-
-Start the search with a scope to look only in some files:
-
-| Search | Looks in |
+| Action | How |
 |---|---|
-| `tag:plan storage` | Files with a tag whose name holds `plan`, grouped by tag |
-| `file:road storage` | Files whose name holds `road` |
-| `folder:plans storage` | Files in a folder whose name holds `plans`, grouped by folder |
+| Follow a link | Click a Markdown link, or a file name in the text. A file in the docs folder opens in the panel; any other workspace file (for example `src/panel.ts`) opens in an editor. |
+| Back / forward | Mouse back and forward buttons walk the history of opened files |
+| Zoom an image | Click it. Scroll to zoom, drag to pan, `0` to fit, `Escape` to close. |
+| Edit | Pen button in the file bar, then `Ctrl+S` to save. A file left in edit mode reopens in edit mode. |
+| Find in the page | `Ctrl+F`, prefilled with the selection. `Up` / `Down` or `Enter` / `Shift+Enter` step through matches. Match case, whole word and regular expression are toggles. |
+| Step through blocks | In a Markdown file, `Up` / `Down` highlight the previous / next block and scroll it into view |
+| Copy | Right click: **Copy** (selection) or **Copy text block** (the block under the pointer) |
+| Find a word | Right click it: **Find “word”** or **Find “word” in all docs** |
 
-Several names are split by commas, with or without spaces around them, and a file is let
-in by any of them: `tag:plan, draft storage` searches the files tagged with either for
-`storage`, and `file:road,ideas` lists the files whose name holds either. An empty name
-among others, as in `tag:plan,,draft` or a comma at the end, is left out.
+![The page's context menu](.github/readme/page-menu.png)
 
-With nothing after the names, the search lists every file the scope lets in. A name with
-a space or a comma in it is quoted: `tag:"to do"`.
+The block under the pointer is highlighted. Its strength and padding are set in the
+options; strength `off` disables it.
 
-| Key | Does |
-|---|---|
-| `Up` / `Down` | Pick the previous or next row |
-| `Ctrl+Up` / `Ctrl+Down` | Jump to the previous or next file |
-| `Enter` | Open the file at that line, or show the folder in the tree |
-| `Escape` | Close the search and go back to the file that was open |
+## Tags
 
-## Options
+![The tag picker](.github/readme/tag-picker.png)
 
-The options hold the reading settings (text size, line spacing, font, whether the
-contents list shows, which list's height is auto sized and the least share of the side
-the other list keeps, whether the side's width is auto sized and whether only to grow,
-and the least share of the window the page keeps then, how strongly the Markdown block under the pointer is lit, where off turns the light off,
-how far the light reaches past the block above and below it and either side of it, and
-how many of a file's mentions show before **Show more**, where off turns the mentions
-off), the tree's (its own text size, which side of a name the tags are drawn on, and
-whether tag buckets are outlined in their tag's colour, how strongly they are tinted
-with it, where off leaves them bare, and whether a bucket's heading stands inside its
-box, on its outline as a fieldset's legend does, or above it, drawn as the tag's pill, as
-a bar of its colour across the top, or as the plain name, written in the text's colour or
-the tag's, and bold or not), the tags, and the data files the panel writes, each with its
-size and a button to purge it. Both auto size minimums go up to 75%.
+The tag picker lists every tag in tag order, with a check on the file's own. Type to
+filter; a name no tag has yet is offered last, as a new tag. `Enter` toggles the
+highlighted tag.
 
-Each tag is a row: its letters, which open a menu for its colour and its letters; its
-name, which renames it when clicked; its style, any of bold, italic, underline, white
-text and square corners, and one or two characters to put the name between (`[]` draws
-`[plan]`); and **Delete**. Drag a row to move the tag: every list of tags, in the tree,
-the file bar, the tag picker and the search, follows this order. **Prune**, under the
-tags, removes the tags no file has, and shows only while there are some; with the pointer
-on it the tags it would remove are marked.
+- Every tag has a colour from the panel's own palette, chosen so black text on it has a
+  contrast ratio of at least 7:1. Tag colours do not change with the theme.
+- Every tag has letters, unique among tags, used when a row is too narrow for the name:
+  the first letter of each word, extended while another tag already uses them (`plan` is
+  `p`, then `priority` is `pr`). They can be changed in the options.
+- Styles per tag: bold, italic, underline, white text, square corners, and a pair of
+  wrapping characters (`[]` draws `[plan]`).
+- Tag order is set by dragging tags in the options. Every list of tags (tree, file bar,
+  picker, search) uses it.
+
+Clicking a tag in the tree opens the search with `tag:<name>`. With the search already
+open it replaces the tag being searched for; with `Shift` held it is added to it.
+
+Tags and colours are stored in `<docs folder>/.docs-panel.json`, so they are committed
+with the documents. Each entry carries a content hash: a file moved or renamed outside the
+panel keeps its tags and colour if its content matches exactly one entry; an ambiguous
+match is dropped. A trashed file keeps its entry until it is deleted. The panel checks the
+file's modification time every 1.5 s and reloads it when it changes, so edits from outside
+(for example a `git pull`) show up in the tree.
 
 ## Tag buckets
 
-**Tag buckets…** in a folder's menu, or a bucket's own, picks the tags that have a bucket
-in that folder. The buckets stand at the head of the folder, in the order of the tags
-until you drag them into one of the folder's own in the picker, each headed by its tag
-and ringed in its colour. A file directly in the folder goes in the bucket of the first of
-its tags, in that order, that has one; it shows there without its tags, which the file bar
-still shows, and pinned files come first. The folder's other files follow the buckets as
-usual.
+**Tag buckets…** in a folder's menu (or a bucket's menu) selects which tags get a bucket
+in that folder. Buckets are drawn at the top of the folder, each outlined in its tag's
+colour. A file directly in the folder goes into the bucket of the first of its tags, in
+bucket order, that has one; it is shown there without its tags. Pinned files come first.
+Files with no matching bucket follow the buckets as usual.
 
-After the tags the picker offers *untagged*, a bucket for the folder's files that have no
-tags at all. It is no tag, so it is grey and has no colour, letters or style of its own,
-but it is turned on, spans columns and is ordered as a tag's bucket is.
+![Tag buckets](.github/readme/buckets.png)
 
-| Drag a file | Does |
+![The tag bucket picker](.github/readme/buckets-picker.png)
+
+The picker also offers *untagged*, a bucket for the folder's files with no tags. It has no
+colour, letters or style, but can be enabled, spanned and ordered like a tag's bucket.
+
+| Drag a file | Effect |
 |---|---|
-| From one bucket to another | Takes off the first bucket's tag and puts on the second's |
-| From a bucket to the folder's other files | Takes off the bucket's tag |
-| From the folder's other files to a bucket | Puts on the bucket's tag |
-| From another folder to a bucket | Moves the file into the folder and puts on the bucket's tag |
-| To the untagged bucket | Takes off all the file's tags, moving it first if it is from another folder |
+| From one bucket to another | Removes the first bucket's tag, adds the second's |
+| From a bucket to the folder's other files | Removes the bucket's tag |
+| From the folder's other files to a bucket | Adds the bucket's tag |
+| From another folder to a bucket | Moves the file into the folder and adds the bucket's tag |
+| To the untagged bucket | Removes all the file's tags, moving it first if it is from another folder |
 
-In the picker each bucket's tag has **−** and **+** for how many columns the bucket spans,
-and under the tags is how many columns stand in a row: each as wide as the others, and
-each row as tall as its tallest bucket; one to a row puts the buckets one under another.
-Drag a bucket's tag above or below another's to move the bucket; from then on the folder
-keeps its own order, and **Tag order** under the tags has it follow the order of the tags
-in the options again. The buckets and their layout are kept for each folder, and follow
-it when it is renamed or moved.
+Layout, set in the picker:
+
+- **−** / **+** next to a tag set how many columns its bucket spans.
+- **per row** sets the number of columns. Columns have equal width; each row is as tall as
+  its tallest bucket. `1` stacks the buckets vertically.
+- Dragging a tag in the picker gives the folder its own bucket order. **Tag order**
+  returns it to the global tag order.
+
+Buckets and their layout are stored per folder and follow the folder when it is renamed or
+moved. Outline, background tint, and heading position and style are set in the options.
+
+## Search all docs
+
+Open with the search button in the tree's top right corner (shown while the pointer is in
+that corner), or by pressing `Ctrl+F` twice with `Ctrl` held.
+
+![Search across the docs, scoped by tag](.github/readme/search.png)
+
+The search matches folder and file names and the text of every file (files over 2 MB and
+binary files are skipped for text). Results are grouped by file, one line per match. A
+file or folder whose name matches is listed even when its content does not.
+
+A scope prefix limits the files searched:
+
+| Search | Searches |
+|---|---|
+| `tag:plan storage` | Files with a tag whose name contains `plan`, grouped by tag |
+| `file:road storage` | Files whose name contains `road` |
+| `folder:plans storage` | Files in a folder whose name contains `plans`, grouped by folder |
+
+- Several names are separated by commas, with or without spaces; a file matching any of
+  them is included: `tag:plan, draft storage`. Empty names are ignored.
+- A scope with no search text lists every file it includes.
+- Quote a name that contains a space or comma: `tag:"to do"`.
+- Match case, whole word and regular expression are toggles next to the input.
+
+| Key | Action |
+|---|---|
+| `Up` / `Down` | Previous / next result |
+| `Ctrl+Up` / `Ctrl+Down` | Previous / next file |
+| `Enter` | Open the file at that line, or reveal the folder in the tree |
+| `Escape` | Close the search and return to the file that was open |
+
+## Mentions from Claude Code sessions
+
+The panel reads the Claude Code session logs for the workspace
+(`~/.claude/projects/<workspace path with every non-alphanumeric character replaced by ->/*.jsonl`)
+and collects every file name written in a user or assistant message. Tool results,
+meta entries and slash command wrappers are ignored. Each name is resolved against the
+docs folder: the longest path suffix that matches a file wins, and a bare file name only
+counts when exactly one file has it.
+
+The open file's mentions are listed above the page, newest first, with the time since and
+an excerpt (user messages and assistant messages are drawn differently). The number shown
+before **Show more** is set in the options; `off` disables mentions. The top of the
+overview screenshot above shows three.
+
+Logs are only appended to, so each log is read from the offset where the last scan stopped,
+and only when its size changed. Results are cached in `.vscode/docs-panel-mentions.json`;
+the cache is rebuilt when the extension version changes.
+
+## Options
+
+The sliders button in the tree's top right corner opens the options.
+
+![Options: reading and tree settings](.github/readme/options.png)
+
+| Section | Settings |
+|---|---|
+| Reading | Text size, line spacing, font, contents list shown, auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), mentions shown |
+| Tree | Text size, side of the name the tags are drawn on, bucket outline, bucket background tint, bucket heading position (inside, on the outline, above), style (pill, colour bar, plain name), colour and weight |
+| Tags | One row per tag; see below |
+| Data files | Each file the panel writes, with its size and a **Purge** button |
+
+Both auto size minimums go up to 75%.
+
+![Options: tags and data files](.github/readme/options-tags.png)
+
+Each tag row has: its letters (click for a menu to change its colour or letters), its name
+(click to rename), file count, style toggles (bold, italic, underline, white text, square
+corners, wrapping characters), and **Delete**. Drag a row to reorder tags. **Prune**
+removes tags that no file has; it is shown only when there are some, and hovering it marks
+the tags it would remove.
 
 ## Settings
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `docsPanel.folder` | `docs` | Folder, relative to the workspace root, that the panel shows |
+| `docsPanel.folder` | `docs` | Folder, relative to the workspace root, shown by the panel |
+| `docsPanel.copyPrefix` | `{}` | Text put in front of the path copied by clicking the file name in the file bar, keyed by file extension without the dot. Trailing spaces are kept. Example: `{ "md": "/execute-plan " }` |
 
-The setting has resource scope, so a project can override it in its own
-`.vscode/settings.json`.
+Both settings have resource scope, so a project can set them in `.vscode/settings.json`.
 
-Everything set in the panel itself - its look, the splits, the buckets, the pins, the open
-folders and where each file was left - is saved to `.vscode/docs-panel-settings.json` a
-moment after each change, and read back whenever the panel opens: after closing the tab,
-in a new window, and after installing a new version. **Purge** in the options' data files
-puts every one of them back to its default.
+Everything set inside the panel (options, splits, buckets, pins, open folders, find
+toggles, the selected file and scroll positions) is saved to
+`.vscode/docs-panel-settings.json` shortly after each change and read back when the panel
+opens: after closing the tab, in a new window, and after an update. **Purge** in the
+options' data files resets them.
 
-## Tags and colours
+## Files the panel writes
 
-Tags and colours are stored in `<docs folder>/.docs-panel.json`, so they travel with the
-documents. The panel looks at the file's time stamp every second and a half and reads it
-again when it has moved, so a change made outside the panel shows in the tree. The colours of files and folders are the theme's own, so they follow the theme
-in use; a tag's colours are the panel's own, the same in every theme, and each is light
-enough for the black text on a pill to read at 7:1 or better.
+| File | Contents | Purged effect |
+|---|---|---|
+| `<docs folder>/.docs-panel.json` | Tags, tag colours, letters, styles and order; file and folder colours | All tags and colours are lost |
+| `.vscode/docs-panel-settings.json` | Panel settings and layout | Everything returns to defaults |
+| `.vscode/docs-panel-reads.json` | Read marks | Every file is unread |
+| `.vscode/docs-panel-mentions.json` | Mention cache | Rebuilt from the session logs on the next scan |
+| `.vscode/docs-panel-links.json` | Which workspace files each page's names resolve to | Looked up again as pages are opened |
 
-Where a row has no room for its tags beside the file's name, its pills show the tags'
-letters instead, each pill as wide as its letters. Every tag gets letters of its own when
-it is made: the first letter of each word, lengthened while another tag already has them
-(`plan` is `p`, then `priority` is `pr`). The options show them at the head of each tag's row;
-click them and **Change letters…** to choose others, which no other tag may have.
+Only `.docs-panel.json` is meant to be committed; the others are per-user state.
 
-Each entry
-carries a content hash: a file moved outside the panel keeps its tags and colour, an
-ambiguous match is dropped rather than guessed, and a trashed file keeps its entry until
-it is deleted for good.
+## Source layout
 
-## Releasing
+| File | Role |
+|---|---|
+| `src/extension.ts` | Activation: registers the command and the webview serializer |
+| `src/panel.ts` | The webview panel: state, messages to and from the page, file operations, timers |
+| `src/tree.ts` | Walks the docs folder into the tree, including each folder's `.trash` |
+| `src/watch.ts` | File system watcher with a 120 ms debounce, reporting tree and file changes |
+| `src/render.ts` | Turns a file into page content by type; Markdown goes through `markdown.api.render` |
+| `src/corpus.ts` | Text of every file for the search, re-read only when its modification time changes |
+| `src/ledger.ts` | Tags, colours and read marks, keyed by path with content hashes |
+| `src/links.ts` | Resolves file names in a page to docs or workspace files, with a cache |
+| `src/mentions.ts` | Incremental scan of Claude Code session logs |
+| `src/settings.ts` | Load and save `.vscode/docs-panel-settings.json` |
+| `src/browser.ts` | Writes a standalone page for **Open in browser** |
+| `media/main.js`, `media/main.css` | The webview: tree, page, menus, search, options |
 
-Raise the version in `package.json` (`npm version <x.y.z> --no-git-tag-version`), write
-the notes to `.github/releases/v<x.y.z>.md`, and merge to `master`. The release workflow
-builds the `.vsix`, tags the commit, and publishes the release with the notes; without a
-notes file GitHub writes them from the commits.
+The extension is bundled by esbuild (`esbuild.js`) into `dist/extension.js`. The webview
+script and stylesheet are loaded as-is from `media/`.
+
+## Development
+
+```sh
+npm install
+npm run build        # bundle once
+npm run watch        # bundle on change
+npm run typecheck    # tsc --noEmit
+npm run package      # build the .vsix
+```
+
+`.vscode/launch.json` has a **Run Extension** configuration that builds and starts an
+Extension Development Host on `test-project/` (git-ignored; create it with a `docs`
+folder to try the panel).
 
 ## Screenshots
 
-`tools/screenshots` renders the panel in Chromium without VS Code and takes a set of
-screenshots of it, or of a committed version and the working tree side by side; see its
-README.
+`tools/screenshots` renders the panel's page in Chromium without VS Code, with a stand-in
+for the extension host that serves a fixture docs folder. It takes a set of screenshots
+of the working tree, or of a committed version and the working tree side by side; see
+[its README](tools/screenshots/README.md).
+
+The images in this README are its `readme.js` scenes:
+
+```sh
+node tools/screenshots/shots.js --scenes tools/screenshots/readme.js --out .github/readme
+```
+
+## Releasing
+
+1. Raise the version: `npm version <x.y.z> --no-git-tag-version`.
+2. Write the release notes to `.github/releases/v<x.y.z>.md`.
+3. Merge to `master`.
+
+The release workflow (`.github/workflows/release.yml`) runs on every push to `master`. If
+the version in `package.json` has no release yet, it type-checks, builds the `.vsix`,
+tags the commit and publishes the release with the notes file, or with notes generated
+from the commits when there is no notes file.
 
 ## Limits
 
-- Markdown is rendered by VS Code's built-in renderer. Extensions that add drawing to the
-  preview, such as mermaid and katex, do not run here.
-- Markdown links to files outside the docs folder are inert; a file of the workspace named
-  in the text, such as `src/panel.ts`, is a link. What each page's names lead to is kept in
-  `.vscode/docs-panel-links.json` and looked up again once the page or the list of docs
-  changes.
-- **Open in browser** works for files on the local machine only, not in a remote window.
+- Markdown is rendered by VS Code's built-in renderer, but scripts and styles that other
+  extensions add to the Markdown preview (mermaid, KaTeX and similar) are removed, so
+  their output is not drawn.
+- Markdown links to files outside the docs folder do nothing. A workspace file named in
+  the text, such as `src/panel.ts`, is a link.
+- **Open in browser** works only for files on the local machine, not in a remote window.

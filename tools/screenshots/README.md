@@ -28,4 +28,10 @@ node tools/screenshots/compare.js --ref v0.7.0 --only options
 The scenes are in `scenes.js`: the state the panel starts in, what is done to the page,
 and the part of it kept. Add the ones a change needs.
 
+The project README's images are the scenes in `readme.js`, taken into `.github/readme`:
+
+```sh
+node tools/screenshots/shots.js --scenes tools/screenshots/readme.js --out .github/readme
+```
+
 `out/` is not committed.
