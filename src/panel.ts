@@ -123,6 +123,13 @@ export interface PanelState {
   selected: string | null;
   // The files left in edit mode, which open in it again.
   editing: string[];
+  // Match case, whole word and regular expression, in the page's find and in the finder.
+  searchCase: boolean;
+  searchWord: boolean;
+  searchRegex: boolean;
+  finderCase: boolean;
+  finderWord: boolean;
+  finderRegex: boolean;
   // How far down each file was read, as a share of the way.
   scrolls: Record<string, number>;
 }
@@ -155,6 +162,12 @@ const DEFAULT_STATE: PanelState = {
   bucketHeadStyle: "pill",
   selected: null,
   editing: [],
+  searchCase: false,
+  searchWord: false,
+  searchRegex: false,
+  finderCase: false,
+  finderWord: false,
+  finderRegex: false,
   scrolls: {}
 };
 
@@ -1678,6 +1691,12 @@ function normalizeState(value: any): PanelState {
     mentionLines: Number.isFinite(mentionLines)
       ? Math.min(Math.max(Math.round(mentionLines), 0), 100)
       : DEFAULT_STATE.mentionLines,
+    searchCase: typeof value?.searchCase === "boolean" ? value.searchCase : DEFAULT_STATE.searchCase,
+    searchWord: typeof value?.searchWord === "boolean" ? value.searchWord : DEFAULT_STATE.searchWord,
+    searchRegex: typeof value?.searchRegex === "boolean" ? value.searchRegex : DEFAULT_STATE.searchRegex,
+    finderCase: typeof value?.finderCase === "boolean" ? value.finderCase : DEFAULT_STATE.finderCase,
+    finderWord: typeof value?.finderWord === "boolean" ? value.finderWord : DEFAULT_STATE.finderWord,
+    finderRegex: typeof value?.finderRegex === "boolean" ? value.finderRegex : DEFAULT_STATE.finderRegex,
     expanded: Array.isArray(value?.expanded) ? value.expanded.map(String) : [],
     pinned: Array.isArray(value?.pinned) ? value.pinned.map(String) : [],
     buckets: normalizeBuckets(value?.buckets),

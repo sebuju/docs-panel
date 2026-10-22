@@ -221,6 +221,13 @@
   const UNTAGGED = " untagged";
   // How far down each file was read, as a share of the way, oldest first.
   let scrolls = {};
+  // Match case, whole word and regular expression, in the page's find and in the finder.
+  let searchCase = false;
+  let searchWord = false;
+  let searchRegex = false;
+  let finderCase = false;
+  let finderWord = false;
+  let finderRegex = false;
   const MAX_SCROLLS = 300;
 
   // The capitals' drawn height per font, and the tree font the tree's line was last fitted
@@ -347,6 +354,34 @@
       bucketHeadStyle = state.bucketHeadStyle;
     }
     selected = typeof state.selected === "string" ? state.selected : null;
+    if (typeof state.searchCase === "boolean") {
+      searchCase = state.searchCase;
+    }
+    if (typeof state.searchWord === "boolean") {
+      searchWord = state.searchWord;
+    }
+    if (typeof state.searchRegex === "boolean") {
+      searchRegex = state.searchRegex;
+    }
+    if (typeof state.finderCase === "boolean") {
+      finderCase = state.finderCase;
+    }
+    if (typeof state.finderWord === "boolean") {
+      finderWord = state.finderWord;
+    }
+    if (typeof state.finderRegex === "boolean") {
+      finderRegex = state.finderRegex;
+    }
+    markFindOptions();
+  }
+
+  function markFindOptions() {
+    searchCaseEl.classList.toggle("active", searchCase);
+    searchWordEl.classList.toggle("active", searchWord);
+    searchRegexEl.classList.toggle("active", searchRegex);
+    finderCaseEl.classList.toggle("active", finderCase);
+    finderWordEl.classList.toggle("active", finderWord);
+    finderRegexEl.classList.toggle("active", finderRegex);
   }
 
   // Buckets laid down, one under another, before there was only a count to a row, are
@@ -389,6 +424,12 @@
       bucketHeadStyle: bucketHeadStyle,
       selected: selected,
       editing: [...editing],
+      searchCase: searchCase,
+      searchWord: searchWord,
+      searchRegex: searchRegex,
+      finderCase: finderCase,
+      finderWord: finderWord,
+      finderRegex: finderRegex,
       scrolls: scrolls
     };
   }
@@ -3045,9 +3086,6 @@
   const MAX_MATCHES = 5000;
 
   let searchOpen = false;
-  let searchCase = false;
-  let searchWord = false;
-  let searchRegex = false;
   let matches = [];
   let matchIndex = -1;
 
@@ -3221,12 +3259,15 @@
   searchTextEl.addEventListener("input", runSearch);
   searchCaseEl.addEventListener("click", () => {
     searchCase = toggleOption(searchCaseEl, !searchCase);
+    persist();
   });
   searchWordEl.addEventListener("click", () => {
     searchWord = toggleOption(searchWordEl, !searchWord);
+    persist();
   });
   searchRegexEl.addEventListener("click", () => {
     searchRegex = toggleOption(searchRegexEl, !searchRegex);
+    persist();
   });
 
   searchTextEl.addEventListener("keydown", (event) => {
@@ -4739,9 +4780,6 @@
 
   let finderOpen = false;
   let corpus = null;
-  let finderCase = false;
-  let finderWord = false;
-  let finderRegex = false;
   let finderItems = [];
   let finderIndex = -1;
   let finderTimer = 0;
@@ -4814,12 +4852,15 @@
 
   finderCaseEl.addEventListener("click", () => {
     finderCase = finderOption(finderCaseEl, !finderCase);
+    persist();
   });
   finderWordEl.addEventListener("click", () => {
     finderWord = finderOption(finderWordEl, !finderWord);
+    persist();
   });
   finderRegexEl.addEventListener("click", () => {
     finderRegex = finderOption(finderRegexEl, !finderRegex);
+    persist();
   });
 
   // The arrows only ever move the pick: the caret stays put and the focus stays here.
