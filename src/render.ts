@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { closeTableGaps, restoreLines } from "./tables";
 
 export type ContentKind = "md" | "html" | "img" | "text";
 
@@ -16,6 +17,47 @@ export const MARKDOWN = new Set([".md", ".markdown"]);
 export const IMAGES = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]);
 export const HTML = new Set([".html", ".htm"]);
 
+// Rendering goes through the Markdown extension, in the same busy process as every other
+// extension, and a long file takes a while; the pages shown lately are kept, each as long
+// as the file's time and size are what they were, the newest last and the oldest dropped.
+const MAX_RENDERED = 40;
+const MAX_RENDERED_CHARS = 40_000_000;
+const rendered = new Map<string, { stamp: string; content: Content; chars: number }>();
+let renderedChars = 0;
+
+function keep(key: string, stamp: string, content: Content): Content {
+  const chars = (content.html?.length ?? 0) + (content.text?.length ?? 0);
+  forget(key);
+  rendered.set(key, { stamp, content, chars });
+  renderedChars += chars;
+  for (const [old] of rendered) {
+    if (rendered.size <= MAX_RENDERED && renderedChars <= MAX_RENDERED_CHARS) {
+      break;
+    }
+    forget(old);
+  }
+  return content;
+}
+
+// A file rewritten by the panel itself can keep its size and, on a coarse clock, its time,
+// so what was kept of it is dropped and the next render reads it again.
+export function forgetRendered(root: vscode.Uri, relPath: string): void {
+  const uri = vscode.Uri.joinPath(root, ...relPath.split("/")).toString();
+  for (const key of [...rendered.keys()]) {
+    if (key.endsWith("|" + uri)) {
+      forget(key);
+    }
+  }
+}
+
+function forget(key: string): void {
+  const entry = rendered.get(key);
+  if (entry) {
+    renderedChars -= entry.chars;
+    rendered.delete(key);
+  }
+}
+
 export async function renderFile(
   root: vscode.Uri,
   relPath: string,
@@ -23,12 +65,35 @@ export async function renderFile(
 ): Promise<Content> {
   const uri = vscode.Uri.joinPath(root, ...relPath.split("/"));
   const ext = extensionOf(relPath);
-  const stamps = await stampsOf(uri);
+  const { size, ...stamps } = await stampsOf(uri);
 
   if (IMAGES.has(ext)) {
     return { path: relPath, kind: "img", uri: webview.asWebviewUri(uri).toString(), ...stamps };
   }
 
+  // The links a page is written with depend on the webview, so the key holds that too.
+  const key = webview.cspSource + "|" + uri.toString();
+  const stamp = `${stamps.modified}:${size}`;
+  const kept = size === undefined ? undefined : rendered.get(key);
+  if (kept && kept.stamp === stamp) {
+    keep(key, stamp, kept.content);
+    return { ...kept.content, ...stamps };
+  }
+  const content = await readAndRender(root, uri, relPath, ext, webview);
+  // A page the Markdown extension failed to render, shown as text, is not kept.
+  const fallback = MARKDOWN.has(ext) && content.kind !== "md";
+  return size === undefined || content.text === undefined || fallback
+    ? { ...content, ...stamps }
+    : { ...keep(key, stamp, content), ...stamps };
+}
+
+async function readAndRender(
+  root: vscode.Uri,
+  uri: vscode.Uri,
+  relPath: string,
+  ext: string,
+  webview: vscode.Webview
+): Promise<Content> {
   let text: string;
   try {
     text = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
@@ -36,8 +101,7 @@ export async function renderFile(
     return {
       path: relPath,
       kind: "text",
-      html: `<pre>${escapeHtml("Cannot read " + relPath)}</pre>`,
-      ...stamps
+      html: `<pre>${escapeHtml("Cannot read " + relPath)}</pre>`
     };
   }
 
@@ -48,8 +112,7 @@ export async function renderFile(
         path: relPath,
         kind: "md",
         html: stripAssets(addTaskBoxes(rewriteLinks(html, root, relPath, webview))),
-        text,
-        ...stamps
+        text
       };
     }
   }
@@ -59,18 +122,17 @@ export async function renderFile(
       path: relPath,
       kind: "html",
       html: stripAssets(rewriteLinks(bodyOf(text), root, relPath, webview)),
-      text,
-      ...stamps
+      text
     };
   }
 
-  return { path: relPath, kind: "text", html: `<pre>${escapeHtml(text)}</pre>`, text, ...stamps };
+  return { path: relPath, kind: "text", html: `<pre>${escapeHtml(text)}</pre>`, text };
 }
 
-async function stampsOf(uri: vscode.Uri): Promise<Pick<Content, "created" | "modified">> {
+async function stampsOf(uri: vscode.Uri): Promise<Pick<Content, "created" | "modified"> & { size?: number }> {
   try {
     const stat = await vscode.workspace.fs.stat(uri);
-    return { created: stat.ctime, modified: stat.mtime };
+    return { created: stat.ctime, modified: stat.mtime, size: stat.size };
   } catch {
     return {};
   }
@@ -86,64 +148,12 @@ function bodyOf(html: string): string {
 export async function renderMarkdown(text: string): Promise<string | undefined> {
   try {
     await vscode.extensions.getExtension("vscode.markdown-language-features")?.activate();
-    const html = await vscode.commands.executeCommand<string>("markdown.api.render", closeTableGaps(text));
-    return typeof html === "string" ? html : undefined;
+    const closed = closeTableGaps(text);
+    const html = await vscode.commands.executeCommand<string>("markdown.api.render", closed.text);
+    return typeof html === "string" ? restoreLines(html, closed.lines) : undefined;
   } catch {
     return undefined;
   }
-}
-
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-const ROW = /^ {0,3}\|/;
-const DELIMITER = /^ {0,3}\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
-const BLANK = /^\s*$/;
-
-// A blank line ends a table, so a row written after one would be shown as a paragraph of
-// pipes. Inside a table such a line is dropped instead, unless the row after it is the
-// head of a table of its own, which then stays a table of its own.
-export function closeTableGaps(text: string): string {
-  const lines = text.split(/\r?\n/);
-  const out: string[] = [];
-  let fence = "";
-  let inTable = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const open = FENCE.exec(line);
-    if (fence) {
-      if (open && open[1][0] === fence[0] && open[1].length >= fence.length && BLANK.test(line.slice(open[0].length))) {
-        fence = "";
-      }
-      out.push(line);
-      continue;
-    }
-    if (open) {
-      fence = open[1];
-      inTable = false;
-      out.push(line);
-      continue;
-    }
-    if (inTable && BLANK.test(line)) {
-      let next = i;
-      while (next < lines.length && BLANK.test(lines[next])) {
-        next++;
-      }
-      if (next < lines.length && ROW.test(lines[next]) && !isDelimiter(lines[next + 1])) {
-        i = next - 1;
-        continue;
-      }
-    }
-    if (!inTable && line.includes("|") && isDelimiter(lines[i + 1])) {
-      inTable = true;
-    } else if (!line.includes("|")) {
-      inTable = false;
-    }
-    out.push(line);
-  }
-  return out.join("\n");
-}
-
-function isDelimiter(line: string | undefined): boolean {
-  return line !== undefined && line.includes("|") && DELIMITER.test(line);
 }
 
 // Anything markdown-language-features and its companion extensions contribute to the

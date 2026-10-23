@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { buildTree, TreeNode } from "./tree";
-import { renderFile, escapeHtml } from "./render";
+import { renderFile, escapeHtml, forgetRendered } from "./render";
 import { watchRoot } from "./watch";
 import {
   cleanTag,
@@ -34,10 +34,12 @@ import {
   READ
 } from "./ledger";
 import { cacheUri, match, refresh, sessionsDir } from "./mentions";
-import { Links, linksUri, treeStamp } from "./links";
+import { Link, Links, linksUri, treeStamp } from "./links";
 import { openInBrowser } from "./browser";
 import { Corpus } from "./corpus";
 import { loadSettings, saveSettings, settingsUri } from "./settings";
+import { Refs, RefScope, refsUri } from "./refs";
+import { reorderRows } from "./tables";
 
 export const VIEW_TYPE = "docsPanel";
 export const TRASH_DIR = ".trash";
@@ -49,6 +51,8 @@ const MARKS_POLL_MS = 1500;
 const SETTINGS_DELAY_MS = 300;
 // The places kept in files once read, most recent last; past this many the oldest go.
 const MAX_SCROLLS = 300;
+// A change to any file can change who names the open one; a burst of them is let settle.
+const REFS_DELAY_MS = 300;
 
 // Which of the side's two lists, if either, is given the height its entries need.
 export type AutoSize = "none" | "tree" | "toc";
@@ -69,6 +73,14 @@ export type BucketHead = "inside" | "over" | "outside";
 const BUCKET_HEADS: BucketHead[] = ["inside", "over", "outside"];
 export type BucketHeadStyle = "pill" | "fill" | "plain";
 const BUCKET_HEAD_STYLES: BucketHeadStyle[] = ["pill", "fill", "plain"];
+
+// Where a table's text stands in its cell, and the colour its header row is tinted with:
+// a grey like the block light, none, or one of the theme's colours.
+export type TableAlign = "top" | "center" | "bottom";
+const TABLE_ALIGNS: TableAlign[] = ["top", "center", "bottom"];
+const TABLE_HEADS = ["none", "grey", "red", "orange", "yellow", "green", "blue", "purple", "cyan", "magenta"];
+
+const REF_SCOPES: RefScope[] = ["off", "docs", "all"];
 
 // A folder's tag buckets: the tags that have one, how many stand in a row, how many
 // columns a bucket spans where that is more than one, and whether the tags are in an order
@@ -125,6 +137,10 @@ export interface PanelState {
   bucketHeadBold: boolean;
   bucketHead: BucketHead;
   bucketHeadStyle: BucketHeadStyle;
+  tableAlign: TableAlign;
+  tableHead: string;
+  // Where the files that name the open one are looked for, if anywhere.
+  refsScope: RefScope;
   selected: string | null;
   // The files left in edit mode, which open in it again.
   editing: string[];
@@ -165,6 +181,9 @@ const DEFAULT_STATE: PanelState = {
   bucketHeadBold: false,
   bucketHead: "inside",
   bucketHeadStyle: "pill",
+  tableAlign: "center",
+  tableHead: "grey",
+  refsScope: "docs",
   selected: null,
   editing: [],
   searchCase: false,
@@ -238,7 +257,10 @@ export class DocsPanel {
   private readonly links: Links;
   // The files of the docs as the tree last showed them, which names in a page link to.
   private docFiles = new Set<string>();
+  private docTimes = new Map<string, number>();
   private docStamp = "";
+  private readonly refs: Refs;
+  private refsTimer: NodeJS.Timeout | undefined;
   private marksPoll: NodeJS.Timeout | undefined;
   private marksStamp = "";
   private marksSent = "";
@@ -260,28 +282,23 @@ export class DocsPanel {
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    DocsPanel.current = new DocsPanel(panel, context, normalizeState(undefined), false);
+    DocsPanel.current = new DocsPanel(panel, context);
   }
 
-  static restore(
-    panel: vscode.WebviewPanel,
-    context: vscode.ExtensionContext,
-    state: unknown
-  ): void {
+  static restore(panel: vscode.WebviewPanel, context: vscode.ExtensionContext): void {
     DocsPanel.current?.panel.dispose();
-    DocsPanel.current = new DocsPanel(panel, context, normalizeState(state), Boolean(state));
+    DocsPanel.current = new DocsPanel(panel, context);
   }
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
-    private readonly context: vscode.ExtensionContext,
-    state: PanelState,
-    restored: boolean
+    private readonly context: vscode.ExtensionContext
   ) {
-    this.state = state;
+    this.state = normalizeState(undefined);
     this.links = new Links(this.build);
+    this.refs = new Refs(this.build, () => this.refsSoon());
     this.root = resolveRoot();
-    this.settingsLoaded = this.loadSettings(restored);
+    this.settingsLoaded = this.loadSettings();
 
     this.panel.webview.options = {
       enableScripts: true,
@@ -290,7 +307,9 @@ export class DocsPanel {
     this.panel.webview.html = this.html();
 
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((message) => this.onMessage(message))
+      this.panel.webview.onDidReceiveMessage((message) =>
+        this.onMessage(message).catch((error) => this.report(`could not answer "${message?.type}"`, error))
+      )
     );
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
@@ -357,9 +376,9 @@ export class DocsPanel {
     };
     this.startWatcher();
     this.startSessionWatcher();
-    void this.sendTree();
+    this.sendTree().catch((error) => this.report("could not read the docs folder", error));
     if (this.state.selected) {
-      void this.sendContent(this.state.selected);
+      this.sendContent(this.state.selected).catch((error) => this.report("could not open the file", error));
     }
   }
 
@@ -371,15 +390,16 @@ export class DocsPanel {
       return;
     }
     this.watcher = watchRoot(base, {
-      onTreeChange: () => void this.sendTree(),
+      onTreeChange: () => this.sendTree().catch((error) => this.report("could not read the docs folder", error)),
       onFileChange: (path) => {
         if (path === MARKS_FILE) {
           void this.checkMarks();
         } else if (path === this.state.selected) {
           void this.markRead(path);
-          void this.sendContent(path);
+          this.sendContent(path).catch((error) => this.report("could not open the file", error));
         } else {
           void this.unread(path);
+          this.refsSoon();
         }
       }
     });
@@ -425,17 +445,15 @@ export class DocsPanel {
     this.post({ type: "prefixes", prefixes });
   }
 
-  // The file has the last word. A tab VS Code brought back from before there was a file
-  // hands its own state over, so nothing set in it is lost.
-  private async loadSettings(restored: boolean): Promise<void> {
+  // The file is the only place the settings are kept: without one the panel starts from
+  // its defaults.
+  private async loadSettings(): Promise<void> {
     if (!this.root) {
       return;
     }
     const saved = await loadSettings(this.root.workspace);
     if (saved) {
       this.state = normalizeState(saved);
-    } else if (restored) {
-      this.saveSettingsNow();
     }
   }
 
@@ -496,21 +514,29 @@ export class DocsPanel {
         this.post({ type: "state", ...this.state });
         this.post({ type: "version", version: this.build });
         this.sendPrefixes();
-        await this.sendTree();
-        if (this.state.selected) {
-          await this.sendContent(this.state.selected);
-        }
+        await this.sendTree(async () => {
+          if (this.state.selected) {
+            await this.sendContent(this.state.selected);
+          }
+        });
         return;
-      case "open":
-        this.state.selected = String(message.path);
-        await this.markRead(this.state.selected);
-        await this.sendContent(this.state.selected);
+      case "open": {
+        // The page is shown first: a read mark that cannot be written must not keep it shut.
+        const path = String(message.path);
+        this.state.selected = path;
+        await this.sendContent(path);
+        await this.markRead(path);
         return;
+      }
       case "persist": {
         await this.settingsLoaded;
         const mentioned = this.state.mentionLines > 0;
+        const scope = this.state.refsScope;
         this.state = normalizeState(message);
         this.saveSettingsSoon();
+        if (scope !== this.state.refsScope && this.state.selected) {
+          void this.sendRefs(this.state.selected);
+        }
         if (mentioned !== this.state.mentionLines > 0) {
           await this.sendMentions();
         }
@@ -518,6 +544,9 @@ export class DocsPanel {
       }
       case "save":
         await this.save(String(message.path), String(message.text));
+        return;
+      case "reorderRows":
+        await this.reorderRows(String(message.path), String(message.text ?? ""), message.rows, message.order);
         return;
       case "rename":
         await this.rename(String(message.path));
@@ -604,7 +633,18 @@ export class DocsPanel {
       case "settings":
         await vscode.commands.executeCommand("workbench.action.openSettings", "docsPanel");
         return;
+      case "error":
+        this.report("page error", `${message.message} (${message.where})`);
+        return;
     }
+  }
+
+  // A failure behind the page would otherwise leave it waiting with no word of why.
+  private report(what: string, error: unknown): void {
+    console.error(`Docs Panel ${what}:`, error);
+    void vscode.window.showErrorMessage(
+      `Docs Panel ${what}: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 
   private async tags(relPath: string, value: unknown): Promise<void> {
@@ -803,9 +843,37 @@ export class DocsPanel {
     const uri = vscode.Uri.joinPath(base, ...relPath.split("/"));
     try {
       await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
+      forgetRendered(base, relPath);
       this.post({ type: "saved", path: relPath });
     } catch (error) {
       void vscode.window.showErrorMessage(`Docs Panel could not save ${relPath}: ${error}`);
+    }
+  }
+
+  // A table sorted or a row dragged in the page moves the rows in the file, and nothing
+  // else: the file is read as it is now and must be the text the page was drawn from, and
+  // reorderRows checks the lines named are one table's rows and that only they moved. The
+  // page is drawn again from the file whether it was written or refused, so what is shown
+  // is always what the file holds.
+  private async reorderRows(relPath: string, shown: string, rows: unknown, order: unknown): Promise<void> {
+    const base = this.base;
+    if (!base) {
+      return;
+    }
+    const uri = vscode.Uri.joinPath(base, ...relPath.split("/"));
+    try {
+      const next = reorderRows(await vscode.workspace.fs.readFile(uri), shown, rows, order);
+      if (next) {
+        await vscode.workspace.fs.writeFile(uri, next);
+      }
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `Docs Panel did not reorder the table in ${relPath}: ${error instanceof Error ? error.message : error}`
+      );
+    }
+    forgetRendered(base, relPath);
+    if (this.state.selected === relPath) {
+      await this.sendContent(relPath);
     }
   }
 
@@ -1235,6 +1303,12 @@ export class DocsPanel {
         label: "Link cache",
         note: "the files each page names are looked up again as the pages are opened",
         uri: linksUri(this.root.workspace)
+      },
+      {
+        id: "refs",
+        label: "Reference cache",
+        note: "every file is read again for the files it names when the next page is opened",
+        uri: refsUri(this.root.workspace)
       }
     ];
   }
@@ -1300,6 +1374,7 @@ export class DocsPanel {
       }
     }
     this.links.forget();
+    this.refs.forget();
     if (files.some((file) => file.id === "settings")) {
       this.post({ type: "state", ...this.state });
     }
@@ -1336,7 +1411,11 @@ export class DocsPanel {
     }
   }
 
-  private async sendTree(): Promise<void> {
+  // The tree goes first, with the tags, colours and read marks as their files hold them.
+  // Then whatever is waiting on the tree, the open file when the page has just loaded;
+  // and only then the slow part, which matches the marks against every file, reading
+  // some of them, and scans the session logs for mentions.
+  private async sendTree(then?: () => Promise<void>): Promise<void> {
     if (!this.ready) {
       return;
     }
@@ -1357,9 +1436,10 @@ export class DocsPanel {
     }
     // The walk skips dotted names, so the trash is built on its own and its paths are
     // prefixed here: one list, one set of keys, whichever side of the trash a file is on.
-    const trash = (await buildTree(vscode.Uri.joinPath(base, TRASH_DIR), false)).map(prefixNode);
-    const nodes = await buildTree(base);
-    this.docFiles = filesOf(nodes);
+    const [trashed, nodes] = await Promise.all([buildTree(vscode.Uri.joinPath(base, TRASH_DIR), false), buildTree(base)]);
+    const trash = trashed.map(prefixNode);
+    this.docTimes = timesOf(nodes);
+    this.docFiles = new Set(this.docTimes.keys());
     this.docStamp = treeStamp(this.docFiles);
     this.post({
       type: "tree",
@@ -1370,11 +1450,23 @@ export class DocsPanel {
       name: base.path.split("/").pop() ?? ""
     });
     if (this.root) {
+      const [marks, reads] = await Promise.all([
+        load(marksLedger(this.root.uri)),
+        load(readsLedger(this.root.workspace, this.root.uri))
+      ]);
+      this.postMarks(marks);
+      this.postReads(reads);
+    }
+    await this.dropMissingSelection();
+    if (then) {
+      await then();
+    }
+    if (this.root) {
       this.postMarks(await prune(marksLedger(this.root.uri)));
       this.postReads(await prune(readsLedger(this.root.workspace, this.root.uri)));
       await this.sendMentions();
     }
-    await this.dropMissingSelection();
+    this.refsSoon();
   }
 
   // A file can go from under the panel: deleted, or moved by another tool. The reading
@@ -1399,18 +1491,58 @@ export class DocsPanel {
       return;
     }
     const content = await renderFile(base, relPath, this.panel.webview);
-    const links =
-      content.kind === "md" && this.root && typeof content.text === "string"
-        ? await this.links.of(
-            this.root.workspace,
-            relPath,
-            content.text,
-            content.modified ?? 0,
-            this.docFiles,
-            this.docStamp
-          )
-        : {};
-    this.post({ type: "content", ...content, links });
+    const workspace = content.kind === "md" && typeof content.text === "string" ? this.root?.workspace : undefined;
+    if (!workspace) {
+      this.post({ type: "content", ...content, links: {} });
+      void this.sendRefs(relPath);
+      return;
+    }
+    // The page is shown with the links it had last time, and put right when they have been
+    // worked out for the file and the docs as they are now, which can mean a lookup for
+    // every name in it.
+    const early = (await this.links.kept(workspace, relPath)) ?? {};
+    this.post({ type: "content", ...content, links: early });
+    this.links
+      .of(workspace, relPath, content.text!, content.modified ?? 0, this.docFiles, this.docStamp)
+      .then((links) => {
+        if (!sameLinks(links, early)) {
+          this.post({ type: "links", path: relPath, modified: content.modified, links });
+        }
+      })
+      .catch((error) => this.report("could not find the files the page names", error));
+    void this.sendRefs(relPath);
+  }
+
+  private refsSoon(): void {
+    clearTimeout(this.refsTimer);
+    this.refsTimer = setTimeout(() => {
+      this.refsTimer = undefined;
+      if (this.state.selected) {
+        void this.sendRefs(this.state.selected);
+      }
+    }, REFS_DELAY_MS);
+  }
+
+  // The files that name the open one, which the page lists above it. The first time it is
+  // asked this reads every file in the scope, so it never holds up the page itself.
+  private async sendRefs(relPath: string): Promise<void> {
+    const root = this.root;
+    if (!this.ready || !root) {
+      return;
+    }
+    try {
+      const refs = await this.refs.of(
+        root.workspace,
+        relativeTo(root.workspace, root.uri),
+        relPath,
+        this.state.refsScope,
+        this.docTimes,
+        this.docStamp
+      );
+      this.post({ type: "refs", path: relPath, refs });
+    } catch (error) {
+      this.report("could not find the files that name the page", error);
+    }
   }
 
   private post(message: unknown): void {
@@ -1530,6 +1662,8 @@ export class DocsPanel {
     }
     this.watcher?.dispose();
     this.sessions?.dispose();
+    this.refs.dispose();
+    clearTimeout(this.refsTimer);
     if (this.sessionsTimer) {
       clearTimeout(this.sessionsTimer);
     }
@@ -1556,15 +1690,24 @@ function untrash(relPath: string): string {
   return parts.join("/");
 }
 
-function filesOf(nodes: TreeNode[], out = new Set<string>()): Set<string> {
+// Every file of the tree, with the time it was last modified.
+function timesOf(nodes: TreeNode[], out = new Map<string, number>()): Map<string, number> {
   for (const node of nodes) {
     if (node.dir) {
-      filesOf(node.children ?? [], out);
+      timesOf(node.children ?? [], out);
     } else {
-      out.add(node.path);
+      out.set(node.path, node.mtime ?? 0);
     }
   }
   return out;
+}
+
+function sameLinks(a: Record<string, Link>, b: Record<string, Link>): boolean {
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => b[key] && b[key].path === a[key].path && !!b[key].workspace === !!a[key].workspace)
+  );
 }
 
 function prefixNode(node: TreeNode): TreeNode {
@@ -1639,24 +1782,32 @@ function resolveRoot(): Root | undefined {
   return { uri, workspace: folder.uri, label: uri.fsPath };
 }
 
+// A number, or a number written as text in a file edited by hand. Anything else, null
+// included, which is what JSON makes of a number that was not one, is no number at all.
+function numberOf(value: unknown): number {
+  return typeof value === "number" || (typeof value === "string" && value.trim() !== "")
+    ? Number(value)
+    : NaN;
+}
+
 function normalizeState(value: any): PanelState {
-  const split = Number(value?.split);
-  const sideSplit = Number(value?.sideSplit);
-  const textScale = Number(value?.textScale);
-  const treeScale = Number(value?.treeScale);
-  const lineHeight = Number(value?.lineHeight);
-  const hoverStrength = Number(value?.hoverStrength);
+  const split = numberOf(value?.split);
+  const sideSplit = numberOf(value?.sideSplit);
+  const textScale = numberOf(value?.textScale);
+  const treeScale = numberOf(value?.treeScale);
+  const lineHeight = numberOf(value?.lineHeight);
+  const hoverStrength = numberOf(value?.hoverStrength);
   // One padding, before it was split in two, stands for both.
-  const blockPad = Number(value?.blockPad);
-  const blockPadY = Number(value?.blockPadY ?? blockPad);
-  const blockPadX = Number(value?.blockPadX ?? blockPad);
-  const autoMin = Number(value?.autoMin);
-  const autoWidthMin = Number(value?.autoWidthMin);
+  const blockPad = numberOf(value?.blockPad);
+  const blockPadY = numberOf(value?.blockPadY ?? blockPad);
+  const blockPadX = numberOf(value?.blockPadX ?? blockPad);
+  const autoMin = numberOf(value?.autoMin);
+  const autoWidthMin = numberOf(value?.autoWidthMin);
   // A background only on or off, before it had a strength, is on at the tint it had.
   const bucketFill = typeof value?.bucketFill === "boolean"
     ? (value.bucketFill ? OLD_BUCKET_FILL : 0)
-    : Number(value?.bucketFill);
-  const mentionLines = Number(value?.mentionLines);
+    : numberOf(value?.bucketFill);
+  const mentionLines = numberOf(value?.mentionLines);
   const scrolls: Record<string, number> = {};
   for (const [path, ratio] of Object.entries(value?.scrolls ?? {}).slice(-MAX_SCROLLS)) {
     if (typeof ratio === "number" && Number.isFinite(ratio)) {
@@ -1665,7 +1816,7 @@ function normalizeState(value: any): PanelState {
   }
   return {
     split: Number.isFinite(split) ? split : DEFAULT_STATE.split,
-    sideSplit: Number.isFinite(sideSplit) ? sideSplit : DEFAULT_STATE.sideSplit,
+    sideSplit: Number.isFinite(sideSplit) ? Math.min(Math.max(sideSplit, 0), 1) : DEFAULT_STATE.sideSplit,
     textScale: Number.isFinite(textScale) ? textScale : DEFAULT_STATE.textScale,
     treeScale: Number.isFinite(treeScale) ? treeScale : DEFAULT_STATE.treeScale,
     lineHeight: Number.isFinite(lineHeight) ? lineHeight : DEFAULT_STATE.lineHeight,
@@ -1713,6 +1864,9 @@ function normalizeState(value: any): PanelState {
     bucketHeadStyle: BUCKET_HEAD_STYLES.includes(value?.bucketHeadStyle)
       ? value.bucketHeadStyle
       : DEFAULT_STATE.bucketHeadStyle,
+    tableAlign: TABLE_ALIGNS.includes(value?.tableAlign) ? value.tableAlign : DEFAULT_STATE.tableAlign,
+    tableHead: TABLE_HEADS.includes(value?.tableHead) ? value.tableHead : DEFAULT_STATE.tableHead,
+    refsScope: REF_SCOPES.includes(value?.refsScope) ? value.refsScope : DEFAULT_STATE.refsScope,
     selected: typeof value?.selected === "string" ? value.selected : null,
     editing: Array.isArray(value?.editing) ? value.editing.map(String) : [],
     scrolls
@@ -1731,7 +1885,7 @@ function normalizeBuckets(value: unknown): Record<string, Buckets> {
     if (!tags.length) {
       continue;
     }
-    const perRow = raw?.flow === "column" ? 1 : Number(raw?.perRow);
+    const perRow = raw?.flow === "column" ? 1 : numberOf(raw?.perRow);
     const spans: Record<string, number> = {};
     for (const [tag, span] of Object.entries(raw?.spans ?? {})) {
       const count = Math.round(Number(span));

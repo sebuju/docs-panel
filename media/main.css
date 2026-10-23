@@ -798,6 +798,42 @@ body.dragging {
   line-height: var(--line-height);
 }
 
+/* The files that name this one, one to a line, every one of them: the name to follow and,
+   after it, the whole path. Sized in px like the log, for the same reason. */
+.refs {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.refs-head {
+  color: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.refs-row {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.refs-link {
+  flex: 0 0 auto;
+  color: var(--vscode-textLink-foreground, #4daafc);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.refs-link:hover {
+  text-decoration: underline;
+}
+
+.refs-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vscode-descriptionForeground, #8b949e);
+}
+
 /* Sized in px, not em: the log is not the document and does not follow its reading size. */
 .log {
   margin: 0 0 16px;
@@ -998,6 +1034,32 @@ body.vscode-high-contrast-light #toc li.active > a {
   background-image: linear-gradient(var(--block-light-colour), var(--block-light-colour));
 }
 
+/* A header cell is lit on its own, as the button it is, and like a row its padding is
+   the reach: a shadow would spill over the cells beside it. */
+.markdown-body th.block-on {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* A list item's bullet or number hangs in the list's indent, outside the item's box, so a
+   third and fourth shadow, as wide as that indent, carry the light out over it. The
+   shadows are cut away where the item itself is, so they only show in the gutter. A loose
+   list's item is its first paragraph, and the marker hangs beside that. */
+.markdown-body :is(ul, ol) > li.block-on,
+.markdown-body :is(ul, ol) > li > p:first-child.block-on {
+  --marker-reach: 1.8em;
+  box-shadow:
+    var(--block-pad-dx, 0px) var(--block-pad-dy, 0px) 0 var(--block-pad, 4px) var(--block-reach-colour),
+    calc(-1 * var(--block-pad-dx, 0px)) calc(-1 * var(--block-pad-dy, 0px)) 0 var(--block-pad, 4px) var(--block-reach-colour),
+    calc(-1 * var(--marker-reach) - var(--block-pad-dx, 0px)) var(--block-pad-dy, 0px) 0 var(--block-pad, 4px) var(--block-reach-colour),
+    calc(-1 * var(--marker-reach) - var(--block-pad-dx, 0px)) calc(-1 * var(--block-pad-dy, 0px)) 0 var(--block-pad, 4px) var(--block-reach-colour);
+}
+
+.markdown-body ol > li.block-on,
+.markdown-body ol > li > p:first-child.block-on {
+  --marker-reach: 2.4em;
+}
+
 /* The animation and nothing else: a mark that set the box would move the text it points
    at, and one that set a corner would overrule whatever the element had chosen. */
 .markdown-body .flash {
@@ -1130,6 +1192,86 @@ body.vscode-high-contrast-light #toc li.active > a {
 .markdown-body td {
   border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
   padding: 4px 8px;
+  vertical-align: middle;
+}
+
+[data-table-align="top"] .markdown-body :is(th, td) { vertical-align: top; }
+[data-table-align="bottom"] .markdown-body :is(th, td) { vertical-align: bottom; }
+
+/* The header row is tinted, by default with a grey about as strong as the block light;
+   the block light is an image, so it still shows over the tint. */
+.markdown-body thead th {
+  background-color: var(--table-head-tint, transparent);
+}
+
+[data-table-head="grey"] { --table-head-tint: color-mix(in srgb, var(--vscode-foreground, currentColor) 8%, transparent); }
+[data-table-head="red"] { --table-head-tint: color-mix(in srgb, var(--vscode-charts-red, #f14c4c) 22%, transparent); }
+[data-table-head="orange"] { --table-head-tint: color-mix(in srgb, var(--vscode-charts-orange, #d18616) 22%, transparent); }
+[data-table-head="yellow"] { --table-head-tint: color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 22%, transparent); }
+[data-table-head="green"] { --table-head-tint: color-mix(in srgb, var(--vscode-charts-green, #89d185) 22%, transparent); }
+[data-table-head="blue"] { --table-head-tint: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 22%, transparent); }
+[data-table-head="purple"] { --table-head-tint: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 22%, transparent); }
+[data-table-head="cyan"] { --table-head-tint: color-mix(in srgb, var(--vscode-terminal-ansiCyan, #11a8cd) 22%, transparent); }
+[data-table-head="magenta"] { --table-head-tint: color-mix(in srgb, var(--vscode-terminal-ansiMagenta, #bc3fbc) 22%, transparent); }
+
+/* A table whose rows the file can be traced to sorts from its head. */
+.markdown-body table.reorderable > thead th {
+  cursor: pointer;
+}
+
+/* The way the last sort ran, drawn after the name; with more than one column, each
+   column's place in the sort as well. */
+.markdown-body th.sorted-down::after,
+.markdown-body th.sorted-up::after {
+  margin-left: 0.35em;
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+
+.markdown-body th.sorted-down::after { content: "\25BC" attr(data-sort-rank); }
+.markdown-body th.sorted-up::after { content: "\25B2" attr(data-sort-rank); }
+
+/* The grip and the drop line are laid over the page, so dragging moves nothing in it. */
+.row-grip {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  color: var(--vscode-foreground);
+  opacity: 0.45;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.row-grip:hover,
+body.dragging-row .row-grip {
+  opacity: 0.9;
+}
+
+.row-grip[hidden],
+.row-drop[hidden] {
+  display: none;
+}
+
+.row-drop {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: 1px;
+  background: var(--vscode-focusBorder, #58a6ff);
+}
+
+.markdown-body tr.row-dragged {
+  opacity: 0.5;
+}
+
+body.dragging-row,
+body.dragging-row * {
+  cursor: grabbing !important;
+  user-select: none;
 }
 
 .markdown-body a {

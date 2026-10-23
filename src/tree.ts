@@ -37,33 +37,38 @@ async function walk(
     return { nodes: [] };
   }
 
-  const dirs: TreeNode[] = [];
-  const files: TreeNode[] = [];
+  // Every entry is read at once, and the results kept in the folder's own order, so a slow
+  // disk costs the time of the slowest entry and not of all of them one after another.
   let trash: TreeNode[] | undefined;
-
-  for (const [name, type] of entries) {
-    const path = prefix ? `${prefix}/${name}` : name;
-    // The docs root's own .trash is the panel's trash, and is walked on its own.
-    if (bins && prefix && name === TRASH && type & vscode.FileType.Directory) {
-      trash = (await walk(vscode.Uri.joinPath(uri, name), path, depth + 1, false)).nodes;
-      continue;
-    }
-    if (name.startsWith(".") || SKIP.has(name)) {
-      continue;
-    }
-    if (type & vscode.FileType.Directory) {
-      const inner = await walk(vscode.Uri.joinPath(uri, name), path, depth + 1, bins);
-      dirs.push({
-        path,
-        name,
-        dir: true,
-        children: inner.nodes,
-        ...(inner.trash ? { trash: inner.trash } : {})
-      });
-    } else if (type & vscode.FileType.File) {
-      files.push({ path, name, dir: false, mtime: await modified(vscode.Uri.joinPath(uri, name)) });
-    }
-  }
+  const read = await Promise.all(
+    entries.map(async ([name, type]): Promise<TreeNode | undefined> => {
+      const path = prefix ? `${prefix}/${name}` : name;
+      // The docs root's own .trash is the panel's trash, and is walked on its own.
+      if (bins && prefix && name === TRASH && type & vscode.FileType.Directory) {
+        trash = (await walk(vscode.Uri.joinPath(uri, name), path, depth + 1, false)).nodes;
+        return undefined;
+      }
+      if (name.startsWith(".") || SKIP.has(name)) {
+        return undefined;
+      }
+      if (type & vscode.FileType.Directory) {
+        const inner = await walk(vscode.Uri.joinPath(uri, name), path, depth + 1, bins);
+        return {
+          path,
+          name,
+          dir: true,
+          children: inner.nodes,
+          ...(inner.trash ? { trash: inner.trash } : {})
+        };
+      }
+      if (type & vscode.FileType.File) {
+        return { path, name, dir: false, mtime: await modified(vscode.Uri.joinPath(uri, name)) };
+      }
+      return undefined;
+    })
+  );
+  const dirs = read.filter((node): node is TreeNode => !!node && node.dir);
+  const files = read.filter((node): node is TreeNode => !!node && !node.dir);
 
   dirs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   // The most recently touched file is the one being worked on, so it heads its folder.

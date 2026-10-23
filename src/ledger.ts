@@ -610,10 +610,9 @@ export async function prune(spec: LedgerSpec): Promise<Ledger> {
   }
 
   const fresh = [...present].filter((path) => !(path in ledger.files));
-  const freshHashes = new Map<string, string>();
-  for (const path of fresh) {
-    freshHashes.set(path, (await fingerprint(spec.root, path)).hash);
-  }
+  const freshHashes = new Map<string, string>(
+    await Promise.all(fresh.map(async (path) => [path, (await fingerprint(spec.root, path)).hash] as [string, string]))
+  );
 
   const taken = new Set<string>();
   for (const from of missing) {
@@ -691,6 +690,8 @@ async function walk(
   } catch {
     return;
   }
+  // The folders below are read at once rather than one after another.
+  const below: Promise<void>[] = [];
   for (const [name, type] of entries) {
     if (name === "node_modules" || (name.startsWith(".") && name !== TRASH_DIR)) {
       continue;
@@ -698,11 +699,12 @@ async function walk(
     const path = prefix ? `${prefix}/${name}` : name;
     if (type & vscode.FileType.Directory) {
       found.folders.add(path);
-      await walk(vscode.Uri.joinPath(uri, name), path, depth + 1, found);
+      below.push(walk(vscode.Uri.joinPath(uri, name), path, depth + 1, found));
     } else if (type & vscode.FileType.File) {
       found.files.add(path);
     }
   }
+  await Promise.all(below);
 }
 
 function baseName(path: string): string {
