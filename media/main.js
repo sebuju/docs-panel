@@ -1,6 +1,28 @@
 (function () {
   const vscode = acquireVsCodeApi();
 
+  // The host shows what went wrong here, which would otherwise be seen only in the
+  // webview's developer tools; each error once, and not the browser's harmless note that
+  // a resize was put off to the next frame.
+  const errorsSent = new Set();
+  function sendError(message, where) {
+    const key = message + " " + where;
+    if (/^ResizeObserver loop/.test(message) || errorsSent.has(key)) {
+      return;
+    }
+    errorsSent.add(key);
+    vscode.postMessage({ type: "error", message: message, where: where });
+  }
+  window.addEventListener("error", (event) => {
+    const file = (event.filename || "").split("/").pop().split("?")[0];
+    sendError(String(event.message), file + ":" + event.lineno + ":" + event.colno);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    const stack = String((reason && reason.stack) || "").split("\n");
+    sendError(String((reason && reason.message) || reason), (stack[1] || "").trim());
+  });
+
   const layout = document.getElementById("layout");
   const sideEl = document.getElementById("side");
   const paneEl = document.getElementById("pane");
@@ -438,18 +460,31 @@
     }
   }
 
+  // A page in a hidden tab has no size, and every measure in it is nought; fitted to that,
+  // the side would be saved at its narrowest. It is fitted again once it is shown.
+  function laidOut() {
+    return layout.clientWidth > 0 && sideBodyEl.clientHeight > 0;
+  }
+
+  // The widths and heights asked for are kept as they were asked for; only what is drawn
+  // is held inside the window, so a narrow window for a moment does not shrink them.
   function setSplit(value) {
-    const max = Math.max(MIN_SPLIT, window.innerWidth - MIN_SPLIT - 4);
-    split = Math.min(Math.max(value, MIN_SPLIT), max);
-    layout.style.setProperty("--split", split + "px");
+    if (Number.isFinite(value)) {
+      split = Math.max(value, MIN_SPLIT);
+    }
+    const max = laidOut() ? Math.max(MIN_SPLIT, window.innerWidth - MIN_SPLIT - 4) : split;
+    layout.style.setProperty("--split", Math.min(split, max) + "px");
     fitTags();
   }
 
   function setSideSplit(value) {
-    const height = sideBodyEl.clientHeight || 1;
-    const min = Math.min(0.4, MIN_ROW / height);
-    sideSplit = Math.min(Math.max(value, min), 1 - min);
-    sideBodyEl.style.setProperty("--tree-row", "calc(" + sideSplit * 100 + "% - 2px)");
+    if (Number.isFinite(value)) {
+      sideSplit = Math.min(Math.max(value, 0), 1);
+    }
+    const height = sideBodyEl.clientHeight;
+    const min = height ? Math.min(0.4, MIN_ROW / height) : 0;
+    const shown = Math.min(Math.max(sideSplit, min), 1 - min);
+    sideBodyEl.style.setProperty("--tree-row", "calc(" + shown * 100 + "% - 2px)");
     refreshBars();
   }
 
@@ -459,7 +494,7 @@
   function fitSide() {
     const pane = autoSize === "tree" ? treeEl : autoSize === "toc" ? tocEl : null;
     const list = pane && pane.querySelector(":scope > ul");
-    if (!list || tocEl.hidden) {
+    if (!list || tocEl.hidden || !laidOut()) {
       setSideSplit(sideSplit);
       return;
     }
@@ -498,7 +533,7 @@
   // stand in a row. Only growing, the side is never made narrower than it is, unless asked
   // to fit by a click on the divider.
   function fitWidth(refit) {
-    if (autoWidth === "off") {
+    if (autoWidth === "off" || !laidOut()) {
       return;
     }
     const rows = treeEl.querySelectorAll(".row");

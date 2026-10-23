@@ -284,7 +284,9 @@ export class DocsPanel {
     this.panel.webview.html = this.html();
 
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((message) => this.onMessage(message))
+      this.panel.webview.onDidReceiveMessage((message) =>
+        this.onMessage(message).catch((error) => this.report(`could not answer "${message?.type}"`, error))
+      )
     );
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
@@ -351,9 +353,9 @@ export class DocsPanel {
     };
     this.startWatcher();
     this.startSessionWatcher();
-    void this.sendTree();
+    this.sendTree().catch((error) => this.report("could not read the docs folder", error));
     if (this.state.selected) {
-      void this.sendContent(this.state.selected);
+      this.sendContent(this.state.selected).catch((error) => this.report("could not open the file", error));
     }
   }
 
@@ -365,13 +367,13 @@ export class DocsPanel {
       return;
     }
     this.watcher = watchRoot(base, {
-      onTreeChange: () => void this.sendTree(),
+      onTreeChange: () => this.sendTree().catch((error) => this.report("could not read the docs folder", error)),
       onFileChange: (path) => {
         if (path === MARKS_FILE) {
           void this.checkMarks();
         } else if (path === this.state.selected) {
           void this.markRead(path);
-          void this.sendContent(path);
+          this.sendContent(path).catch((error) => this.report("could not open the file", error));
         } else {
           void this.unread(path);
         }
@@ -493,11 +495,14 @@ export class DocsPanel {
           await this.sendContent(this.state.selected);
         }
         return;
-      case "open":
-        this.state.selected = String(message.path);
-        await this.markRead(this.state.selected);
-        await this.sendContent(this.state.selected);
+      case "open": {
+        // The page is shown first: a read mark that cannot be written must not keep it shut.
+        const path = String(message.path);
+        this.state.selected = path;
+        await this.sendContent(path);
+        await this.markRead(path);
         return;
+      }
       case "persist": {
         await this.settingsLoaded;
         const mentioned = this.state.mentionLines > 0;
@@ -596,7 +601,18 @@ export class DocsPanel {
       case "settings":
         await vscode.commands.executeCommand("workbench.action.openSettings", "docsPanel");
         return;
+      case "error":
+        this.report("page error", `${message.message} (${message.where})`);
+        return;
     }
+  }
+
+  // A failure behind the page would otherwise leave it waiting with no word of why.
+  private report(what: string, error: unknown): void {
+    console.error(`Docs Panel ${what}:`, error);
+    void vscode.window.showErrorMessage(
+      `Docs Panel ${what}: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 
   private async tags(relPath: string, value: unknown): Promise<void> {
@@ -1631,24 +1647,32 @@ function resolveRoot(): Root | undefined {
   return { uri, workspace: folder.uri, label: uri.fsPath };
 }
 
+// A number, or a number written as text in a file edited by hand. Anything else, null
+// included, which is what JSON makes of a number that was not one, is no number at all.
+function numberOf(value: unknown): number {
+  return typeof value === "number" || (typeof value === "string" && value.trim() !== "")
+    ? Number(value)
+    : NaN;
+}
+
 function normalizeState(value: any): PanelState {
-  const split = Number(value?.split);
-  const sideSplit = Number(value?.sideSplit);
-  const textScale = Number(value?.textScale);
-  const treeScale = Number(value?.treeScale);
-  const lineHeight = Number(value?.lineHeight);
-  const hoverStrength = Number(value?.hoverStrength);
+  const split = numberOf(value?.split);
+  const sideSplit = numberOf(value?.sideSplit);
+  const textScale = numberOf(value?.textScale);
+  const treeScale = numberOf(value?.treeScale);
+  const lineHeight = numberOf(value?.lineHeight);
+  const hoverStrength = numberOf(value?.hoverStrength);
   // One padding, before it was split in two, stands for both.
-  const blockPad = Number(value?.blockPad);
-  const blockPadY = Number(value?.blockPadY ?? blockPad);
-  const blockPadX = Number(value?.blockPadX ?? blockPad);
-  const autoMin = Number(value?.autoMin);
-  const autoWidthMin = Number(value?.autoWidthMin);
+  const blockPad = numberOf(value?.blockPad);
+  const blockPadY = numberOf(value?.blockPadY ?? blockPad);
+  const blockPadX = numberOf(value?.blockPadX ?? blockPad);
+  const autoMin = numberOf(value?.autoMin);
+  const autoWidthMin = numberOf(value?.autoWidthMin);
   // A background only on or off, before it had a strength, is on at the tint it had.
   const bucketFill = typeof value?.bucketFill === "boolean"
     ? (value.bucketFill ? OLD_BUCKET_FILL : 0)
-    : Number(value?.bucketFill);
-  const mentionLines = Number(value?.mentionLines);
+    : numberOf(value?.bucketFill);
+  const mentionLines = numberOf(value?.mentionLines);
   const scrolls: Record<string, number> = {};
   for (const [path, ratio] of Object.entries(value?.scrolls ?? {}).slice(-MAX_SCROLLS)) {
     if (typeof ratio === "number" && Number.isFinite(ratio)) {
@@ -1657,7 +1681,7 @@ function normalizeState(value: any): PanelState {
   }
   return {
     split: Number.isFinite(split) ? split : DEFAULT_STATE.split,
-    sideSplit: Number.isFinite(sideSplit) ? sideSplit : DEFAULT_STATE.sideSplit,
+    sideSplit: Number.isFinite(sideSplit) ? Math.min(Math.max(sideSplit, 0), 1) : DEFAULT_STATE.sideSplit,
     textScale: Number.isFinite(textScale) ? textScale : DEFAULT_STATE.textScale,
     treeScale: Number.isFinite(treeScale) ? treeScale : DEFAULT_STATE.treeScale,
     lineHeight: Number.isFinite(lineHeight) ? lineHeight : DEFAULT_STATE.lineHeight,
@@ -1723,7 +1747,7 @@ function normalizeBuckets(value: unknown): Record<string, Buckets> {
     if (!tags.length) {
       continue;
     }
-    const perRow = raw?.flow === "column" ? 1 : Number(raw?.perRow);
+    const perRow = raw?.flow === "column" ? 1 : numberOf(raw?.perRow);
     const spans: Record<string, number> = {};
     for (const [tag, span] of Object.entries(raw?.spans ?? {})) {
       const count = Math.round(Number(span));
