@@ -179,6 +179,9 @@
   let pinned = new Set();
   let prefixes = {};
   let notice = "";
+  // Until the host has sent the tree the side says so, instead of showing a tree with
+  // nothing in it but the trash, which looks the same as a broken one.
+  let treeHeard = false;
   let flashModified = false;
   let rootPrefix = "";
   const bars = [];
@@ -748,8 +751,10 @@
     // with it; the place is put back once the rows are in again.
     const top = treeEl.scrollTop;
     treeEl.textContent = "";
-    const list = buildList(nodes, notice);
-    list.appendChild(trashItem(""));
+    const list = buildList(nodes, treeHeard ? notice : "Loading the docs…");
+    if (treeHeard) {
+      list.appendChild(trashItem(""));
+    }
     treeEl.appendChild(list);
     treeEl.scrollTop = top;
     watchHeight(list);
@@ -1339,6 +1344,26 @@
     persist();
   }
 
+  // A file that is slow to come, a long one or one sent while the editor is busy, puts a
+  // note in the page after a moment; a quick one replaces the last page without it.
+  const LOADING_MS = 200;
+  let loadingTimer = 0;
+
+  function showLoading(path) {
+    clearTimeout(loadingTimer);
+    loadingTimer = setTimeout(() => {
+      if (selected !== path || (current && current.path === path)) {
+        return;
+      }
+      if (current) {
+        rememberScroll(current.path);
+      }
+      current = null;
+      draw();
+      bodyEl.appendChild(make("p", "notice", "Loading " + path.split("/").pop() + "…"));
+    }, LOADING_MS);
+  }
+
   function openFile(path) {
     if (finderOpen) {
       closeFinder(true);
@@ -1353,6 +1378,7 @@
     drawTree();
     persist();
     vscode.postMessage({ type: "open", path: path });
+    showLoading(path);
   }
 
   // Every file opened is a step, the way a page is in a browser, and the mouse's back and
@@ -2919,6 +2945,7 @@
   window.addEventListener("message", (event) => {
     const message = event.data;
     if (message.type === "tree") {
+      treeHeard = true;
       nodes = message.nodes || [];
       trashNodes = message.trash || [];
       rootPrefix = typeof message.root === "string" ? message.root : "";
@@ -2940,6 +2967,9 @@
       drawTree();
       persist();
     } else if (message.type === "content") {
+      if (message.path === selected) {
+        clearTimeout(loadingTimer);
+      }
       // A save fires the watcher, which sends this back. Redrawing then would drop the
       // caret, so an echo of what is already on screen only refreshes the stored copy.
       const area = bodyEl.querySelector("textarea");
@@ -2996,6 +3026,9 @@
       applyToc();
       if (selected) {
         visit(selected);
+        if (!current || current.path !== selected) {
+          showLoading(selected);
+        }
       }
       drawTree();
     } else if (message.type === "repath") {
@@ -3055,7 +3088,16 @@
       }
       persist();
       drawHeaderTags();
+    } else if (message.type === "links") {
+      // The links a page was shown with were last time's; these are the file's as it is.
+      if (current && current.path === message.path && current.modified === message.modified) {
+        current.links = message.links || {};
+        if (article) {
+          relink();
+        }
+      }
     } else if (message.type === "moved") {
+      clearTimeout(loadingTimer);
       selected = null;
       current = null;
       mode = "preview";
@@ -3152,7 +3194,9 @@
 
   // The page is searched as one long run of text, so a phrase that crosses a bold or a
   // link is still found; each hit is mapped back onto the nodes it actually covers.
-  function runSearch() {
+  // Kept, the hit the reader was on stays the one shown, and the page is not moved to it.
+  function runSearch(keep) {
+    const was = matchIndex;
     clearMatches();
     const pattern = searchPattern();
     if (article && pattern) {
@@ -3172,7 +3216,9 @@
         }
       }
     }
-    if (matches.length) {
+    if (matches.length && keep) {
+      matchIndex = Math.min(Math.max(was, 0), matches.length - 1);
+    } else if (matches.length) {
       matchIndex = 0;
       reveal(matches[0]);
     }
@@ -3285,7 +3331,7 @@
   searchCloseEl.addEventListener("click", closeSearch);
   searchPrevEl.addEventListener("click", () => step(-1));
   searchNextEl.addEventListener("click", () => step(1));
-  searchTextEl.addEventListener("input", runSearch);
+  searchTextEl.addEventListener("input", () => runSearch());
   searchCaseEl.addEventListener("click", () => {
     searchCase = toggleOption(searchCaseEl, !searchCase);
     persist();
@@ -3403,6 +3449,23 @@
   // its text with the same pattern the host read them with; a name already in a link is
   // left as it is.
   const FILE_NAME = /[\w-][\w.\-\\/]*\.[A-Za-z][A-Za-z0-9]{0,5}/g;
+
+  // The names are linked again in the page as it stands, so its place and the open find
+  // are kept; only the find's hits are found again, in the text nodes as they now are.
+  function relink() {
+    const parents = new Set();
+    for (const a of article.querySelectorAll("a.file-link")) {
+      parents.add(a.parentNode);
+      a.replaceWith(document.createTextNode(a.textContent));
+    }
+    for (const parent of parents) {
+      parent.normalize();
+    }
+    linkNames(article, current.links || {});
+    if (searchOpen) {
+      runSearch(true);
+    }
+  }
 
   function linkNames(root, links) {
     if (!Object.keys(links).length) {

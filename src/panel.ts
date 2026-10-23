@@ -34,7 +34,7 @@ import {
   READ
 } from "./ledger";
 import { cacheUri, match, refresh, sessionsDir } from "./mentions";
-import { Links, linksUri, treeStamp } from "./links";
+import { Link, Links, linksUri, treeStamp } from "./links";
 import { openInBrowser } from "./browser";
 import { Corpus } from "./corpus";
 import { loadSettings, saveSettings, settingsUri } from "./settings";
@@ -490,10 +490,11 @@ export class DocsPanel {
         this.post({ type: "state", ...this.state });
         this.post({ type: "version", version: this.build });
         this.sendPrefixes();
-        await this.sendTree();
-        if (this.state.selected) {
-          await this.sendContent(this.state.selected);
-        }
+        await this.sendTree(async () => {
+          if (this.state.selected) {
+            await this.sendContent(this.state.selected);
+          }
+        });
         return;
       case "open": {
         // The page is shown first: a read mark that cannot be written must not keep it shut.
@@ -1344,7 +1345,11 @@ export class DocsPanel {
     }
   }
 
-  private async sendTree(): Promise<void> {
+  // The tree goes first, with the tags, colours and read marks as their files hold them.
+  // Then whatever is waiting on the tree, the open file when the page has just loaded;
+  // and only then the slow part, which matches the marks against every file, reading
+  // some of them, and scans the session logs for mentions.
+  private async sendTree(then?: () => Promise<void>): Promise<void> {
     if (!this.ready) {
       return;
     }
@@ -1365,8 +1370,8 @@ export class DocsPanel {
     }
     // The walk skips dotted names, so the trash is built on its own and its paths are
     // prefixed here: one list, one set of keys, whichever side of the trash a file is on.
-    const trash = (await buildTree(vscode.Uri.joinPath(base, TRASH_DIR), false)).map(prefixNode);
-    const nodes = await buildTree(base);
+    const [trashed, nodes] = await Promise.all([buildTree(vscode.Uri.joinPath(base, TRASH_DIR), false), buildTree(base)]);
+    const trash = trashed.map(prefixNode);
     this.docFiles = filesOf(nodes);
     this.docStamp = treeStamp(this.docFiles);
     this.post({
@@ -1378,11 +1383,22 @@ export class DocsPanel {
       name: base.path.split("/").pop() ?? ""
     });
     if (this.root) {
+      const [marks, reads] = await Promise.all([
+        load(marksLedger(this.root.uri)),
+        load(readsLedger(this.root.workspace, this.root.uri))
+      ]);
+      this.postMarks(marks);
+      this.postReads(reads);
+    }
+    await this.dropMissingSelection();
+    if (then) {
+      await then();
+    }
+    if (this.root) {
       this.postMarks(await prune(marksLedger(this.root.uri)));
       this.postReads(await prune(readsLedger(this.root.workspace, this.root.uri)));
       await this.sendMentions();
     }
-    await this.dropMissingSelection();
   }
 
   // A file can go from under the panel: deleted, or moved by another tool. The reading
@@ -1407,18 +1423,24 @@ export class DocsPanel {
       return;
     }
     const content = await renderFile(base, relPath, this.panel.webview);
-    const links =
-      content.kind === "md" && this.root && typeof content.text === "string"
-        ? await this.links.of(
-            this.root.workspace,
-            relPath,
-            content.text,
-            content.modified ?? 0,
-            this.docFiles,
-            this.docStamp
-          )
-        : {};
-    this.post({ type: "content", ...content, links });
+    const workspace = content.kind === "md" && typeof content.text === "string" ? this.root?.workspace : undefined;
+    if (!workspace) {
+      this.post({ type: "content", ...content, links: {} });
+      return;
+    }
+    // The page is shown with the links it had last time, and put right when they have been
+    // worked out for the file and the docs as they are now, which can mean a lookup for
+    // every name in it.
+    const early = (await this.links.kept(workspace, relPath)) ?? {};
+    this.post({ type: "content", ...content, links: early });
+    this.links
+      .of(workspace, relPath, content.text!, content.modified ?? 0, this.docFiles, this.docStamp)
+      .then((links) => {
+        if (!sameLinks(links, early)) {
+          this.post({ type: "links", path: relPath, modified: content.modified, links });
+        }
+      })
+      .catch((error) => this.report("could not find the files the page names", error));
   }
 
   private post(message: unknown): void {
@@ -1573,6 +1595,14 @@ function filesOf(nodes: TreeNode[], out = new Set<string>()): Set<string> {
     }
   }
   return out;
+}
+
+function sameLinks(a: Record<string, Link>, b: Record<string, Link>): boolean {
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => b[key] && b[key].path === a[key].path && !!b[key].workspace === !!a[key].workspace)
+  );
 }
 
 function prefixNode(node: TreeNode): TreeNode {

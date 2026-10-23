@@ -16,6 +16,36 @@ export const MARKDOWN = new Set([".md", ".markdown"]);
 export const IMAGES = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]);
 export const HTML = new Set([".html", ".htm"]);
 
+// Rendering goes through the Markdown extension, in the same busy process as every other
+// extension, and a long file takes a while; the pages shown lately are kept, each as long
+// as the file's time and size are what they were, the newest last and the oldest dropped.
+const MAX_RENDERED = 40;
+const MAX_RENDERED_CHARS = 40_000_000;
+const rendered = new Map<string, { stamp: string; content: Content; chars: number }>();
+let renderedChars = 0;
+
+function keep(key: string, stamp: string, content: Content): Content {
+  const chars = (content.html?.length ?? 0) + (content.text?.length ?? 0);
+  forget(key);
+  rendered.set(key, { stamp, content, chars });
+  renderedChars += chars;
+  for (const [old] of rendered) {
+    if (rendered.size <= MAX_RENDERED && renderedChars <= MAX_RENDERED_CHARS) {
+      break;
+    }
+    forget(old);
+  }
+  return content;
+}
+
+function forget(key: string): void {
+  const entry = rendered.get(key);
+  if (entry) {
+    renderedChars -= entry.chars;
+    rendered.delete(key);
+  }
+}
+
 export async function renderFile(
   root: vscode.Uri,
   relPath: string,
@@ -23,12 +53,35 @@ export async function renderFile(
 ): Promise<Content> {
   const uri = vscode.Uri.joinPath(root, ...relPath.split("/"));
   const ext = extensionOf(relPath);
-  const stamps = await stampsOf(uri);
+  const { size, ...stamps } = await stampsOf(uri);
 
   if (IMAGES.has(ext)) {
     return { path: relPath, kind: "img", uri: webview.asWebviewUri(uri).toString(), ...stamps };
   }
 
+  // The links a page is written with depend on the webview, so the key holds that too.
+  const key = webview.cspSource + "|" + uri.toString();
+  const stamp = `${stamps.modified}:${size}`;
+  const kept = size === undefined ? undefined : rendered.get(key);
+  if (kept && kept.stamp === stamp) {
+    keep(key, stamp, kept.content);
+    return { ...kept.content, ...stamps };
+  }
+  const content = await readAndRender(root, uri, relPath, ext, webview);
+  // A page the Markdown extension failed to render, shown as text, is not kept.
+  const fallback = MARKDOWN.has(ext) && content.kind !== "md";
+  return size === undefined || content.text === undefined || fallback
+    ? { ...content, ...stamps }
+    : { ...keep(key, stamp, content), ...stamps };
+}
+
+async function readAndRender(
+  root: vscode.Uri,
+  uri: vscode.Uri,
+  relPath: string,
+  ext: string,
+  webview: vscode.Webview
+): Promise<Content> {
   let text: string;
   try {
     text = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
@@ -36,8 +89,7 @@ export async function renderFile(
     return {
       path: relPath,
       kind: "text",
-      html: `<pre>${escapeHtml("Cannot read " + relPath)}</pre>`,
-      ...stamps
+      html: `<pre>${escapeHtml("Cannot read " + relPath)}</pre>`
     };
   }
 
@@ -48,8 +100,7 @@ export async function renderFile(
         path: relPath,
         kind: "md",
         html: stripAssets(addTaskBoxes(rewriteLinks(html, root, relPath, webview))),
-        text,
-        ...stamps
+        text
       };
     }
   }
@@ -59,18 +110,17 @@ export async function renderFile(
       path: relPath,
       kind: "html",
       html: stripAssets(rewriteLinks(bodyOf(text), root, relPath, webview)),
-      text,
-      ...stamps
+      text
     };
   }
 
-  return { path: relPath, kind: "text", html: `<pre>${escapeHtml(text)}</pre>`, text, ...stamps };
+  return { path: relPath, kind: "text", html: `<pre>${escapeHtml(text)}</pre>`, text };
 }
 
-async function stampsOf(uri: vscode.Uri): Promise<Pick<Content, "created" | "modified">> {
+async function stampsOf(uri: vscode.Uri): Promise<Pick<Content, "created" | "modified"> & { size?: number }> {
   try {
     const stat = await vscode.workspace.fs.stat(uri);
-    return { created: stat.ctime, modified: stat.mtime };
+    return { created: stat.ctime, modified: stat.mtime, size: stat.size };
   } catch {
     return {};
   }

@@ -20,9 +20,17 @@ interface Cache {
   // The extension's version that wrote it: another version may resolve names differently.
   build: string;
   files: Record<string, Entry>;
+  // Whether a path from the workspace root is a file, and when that was looked up: shared
+  // by every document, so a name written in many is looked up once.
+  outside: Record<string, { file: boolean; at: number }>;
 }
 
 const CACHE_FILE = "docs-panel-links.json";
+// The workspace outside the docs is not watched, so what a lookup found there is trusted
+// for this long and then looked up again.
+const OUTSIDE_MS = 10 * 60 * 1000;
+// Lookups at the same time; a long page can name thousands of things that are not files.
+const OUTSIDE_AT_ONCE = 16;
 
 export function linksUri(workspace: vscode.Uri): vscode.Uri {
   return vscode.Uri.joinPath(workspace, ".vscode", CACHE_FILE);
@@ -41,6 +49,13 @@ export class Links {
 
   constructor(private readonly build: string) {}
 
+  // What a document's names led to the last time they were worked out, whether or not it
+  // or the docs have changed since: the page is shown with these at once, and put right
+  // when of() has the answer for the document as it is now.
+  async kept(workspace: vscode.Uri, relPath: string): Promise<Record<string, Link> | undefined> {
+    return (await this.load(workspace)).files[relPath]?.links;
+  }
+
   async of(
     workspace: vscode.Uri,
     relPath: string,
@@ -54,11 +69,17 @@ export class Links {
     if (kept && kept.mtime === mtime && kept.tree === stamp) {
       return kept.links;
     }
-    const links = await resolveAll(workspace, relPath, text, files);
+    const links = await resolveAll(workspace, relPath, text, files, cache.outside);
     cache.files[relPath] = { mtime, tree: stamp, links };
     for (const path of Object.keys(cache.files)) {
       if (!files.has(path)) {
         delete cache.files[path];
+      }
+    }
+    const stale = Date.now() - OUTSIDE_MS;
+    for (const [path, found] of Object.entries(cache.outside)) {
+      if (found.at < stale) {
+        delete cache.outside[path];
       }
     }
     await this.save(workspace, cache);
@@ -77,11 +98,11 @@ export class Links {
     try {
       const parsed = JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(linksUri(workspace))));
       this.cache =
-        parsed?.version === 1 && parsed.build === this.build && parsed.files && typeof parsed.files === "object"
-          ? { version: 1, build: this.build, files: parsed.files }
-          : { version: 1, build: this.build, files: {} };
+        parsed?.version === 2 && parsed.build === this.build && parsed.files && typeof parsed.files === "object"
+          ? { version: 2, build: this.build, files: parsed.files, outside: objectOf(parsed.outside) }
+          : { version: 2, build: this.build, files: {}, outside: {} };
     } catch {
-      this.cache = { version: 1, build: this.build, files: {} };
+      this.cache = { version: 2, build: this.build, files: {}, outside: {} };
     }
     return this.cache;
   }
@@ -104,13 +125,15 @@ async function resolveAll(
   workspace: vscode.Uri,
   relPath: string,
   text: string,
-  files: Set<string>
+  files: Set<string>,
+  outside: Cache["outside"]
 ): Promise<Record<string, Link>> {
   const tokens = new Set([...text.matchAll(TOKEN)].map((found) => found[0]));
   const find = resolver(files);
   const dir = relPath.split("/").slice(0, -1);
   const out: Record<string, Link> = {};
-  const outside: string[] = [];
+  const unknown = new Map<string, string[]>();
+  const fresh = Date.now() - OUTSIDE_MS;
   for (const token of tokens) {
     const clean = token.replace(/\\/g, "/");
     const near = normalize([...dir, ...clean.split("/")]);
@@ -119,27 +142,46 @@ async function resolveAll(
       if (path !== relPath) {
         out[token] = { path };
       }
-    } else {
-      outside.push(token);
+      continue;
     }
+    const root = normalize(clean.split("/"));
+    if (!root) {
+      continue;
+    }
+    const known = outside[root];
+    if (known && known.at >= fresh) {
+      if (known.file) {
+        out[token] = { path: root, workspace: true };
+      }
+      continue;
+    }
+    unknown.set(root, [...(unknown.get(root) ?? []), token]);
   }
-  await Promise.all(
-    outside.map(async (token) => {
-      const path = normalize(token.replace(/\\/g, "/").split("/"));
-      if (!path) {
-        return;
-      }
-      try {
-        const stat = await vscode.workspace.fs.stat(vscode.Uri.joinPath(workspace, ...path.split("/")));
-        if (stat.type & vscode.FileType.File) {
-          out[token] = { path, workspace: true };
+  const paths = [...unknown.keys()];
+  for (let i = 0; i < paths.length; i += OUTSIDE_AT_ONCE) {
+    await Promise.all(
+      paths.slice(i, i + OUTSIDE_AT_ONCE).map(async (path) => {
+        let file = false;
+        try {
+          const stat = await vscode.workspace.fs.stat(vscode.Uri.joinPath(workspace, ...path.split("/")));
+          file = (stat.type & vscode.FileType.File) !== 0;
+        } catch {
+          // Not a file of the workspace: only a word with a dot in it.
         }
-      } catch {
-        // Not a file of the workspace: only a word with a dot in it.
-      }
-    })
-  );
+        outside[path] = { file, at: Date.now() };
+        if (file) {
+          for (const token of unknown.get(path) ?? []) {
+            out[token] = { path, workspace: true };
+          }
+        }
+      })
+    );
+  }
   return out;
+}
+
+function objectOf(value: unknown): Cache["outside"] {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Cache["outside"]) : {};
 }
 
 function normalize(parts: string[]): string | undefined {

@@ -300,7 +300,7 @@ deleting it, or **Purge** in the options' data files, resets them.
 | `.vscode/docs-panel-settings.json` | Panel settings and layout | Everything returns to defaults |
 | `.vscode/docs-panel-reads.json` | Read marks | Every file is unread |
 | `.vscode/docs-panel-mentions.json` | Mention cache | Rebuilt from the session logs on the next scan |
-| `.vscode/docs-panel-links.json` | Which workspace files each page's names resolve to | Looked up again as pages are opened |
+| `.vscode/docs-panel-links.json` | Which files each page's names resolve to, and which names outside the docs are workspace files (looked up again after 10 minutes) | Looked up again as pages are opened |
 
 Only `.docs-panel.json` is meant to be committed; the others are per-user state.
 
