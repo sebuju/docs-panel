@@ -260,28 +260,22 @@ export class DocsPanel {
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    DocsPanel.current = new DocsPanel(panel, context, normalizeState(undefined), false);
+    DocsPanel.current = new DocsPanel(panel, context);
   }
 
-  static restore(
-    panel: vscode.WebviewPanel,
-    context: vscode.ExtensionContext,
-    state: unknown
-  ): void {
+  static restore(panel: vscode.WebviewPanel, context: vscode.ExtensionContext): void {
     DocsPanel.current?.panel.dispose();
-    DocsPanel.current = new DocsPanel(panel, context, normalizeState(state), Boolean(state));
+    DocsPanel.current = new DocsPanel(panel, context);
   }
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
-    private readonly context: vscode.ExtensionContext,
-    state: PanelState,
-    restored: boolean
+    private readonly context: vscode.ExtensionContext
   ) {
-    this.state = state;
+    this.state = normalizeState(undefined);
     this.links = new Links(this.build);
     this.root = resolveRoot();
-    this.settingsLoaded = this.loadSettings(restored);
+    this.settingsLoaded = this.loadSettings();
 
     this.panel.webview.options = {
       enableScripts: true,
@@ -425,17 +419,15 @@ export class DocsPanel {
     this.post({ type: "prefixes", prefixes });
   }
 
-  // The file has the last word. A tab VS Code brought back from before there was a file
-  // hands its own state over, so nothing set in it is lost.
-  private async loadSettings(restored: boolean): Promise<void> {
+  // The file is the only place the settings are kept: without one the panel starts from
+  // its defaults.
+  private async loadSettings(): Promise<void> {
     if (!this.root) {
       return;
     }
     const saved = await loadSettings(this.root.workspace);
     if (saved) {
       this.state = normalizeState(saved);
-    } else if (restored) {
-      this.saveSettingsNow();
     }
   }
 

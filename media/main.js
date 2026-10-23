@@ -240,14 +240,9 @@
   let walking = false;
   const MAX_VISITS = 200;
 
+  // The settings live only in the host's file; until it sends them the page holds its
+  // defaults, which must not overwrite them.
   let stateHeard = false;
-  const saved = vscode.getState();
-  if (saved) {
-    applyState(saved);
-  }
-  if (selected) {
-    visit(selected);
-  }
   setSplit(split);
   setSideSplit(sideSplit);
   setTextScale(textScale);
@@ -397,7 +392,7 @@
 
   // Every option the reader can change belongs in here and in applyState, with a persist()
   // where it changes: the host writes this to .vscode/docs-panel-settings.json, and an
-  // option left out is lost with the tab. See PanelState in src/panel.ts.
+  // option left out is never saved. See PanelState in src/panel.ts.
   function currentState() {
     return {
       split: split,
@@ -437,13 +432,9 @@
     };
   }
 
-  // The host keeps the state in a file, and sends it once the page is ready. Until then
-  // the page holds only its defaults or the tab's own copy, which must not overwrite it.
   function persist() {
-    const state = currentState();
-    vscode.setState(state);
     if (stateHeard) {
-      vscode.postMessage({ type: "persist", ...state });
+      vscode.postMessage({ type: "persist", ...currentState() });
     }
   }
 

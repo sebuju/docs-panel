@@ -8,9 +8,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.window.registerWebviewPanelSerializer(VIEW_TYPE, {
-      async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: unknown) {
+      async deserializeWebviewPanel(panel: vscode.WebviewPanel) {
         panel.webview.options = { enableScripts: true };
-        DocsPanel.restore(panel, context, state);
+        DocsPanel.restore(panel, context);
       }
     })
   );

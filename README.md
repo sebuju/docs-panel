@@ -289,8 +289,8 @@ Both settings have resource scope, so a project can set them in `.vscode/setting
 Everything set inside the panel (options, splits, buckets, pins, open folders, find
 toggles, the selected file and scroll positions) is saved to
 `.vscode/docs-panel-settings.json` shortly after each change and read back when the panel
-opens: after closing the tab, in a new window, and after an update. **Purge** in the
-options' data files resets them.
+opens: after closing the tab, in a new window, and after an update. It is the only copy:
+deleting it, or **Purge** in the options' data files, resets them.
 
 ## Files the panel writes
 
