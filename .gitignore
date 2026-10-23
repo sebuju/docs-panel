@@ -18,6 +18,7 @@ AGENTS.md
 .vscode/settings.json
 docs-panel-reads.json
 docs-panel-links.json
+docs-panel-refs.json
 docs-panel-mentions.json
 docs-panel-settings.json
 .vscode-test/

@@ -175,6 +175,8 @@
   let tagOrder = [];
   let reads = new Set();
   let mentions = {};
+  // The files that name each file, as the host last listed them, by the file named.
+  let refs = {};
   let logOpen = false;
   let pinned = new Set();
   let prefixes = {};
@@ -244,6 +246,17 @@
   // ordered as a tag's is, but is no tag: a tag's name is trimmed, so none starts with a
   // space, and this one cannot be given to a file.
   const UNTAGGED = " untagged";
+  // Where a table's text stands in its cells, and what its header row is tinted with: a
+  // grey like the block light, nothing, or one of the theme's colours.
+  let tableAlign = "center";
+  const TABLE_ALIGNS = ["top", "center", "bottom"];
+  let tableHead = "grey";
+  const TABLE_HEADS = ["none", "grey", "red", "orange", "yellow", "green", "blue", "purple", "cyan", "magenta"];
+  // Where the files that name the open one are looked for: nowhere, the docs, or every
+  // file of the workspace.
+  let refsScope = "docs";
+  const REF_SCOPES = ["off", "docs", "all"];
+  const REF_SCOPE_LABELS = ["off", "docs", "all files"];
   // How far down each file was read, as a share of the way, oldest first.
   let scrolls = {};
   // Match case, whole word and regular expression, in the page's find and in the finder.
@@ -277,6 +290,7 @@
   setHoverStrength(hoverStrength);
   setBlockPad(blockPadY, blockPadX);
   setTagSide(tagSide);
+  setTableLook();
   markAutoWidth();
 
   function applyState(state) {
@@ -373,6 +387,15 @@
     if (BUCKET_HEAD_STYLES.includes(state.bucketHeadStyle)) {
       bucketHeadStyle = state.bucketHeadStyle;
     }
+    if (TABLE_ALIGNS.includes(state.tableAlign)) {
+      tableAlign = state.tableAlign;
+    }
+    if (TABLE_HEADS.includes(state.tableHead)) {
+      tableHead = state.tableHead;
+    }
+    if (REF_SCOPES.includes(state.refsScope)) {
+      refsScope = state.refsScope;
+    }
     selected = typeof state.selected === "string" ? state.selected : null;
     if (typeof state.searchCase === "boolean") {
       searchCase = state.searchCase;
@@ -445,6 +468,9 @@
       bucketHeadBold: bucketHeadBold,
       bucketHead: bucketHead,
       bucketHeadStyle: bucketHeadStyle,
+      tableAlign: tableAlign,
+      tableHead: tableHead,
+      refsScope: refsScope,
       selected: selected,
       editing: [...editing],
       searchCase: searchCase,
@@ -636,6 +662,12 @@
     layout.style.setProperty("--block-pad", spread + "px");
     layout.style.setProperty("--block-pad-dx", blockPadX - spread + "px");
     layout.style.setProperty("--block-pad-dy", blockPadY - spread + "px");
+  }
+
+  // Both are the stylesheet's to draw; the layout only says which.
+  function setTableLook() {
+    layout.dataset.tableAlign = tableAlign;
+    layout.dataset.tableHead = tableHead;
   }
 
   function setMono(value) {
@@ -1768,6 +1800,10 @@
 
   function lightableAt(el) {
     const cell = blockAt(el);
+    // A header cell is a button that sorts its column, so it is lit on its own.
+    if (cell && cell.tagName === "TH" && cell.closest("thead")) {
+      return cell;
+    }
     if (cell && rowOf(cell) !== cell) {
       return rowOf(cell);
     }
@@ -1819,12 +1855,18 @@
     }
     pointerAt = { x: event.clientX, y: event.clientY };
     if (readingMarkdown()) {
-      lightBlock(lightableAt(event.target), false);
+      // The grip stands beside its row, so the row stays lit while the pointer is on it.
+      const onGrip = !!rowGrip && rowGrip.contains(event.target);
+      lightBlock(onGrip ? gripRow : lightableAt(event.target), false);
+      gripFor(event.target);
     }
   });
 
   bodyEl.addEventListener("pointerleave", () => {
     pointerAt = null;
+    if (!rowDrag) {
+      hideGrip();
+    }
     if (!blockByKey) {
       lightBlock(null);
     }
@@ -2970,6 +3012,9 @@
       if (message.path === selected) {
         clearTimeout(loadingTimer);
       }
+      if (message.path === reorderPending) {
+        reorderPending = null;
+      }
       // A save fires the watcher, which sends this back. Redrawing then would drop the
       // caret, so an echo of what is already on screen only refreshes the stored copy.
       const area = bodyEl.querySelector("textarea");
@@ -3022,6 +3067,7 @@
       setHoverStrength(hoverStrength);
       setBlockPad(blockPadY, blockPadX);
       setTagSide(tagSide);
+      setTableLook();
       markAutoWidth();
       applyToc();
       if (selected) {
@@ -3136,6 +3182,11 @@
     } else if (message.type === "reads") {
       reads = new Set(message.reads || []);
       drawTree();
+    } else if (message.type === "refs") {
+      refs[message.path] = message.refs || [];
+      if (current && current.path === message.path) {
+        drawRefs();
+      }
     } else if (message.type === "mentions") {
       mentions = message.mentions || {};
       drawTree();
@@ -3375,6 +3426,11 @@
     sections = [];
     activeSection = null;
     article = null;
+    rowGrip = null;
+    rowDrop = null;
+    gripRow = null;
+    rowDrag = null;
+    document.body.classList.remove("dragging-row");
     blockOn = null;
     blockByKey = false;
     blockLeft = null;
@@ -3394,6 +3450,7 @@
     toggleEl.classList.toggle("active", mode === "edit");
     toggleEl.title = mode === "edit" ? "Stop editing" : "Edit";
     applyView();
+    drawRefs();
     drawLog();
 
     if (mode === "edit") {
@@ -3418,6 +3475,14 @@
     bodyEl.scrollTop = 0;
 
     linkNames(article, current.links || {});
+    prepareTables();
+
+    // Shift is held to add a column to a sort, and would otherwise select text as well.
+    article.addEventListener("mousedown", (event) => {
+      if (event.shiftKey && event.target.closest("table.reorderable > thead th")) {
+        event.preventDefault();
+      }
+    });
 
     article.addEventListener("click", (event) => {
       const link = event.target.closest("a[data-open]");
@@ -3436,6 +3501,13 @@
       }
       if (event.target.tagName === "IMG") {
         openLightbox(event.target.src, event.target.alt);
+        return;
+      }
+      const head = event.target.closest("table.reorderable > thead th");
+      // A drag across the cell's own text is a selection, not a click on it.
+      const picked = window.getSelection();
+      if (head && !(picked && !picked.isCollapsed && head.contains(picked.anchorNode))) {
+        sortTable(head, event.shiftKey);
       }
     });
 
@@ -3505,6 +3577,302 @@
       }
     }
   }
+
+  // A table can be sorted, and its rows dragged, only when its head and every row of its
+  // body carry the line of the file they are written on, in order: the host moves those
+  // lines and nothing else, so a row can only ever go where another row was written.
+  function tableRows(table) {
+    const body = table.tBodies.length === 1 ? table.tBodies[0] : null;
+    const head = Number(/^\d+$/.test(table.dataset.line || "") ? table.dataset.line : NaN);
+    if (!table.tHead || !table.tHead.rows.length || !body || !(head >= 0)) {
+      return null;
+    }
+    const rows = [...body.rows];
+    const lines = rows.map((row) => (/^\d+$/.test(row.dataset.line || "") ? Number(row.dataset.line) : NaN));
+    if (rows.length < 2 || lines.some((line, i) => !(line > (i ? lines[i - 1] : head + 1)))) {
+      return null;
+    }
+    return { rows: rows, lines: lines };
+  }
+
+  function prepareTables() {
+    for (const table of article.querySelectorAll("table")) {
+      if (!tableRows(table)) {
+        continue;
+      }
+      table.classList.add("reorderable");
+      for (const th of table.tHead.rows[0].cells) {
+        th.title = "Sort by this column: descending, then ascending. Shift+click adds it to the sort.";
+      }
+      markSorted(table);
+    }
+  }
+
+  // The last sort, for as long as the file is the text it made: the columns in the order
+  // they were added, each down (-1) or up (1). The file keeps no trace of it; it only says
+  // which way the next click goes, and marks the head.
+  let tableSort = null;
+  // The file a reorder was sent for, until the host draws it again: until then the page
+  // is not the file, and nothing more is sent.
+  let reorderPending = null;
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+  function sortKeys(table) {
+    const sort = tableSort;
+    return sort && current && sort.path === current.path && sort.line === Number(table.dataset.line) && sort.text === current.text
+      ? sort.keys
+      : [];
+  }
+
+  function markSorted(table) {
+    const keys = sortKeys(table);
+    for (const th of table.tHead.rows[0].cells) {
+      const at = keys.findIndex((key) => key.col === th.cellIndex);
+      th.classList.toggle("sorted-down", at >= 0 && keys[at].dir < 0);
+      th.classList.toggle("sorted-up", at >= 0 && keys[at].dir > 0);
+      if (at >= 0 && keys.length > 1) {
+        th.dataset.sortRank = String(at + 1);
+      } else {
+        delete th.dataset.sortRank;
+      }
+    }
+  }
+
+  function canReorder() {
+    if (!readingMarkdown() || typeof current.text !== "string" || reorderPending) {
+      return false;
+    }
+    if (drafts.has(current.path)) {
+      toast("save or undo the edits to this file first");
+      return false;
+    }
+    return true;
+  }
+
+  // A click sorts by its column alone, first descending, and the next click on it the
+  // other way; with Shift the column is added to the sort, or turned if it is in it.
+  // Rows that tie keep the order they are in.
+  function sortTable(th, add) {
+    const table = th.closest("table");
+    const source = tableRows(table);
+    if (!source || !canReorder()) {
+      return;
+    }
+    const col = th.cellIndex;
+    let keys = sortKeys(table);
+    const own = keys.find((key) => key.col === col);
+    if (add) {
+      keys = own
+        ? keys.map((key) => (key.col === col ? { col: col, dir: -key.dir } : key))
+        : keys.concat({ col: col, dir: -1 });
+    } else {
+      keys = [{ col: col, dir: own && keys.length === 1 ? -own.dir : -1 }];
+    }
+    const values = source.rows.map((row) => keys.map((key) => cellText(row, key.col)));
+    const order = source.rows.map((_, i) => i).sort((a, b) => {
+      for (let k = 0; k < keys.length; k++) {
+        const c = compareCells(values[a][k], values[b][k], keys[k].dir);
+        if (c) {
+          return c;
+        }
+      }
+      return a - b;
+    });
+    moveRows(table, source, order.map((i) => source.lines[i]), keys);
+  }
+
+  function cellText(row, col) {
+    const cell = row.cells[col];
+    return cell ? cell.textContent.trim() : "";
+  }
+
+  // Numbers by their value, anything else as words with the numbers in them counted; an
+  // empty cell goes last whichever way the column is sorted.
+  function compareCells(a, b, dir) {
+    if (!a || !b) {
+      return a ? -1 : b ? 1 : 0;
+    }
+    const x = cellNumber(a);
+    const y = cellNumber(b);
+    return (Number.isNaN(x) || Number.isNaN(y) ? collator.compare(a, b) : x - y) * dir;
+  }
+
+  function cellNumber(text) {
+    const bare = text.replace(/[\s_,]/g, "").replace(/%$/, "").replace(/^−/, "-");
+    return /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(bare) ? Number(bare) : NaN;
+  }
+
+  // The host is sent the lines the rows are on and the order they are to take, with the
+  // text the page was drawn from; it moves them in the file, and the file is drawn again.
+  function moveRows(table, source, order, keys) {
+    const parts = current.text.split(/(\r\n|\r|\n)/);
+    const moved = parts.slice();
+    source.lines.forEach((line, i) => {
+      moved[line * 2] = parts[order[i] * 2];
+    });
+    const text = moved.join("");
+    tableSort = keys ? { path: current.path, line: Number(table.dataset.line), text: text, keys: keys } : null;
+    if (text === current.text) {
+      markSorted(table);
+      return;
+    }
+    reorderPending = current.path;
+    hideGrip();
+    vscode.postMessage({ type: "reorderRows", path: current.path, text: current.text, rows: source.lines, order: order });
+  }
+
+  const GRIP_ICON =
+    '<svg viewBox="0 0 6 10" width="6" height="10" aria-hidden="true">' +
+    '<g fill="currentColor"><rect x="0" y="0" width="2" height="2"/><rect x="4" y="0" width="2" height="2"/>' +
+    '<rect x="0" y="4" width="2" height="2"/><rect x="4" y="4" width="2" height="2"/>' +
+    '<rect x="0" y="8" width="2" height="2"/><rect x="4" y="8" width="2" height="2"/></g></svg>';
+  const GRIP_WIDTH = 14;
+  const DRAG_EDGE = 28;
+  const DRAG_SCROLL = 14;
+
+  // The grip and the line that shows where a row would land are laid over the page, the
+  // way a flash mark is: nothing in the table moves or changes size while a row is dragged.
+  let rowGrip = null;
+  let rowDrop = null;
+  let gripRow = null;
+  let rowDrag = null;
+
+  function overlay(className) {
+    const el = make("div", className);
+    el.hidden = true;
+    bodyEl.appendChild(el);
+    return el;
+  }
+
+  function placeOver(el, left, top, width, height) {
+    const box = bodyEl.getBoundingClientRect();
+    el.style.left = left - box.left + bodyEl.scrollLeft + "px";
+    el.style.top = top - box.top + bodyEl.scrollTop + "px";
+    el.style.width = width + "px";
+    el.style.height = height + "px";
+    el.hidden = false;
+  }
+
+  function gripFor(target) {
+    if (rowDrag || (rowGrip && rowGrip.contains(target))) {
+      return;
+    }
+    const row = target && target.closest ? target.closest("table.reorderable > tbody > tr") : null;
+    if (!row || !article || !article.contains(row) || reorderPending) {
+      hideGrip();
+      return;
+    }
+    if (!rowGrip) {
+      rowGrip = overlay("row-grip");
+      rowGrip.innerHTML = GRIP_ICON;
+      rowGrip.title = "Drag to move the row";
+      rowGrip.addEventListener("pointerdown", startRowDrag);
+      rowGrip.addEventListener("pointermove", moveRowDrag);
+      rowGrip.addEventListener("pointerup", endRowDrag);
+      rowGrip.addEventListener("pointercancel", stopRowDrag);
+    }
+    gripRow = row;
+    const table = row.closest("table").getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    placeOver(rowGrip, table.left - GRIP_WIDTH, rect.top, GRIP_WIDTH, rect.height);
+  }
+
+  function hideGrip() {
+    gripRow = null;
+    if (rowGrip) {
+      rowGrip.hidden = true;
+    }
+  }
+
+  function startRowDrag(event) {
+    if (event.button !== 0 || !gripRow || !canReorder()) {
+      return;
+    }
+    const table = gripRow.closest("table");
+    const source = tableRows(table);
+    if (!source) {
+      return;
+    }
+    event.preventDefault();
+    rowGrip.setPointerCapture(event.pointerId);
+    rowDrag = { table: table, source: source, from: source.rows.indexOf(gripRow), gap: -1 };
+    gripRow.classList.add("row-dragged");
+    document.body.classList.add("dragging-row");
+    if (!rowDrop) {
+      rowDrop = overlay("row-drop");
+    }
+  }
+
+  // The row lands in the gap nearest the pointer; the gaps either side of it leave it
+  // where it is, so none is shown for them. Near the pane's edge the page scrolls.
+  function moveRowDrag(event) {
+    if (!rowDrag) {
+      return;
+    }
+    const view = bodyEl.getBoundingClientRect();
+    if (event.clientY < view.top + DRAG_EDGE) {
+      bodyEl.scrollTop -= DRAG_SCROLL;
+    } else if (event.clientY > view.bottom - DRAG_EDGE) {
+      bodyEl.scrollTop += DRAG_SCROLL;
+    }
+    const rows = rowDrag.source.rows;
+    let gap = rows.length;
+    for (let i = 0; i < rows.length; i++) {
+      const rect = rows[i].getBoundingClientRect();
+      if (event.clientY < rect.top + rect.height / 2) {
+        gap = i;
+        break;
+      }
+    }
+    rowDrag.gap = gap === rowDrag.from || gap === rowDrag.from + 1 ? -1 : gap;
+    if (rowDrag.gap < 0) {
+      rowDrop.hidden = true;
+      return;
+    }
+    const table = rowDrag.table.getBoundingClientRect();
+    const edge = gap < rows.length ? rows[gap].getBoundingClientRect().top : rows[rows.length - 1].getBoundingClientRect().bottom;
+    placeOver(rowDrop, table.left, edge - 1, table.width, 2);
+  }
+
+  function endRowDrag() {
+    const drag = rowDrag;
+    stopRowDrag();
+    if (!drag || drag.gap < 0) {
+      return;
+    }
+    const order = drag.source.lines.slice();
+    const [line] = order.splice(drag.from, 1);
+    order.splice(drag.gap > drag.from ? drag.gap - 1 : drag.gap, 0, line);
+    moveRows(drag.table, drag.source, order, null);
+  }
+
+  function stopRowDrag() {
+    if (!rowDrag) {
+      return;
+    }
+    for (const row of rowDrag.source.rows) {
+      row.classList.remove("row-dragged");
+    }
+    rowDrag = null;
+    document.body.classList.remove("dragging-row");
+    if (rowDrop) {
+      rowDrop.hidden = true;
+    }
+  }
+
+  bodyEl.addEventListener("scroll", () => {
+    if (!rowDrag) {
+      hideGrip();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (rowDrag && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      stopRowDrag();
+    }
+  }, true);
 
   function drawStamps() {
     const created = formatStamp(current.created);
@@ -3579,12 +3947,74 @@
     }
     const log = current ? buildLog(mentions[current.path]) : null;
     if (log) {
-      bodyEl.insertBefore(log, bodyEl.firstChild);
+      const above = document.getElementById("refs");
+      bodyEl.insertBefore(log, above ? above.nextSibling : bodyEl.firstChild);
     }
     const after = log ? log.offsetHeight : 0;
     if (bodyEl.scrollTop > 0 && after !== before) {
       bodyEl.scrollTop += after - before;
     }
+  }
+
+  // The files that name this one head the page, every one of them, each by its name and
+  // its whole path. Like the log, whatever it adds or takes away is given back to the
+  // scroll, so the words being read stay put.
+  function drawRefs() {
+    const old = document.getElementById("refs");
+    const before = old ? old.offsetHeight : 0;
+    if (old) {
+      old.remove();
+    }
+    const box = current ? buildRefs(refs[current.path]) : null;
+    if (box) {
+      bodyEl.insertBefore(box, bodyEl.firstChild);
+    }
+    const after = box ? box.offsetHeight : 0;
+    if (bodyEl.scrollTop > 0 && after !== before) {
+      bodyEl.scrollTop += after - before;
+    }
+  }
+
+  function buildRefs(list) {
+    if (refsScope === "off" || !list || !list.length) {
+      return null;
+    }
+    const box = make("div", "refs");
+    box.id = "refs";
+    box.appendChild(make("div", "refs-head", "Referenced by " + list.length + (list.length === 1 ? " file" : " files")));
+    for (const ref of list) {
+      const row = make("div", "refs-row");
+      const link = make("a", "refs-link", ref.path.split("/").pop());
+      link.href = "#";
+      const where = ref.workspace ? ref.path : fullPath(ref.path);
+      if (ref.workspace) {
+        link.dataset.workspace = ref.path;
+        link.title = "Open " + where + " in an editor";
+      } else {
+        link.dataset.open = ref.path;
+        link.title = where;
+      }
+      row.appendChild(link);
+      const path = make("span", "refs-path", where);
+      path.title = where;
+      row.appendChild(path);
+      box.appendChild(row);
+    }
+    box.addEventListener("click", (event) => {
+      const link = event.target.closest("a");
+      if (!link) {
+        return;
+      }
+      event.preventDefault();
+      if (link.dataset.workspace) {
+        vscode.postMessage({ type: "openWorkspace", path: link.dataset.workspace });
+      } else if (link.dataset.open) {
+        expandTo(link.dataset.open, false);
+        openFile(link.dataset.open);
+        showRow(link.dataset.open, false);
+      }
+    });
+    return box;
   }
 
   function buildLog(items) {
@@ -4545,6 +4975,27 @@
       hoverStrength >= 100
     ));
     optionRow(reading, "Block highlight padding", padStepper());
+    optionRow(reading, "Referenced by", [
+      optionChoice(REF_SCOPE_LABELS, REF_SCOPES.indexOf(refsScope), (choice) => {
+        refsScope = REF_SCOPES[choice];
+        persist();
+        drawRefs();
+      })
+    ]);
+    optionRow(reading, "Table cell alignment", [
+      optionChoice(TABLE_ALIGNS, TABLE_ALIGNS.indexOf(tableAlign), (choice) => {
+        tableAlign = TABLE_ALIGNS[choice];
+        setTableLook();
+        persist();
+      })
+    ]);
+    optionRow(reading, "Table header background", [
+      optionChoice(TABLE_HEADS, TABLE_HEADS.indexOf(tableHead), (choice) => {
+        tableHead = TABLE_HEADS[choice];
+        setTableLook();
+        persist();
+      })
+    ]);
     optionRow(reading, "Mentions shown", optionStepper(
       mentionLines ? String(mentionLines) : "off",
       ["Fewer mentions before Show more, none turns them off", "More mentions before Show more"],

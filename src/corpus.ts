@@ -60,7 +60,7 @@ export class Corpus {
 
 // A picture, anything too big to be a document, and anything with a NUL near its start
 // have no text worth searching.
-async function readText(uri: vscode.Uri, relPath: string): Promise<string | null> {
+export async function readText(uri: vscode.Uri, relPath: string): Promise<string | null> {
   if (IMAGES.has(extensionOf(relPath))) {
     return null;
   }

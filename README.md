@@ -15,6 +15,8 @@ trashed from the panel.
 - [Page](#page)
 - [Tags](#tags)
 - [Tag buckets](#tag-buckets)
+- [Tables](#tables)
+- [Referenced by](#referenced-by)
 - [Search all docs](#search-all-docs)
 - [Mentions from Claude Code sessions](#mentions-from-claude-code-sessions)
 - [Options](#options)
@@ -139,8 +141,47 @@ left. In a Markdown file, `Right` from there returns to the block that was selec
 
 ![The page's context menu](.github/readme/page-menu.png)
 
-The block under the pointer is highlighted. Its strength and padding are set in the
-options; strength `off` disables it.
+The block under the pointer is highlighted, a list item together with its bullet or
+number. Its strength and padding are set in the options; strength `off` disables it.
+
+## Tables
+
+| Action | How |
+|---|---|
+| Sort by a column | Click its header cell: descending first, then ascending on the next click. The cell under the pointer is highlighted on its own. |
+| Sort by more columns | `Shift`+click further header cells; each joins the sort after the ones already in it, and `Shift`+click on one of them turns it the other way. Rows that tie keep their order. |
+| Move a row | Hover the row and drag the grip that appears to the left of it. A line shows where it will land; `Escape` cancels. |
+
+Both rewrite the file. Only the order of the table's rows changes: the page sends the
+lines the rows are written on and their new order with the text it was drawn from, and
+the extension refuses unless the file is still exactly that text, the lines are the body
+rows of one table (straight under its delimiter row, with only blank lines between them),
+and the result holds the same lines and line breaks with only those rows moved. The page
+is then drawn again from the file. A table whose rows cannot be traced to their lines
+cannot be sorted or dragged, and nothing is done while the file has unsaved edits.
+
+A sort is a one-off rewrite: nothing about it is saved, and a table edited later is not
+sorted again. The header marks the last sort (`▼` descending, `▲` ascending, numbered
+when several columns take part) until the file changes.
+
+Numbers are compared by value, other text as words with the numbers in them counted,
+ignoring case. Empty cells go last either way.
+
+The options set where text stands in a cell (top, center, bottom) and the header row's
+background: a faint grey by default, none, or one of the theme's colours.
+
+## Referenced by
+
+Above the page, the files that name the open file are listed, each as a link with its path:
+a doc opens in the panel, any other file in an editor. Every one is listed; a file naming
+itself is not. A file names another the way a page's names become links (a path from the
+file's own folder, a path ending in the name, or a name only one doc has), or by a
+relative Markdown or HTML link.
+
+**Referenced by** in the options sets where they are looked for: `docs` (the default),
+`all files` in the workspace (except `node_modules`, `.git`, trash folders and the
+panel's own data files), or `off`. Each file is read once for the names in it and read
+again only when it changes; the results are cached in `.vscode/docs-panel-refs.json`.
 
 ## Tags
 
@@ -262,7 +303,7 @@ The sliders button in the tree's top right corner opens the options.
 
 | Section | Settings |
 |---|---|
-| Reading | Text size, line spacing, font, contents list shown, auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), mentions shown |
+| Reading | Text size, line spacing, font, contents list shown, auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), where referencing files are looked for (off / docs / all files), table cell alignment, table header background, mentions shown |
 | Tree | Text size, side of the name the tags are drawn on, bucket outline, bucket background tint, bucket heading position (inside, on the outline, above), style (pill, colour bar, plain name), colour and weight |
 | Tags | One row per tag; see below |
 | Data files | Each file the panel writes, with its size and a **Purge** button |
@@ -301,6 +342,7 @@ deleting it, or **Purge** in the options' data files, resets them.
 | `.vscode/docs-panel-reads.json` | Read marks | Every file is unread |
 | `.vscode/docs-panel-mentions.json` | Mention cache | Rebuilt from the session logs on the next scan |
 | `.vscode/docs-panel-links.json` | Which files each page's names resolve to, and which names outside the docs are workspace files (looked up again after 10 minutes) | Looked up again as pages are opened |
+| `.vscode/docs-panel-refs.json` | The names and links each file holds, for **Referenced by** | Every file is read again when the next page is opened |
 
 Only `.docs-panel.json` is meant to be committed; the others are per-user state.
 
@@ -316,6 +358,8 @@ Only `.docs-panel.json` is meant to be committed; the others are per-user state.
 | `src/corpus.ts` | Text of every file for the search, re-read only when its modification time changes |
 | `src/ledger.ts` | Tags, colours and read marks, keyed by path with content hashes |
 | `src/links.ts` | Resolves file names in a page to docs or workspace files, with a cache |
+| `src/refs.ts` | Finds the files that name a doc, for **Referenced by**, with a cache |
+| `src/tables.ts` | Closes gaps in Markdown tables before rendering, and reorders a table's rows in the source |
 | `src/mentions.ts` | Incremental scan of Claude Code session logs |
 | `src/settings.ts` | Load and save `.vscode/docs-panel-settings.json` |
 | `src/browser.ts` | Writes a standalone page for **Open in browser** |
