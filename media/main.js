@@ -2492,16 +2492,14 @@
   // The headings of a Markdown page, as pills beside the reading pane's bar at the share
   // of the page each stands at, so the thumb lies over the ones on screen. They come up
   // while the page scrolls and go a moment after it stops, staying while the pointer is on
-  // one or the thumb is held. No two pills overlap: a higher heading has first claim on
-  // the room, a lower one is moved a little out of its way, and one with no room near
-  // its place is not shown. Which levels are shown, how long they stay and how far the
+  // one or the thumb is held. Each points at its heading's very spot. No two overlap: a
+  // higher heading has first claim on the room, a lower one is moved out of its way as
+  // far as its point still reaches the spot, and one with no room there is not shown. Which levels are shown, how long they stay and how far the
   // page must scroll to bring them up are options; no level at all turns them off.
   const MARKS_QUIET_MS = 300;
   // A scroll that pauses this long before it has gone far enough starts counting again.
   const MARKS_GESTURE_MS = 400;
   const MARK_GAP = 2;
-  // How far a pill may be moved from its place, in pill heights.
-  const MARK_SHIFT = 1.5;
   const marksEl = document.createElement("div");
   marksEl.id = "marks";
   paneEl.appendChild(marksEl);
@@ -2584,11 +2582,14 @@
       for (const other of placed) {
         spots.push(other.bottom + MARK_GAP, other.top - MARK_GAP - height);
       }
+      // Moved, the label's point slides along its right side, so it may go no further than
+      // keeps the spot between its top and bottom.
+      const spot = Math.min(Math.max(y, 0), view);
       let top = null;
-      for (const spot of spots) {
-        const near = Math.abs(spot - want) <= height * MARK_SHIFT;
-        if (near && free(mark.index, spot, height) && (top === null || Math.abs(spot - want) < Math.abs(top - want))) {
-          top = spot;
+      for (const at of spots) {
+        const reaches = at <= spot && spot <= at + height;
+        if (reaches && free(mark.index, at, height) && (top === null || Math.abs(at - want) < Math.abs(top - want))) {
+          top = at;
         }
       }
       if (top === null) {
@@ -2597,6 +2598,7 @@
       }
       placed.push({ index: mark.index, top: top, bottom: top + height });
       mark.el.style.top = top + "px";
+      mark.el.style.setProperty("--tip", spot - top + "px");
     }
   }
 

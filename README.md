@@ -144,17 +144,17 @@ left. In a Markdown file, `Right` from there returns to the block that was selec
 The block under the pointer is highlighted, a list item together with its bullet or
 number. Its strength and padding are set in the options; strength `off` disables it.
 
-While a Markdown page scrolls, its headings come up as pills beside the scrollbar, each at
-the height that heading stands at in the page, so the thumb lies over the ones on screen.
-The size of a pill's text follows the heading's level. They fade out a moment after the
-scrolling stops (1200 ms by default), and stay while the pointer is on one or the thumb is
-held. The pill of the section being read is outlined, and a click on a pill scrolls to its
-heading. No two pills overlap: a higher heading keeps its place, a lower one is moved a
-little out of its way, keeping the page's order, and is left out when there is no room
-near its place.
+While a Markdown page scrolls, its headings come up as labels beside the scrollbar: square
+on the left, pointed on the right, the point at the height that heading stands at in the
+page, so the thumb lies over the ones on screen. The size of a label's text follows the
+heading's level. They fade out a moment after the scrolling stops (1200 ms by default), and
+stay while the pointer is on one or the thumb is held. The label of the section being read
+is lit, and a click on a label scrolls to its heading. No two labels overlap: a higher
+heading keeps its place, a lower one is moved out of its way, keeping the page's order, as
+far as its point still reaches its spot, and is left out when there is no room there.
 
 The options choose the levels shown (`#`, `##` and `###`, H1 to H3, by default; none turns
-the pills off), how long they stay after the scrolling stops (100 to 10000 ms), and how far
+the labels off), how long they stay after the scrolling stops (100 to 10000 ms), and how far
 the page must scroll in one go before they come up (`any` by default, up to 1000 px). Once
 up, any scroll keeps them up.
 

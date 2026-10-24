@@ -296,7 +296,7 @@ module.exports = [
     hover: true,
     act: scrollPage(240)
   },
-  // Headings of every level, some close together: no two pills overlap, a lower one
+  // Headings of every level, some close together: no two labels overlap, a lower one
   // moves out of a higher one's way or is left out, and the text size follows the level.
   {
     name: "page-marks-crowded",

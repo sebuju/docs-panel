@@ -2065,12 +2065,14 @@ img.single {
   background: rgba(128, 128, 128, 0.75);
 }
 
-/* The page's headings beside its bar, laid over the page and clear of the bar. The pills
-   slide in from the bar as the page scrolls and fade back once it stops; only a pill that
-   is up takes the pointer. Sized in px like the log: they are not the document. */
+/* The page's headings beside its bar, laid over the page and clear of the bar. Each is a
+   flat label, square at the left and pointed at the right, the point at the very height
+   the script sets in --tip. They slide in from the bar as the page scrolls and fade back
+   once it stops; only a label that is up takes the pointer. Sized in px like the log:
+   they are not the document. */
 #marks {
   position: absolute;
-  right: 10px;
+  right: 9px;
   width: min(45%, 260px);
   z-index: 4;
   pointer-events: none;
@@ -2082,12 +2084,13 @@ img.single {
   max-width: 100%;
   box-sizing: border-box;
   overflow: hidden;
-  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
-  border-radius: 999px;
-  padding: 0 8px;
+  --tip: 50%;
+  border: none;
+  border-radius: 0;
+  padding: 0 13px 0 6px;
   color: var(--vscode-descriptionForeground, #8b949e);
-  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-  box-shadow: 0 1px 4px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, var(--vscode-editor-background));
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% var(--tip), calc(100% - 8px) 100%, 0 100%);
   font-family: var(--vscode-font-family);
   font-size: 11px;
   line-height: 1.45;
@@ -2139,10 +2142,14 @@ img.single {
   font-size: 10px;
 }
 
-#marks .mark:hover,
+#marks .mark:hover {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 24%, var(--vscode-editor-background));
+}
+
 #marks .mark.on {
   color: var(--vscode-foreground);
-  border-color: var(--vscode-focusBorder, #007fd4);
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 45%, var(--vscode-editor-background));
 }
 
 @media (prefers-reduced-motion: reduce) {
