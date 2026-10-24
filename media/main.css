@@ -800,14 +800,15 @@ body.dragging {
 
 /* The files that name this one, one to a line, every one of them: the name to follow and,
    after it, the whole path. Sized in px like the log, for the same reason. */
+/* Marked as links by the link colour alone: a bar of it down the left and a faint wash of
+   it behind, with no heading and no frame around the rest. */
 .refs {
   margin: 0 0 12px;
+  border-left: 3px solid var(--vscode-textLink-foreground, #4daafc);
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 8%, transparent);
   font-size: 12px;
   line-height: 1.5;
-}
-
-.refs-head {
-  color: var(--vscode-descriptionForeground, #8b949e);
 }
 
 .refs-row {

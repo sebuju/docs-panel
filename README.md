@@ -180,7 +180,8 @@ background: a faint grey by default, none, or one of the theme's colours.
 
 ## Referenced by
 
-Above the page, the files that name the open file are listed, each as a link with its path:
+Above the page, the files that name the open file are listed, each as a link with its path,
+in a box marked by a bar of the link colour down its left and a faint wash of it behind:
 a doc opens in the panel, any other file in an editor. Every one is listed; a file naming
 itself is not. A file names another the way a page's names become links (a path from the
 file's own folder, a path ending in the name, or a name only one doc has), or by a

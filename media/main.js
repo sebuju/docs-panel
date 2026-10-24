@@ -4147,7 +4147,7 @@
     }
     const box = make("div", "refs");
     box.id = "refs";
-    box.appendChild(make("div", "refs-head", "Referenced by " + list.length + (list.length === 1 ? " file" : " files")));
+    box.setAttribute("aria-label", "Referenced by");
     for (const ref of list) {
       const row = make("div", "refs-row");
       const link = make("a", "refs-link", ref.path.split("/").pop());
