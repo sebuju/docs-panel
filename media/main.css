@@ -800,14 +800,15 @@ body.dragging {
 
 /* The files that name this one, one to a line, every one of them: the name to follow and,
    after it, the whole path. Sized in px like the log, for the same reason. */
+/* Marked as links by the link colour alone: a bar of it down the left and a faint wash of
+   it behind, with no heading and no frame around the rest. */
 .refs {
   margin: 0 0 12px;
+  border-left: 3px solid var(--vscode-textLink-foreground, #4daafc);
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 8%, transparent);
   font-size: 12px;
   line-height: 1.5;
-}
-
-.refs-head {
-  color: var(--vscode-descriptionForeground, #8b949e);
 }
 
 .refs-row {
@@ -2062,6 +2063,100 @@ img.single {
 .bar .thumb:hover,
 .bar.held .thumb {
   background: rgba(128, 128, 128, 0.75);
+}
+
+/* The page's headings beside its bar, laid over the page and clear of the bar. Each is a
+   flat label, square at the left and pointed at the right, the point at the very height
+   the script sets in --tip. They slide in from the bar as the page scrolls and fade back
+   once it stops; only a label that is up takes the pointer. Sized in px like the log:
+   they are not the document. */
+#marks {
+  position: absolute;
+  right: 9px;
+  width: min(45%, 260px);
+  z-index: 4;
+  pointer-events: none;
+}
+
+#marks .mark {
+  position: absolute;
+  right: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  --tip: 50%;
+  border: none;
+  border-radius: 0;
+  padding: 0 13px 0 6px;
+  color: var(--vscode-descriptionForeground, #8b949e);
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, var(--vscode-editor-background));
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% var(--tip), calc(100% - 8px) 100%, 0 100%);
+  font-family: var(--vscode-font-family);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 240ms ease, transform 240ms ease;
+  pointer-events: none;
+}
+
+#marks .mark[hidden] {
+  display: none;
+}
+
+#marks.shown .mark {
+  opacity: 1;
+  transform: none;
+  transition-duration: 140ms;
+  pointer-events: auto;
+}
+
+/* The size of the text says the size of the heading, from 14px for # to 10px for ######. */
+#marks .mark.mark-h1 {
+  color: var(--vscode-foreground);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#marks .mark.mark-h2 {
+  color: var(--vscode-foreground);
+  font-size: 12.5px;
+}
+
+#marks .mark.mark-h3 {
+  font-size: 11.5px;
+}
+
+#marks .mark.mark-h4 {
+  font-size: 11px;
+}
+
+#marks .mark.mark-h5 {
+  font-size: 10.5px;
+}
+
+#marks .mark.mark-h6 {
+  font-size: 10px;
+}
+
+#marks .mark:hover {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 24%, var(--vscode-editor-background));
+}
+
+#marks .mark.on {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 45%, var(--vscode-editor-background));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #marks .mark {
+    transform: none;
+    transition: none;
+  }
 }
 
 /* The tree's bar runs down the side's own edge, against the file bar beyond the divider. */

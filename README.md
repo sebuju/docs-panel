@@ -144,6 +144,20 @@ left. In a Markdown file, `Right` from there returns to the block that was selec
 The block under the pointer is highlighted, a list item together with its bullet or
 number. Its strength and padding are set in the options; strength `off` disables it.
 
+While a Markdown page scrolls, its headings come up as labels beside the scrollbar: square
+on the left, pointed on the right, the point at the height that heading stands at in the
+page, so the thumb lies over the ones on screen. The size of a label's text follows the
+heading's level. They fade out a moment after the scrolling stops (1200 ms by default), and
+stay while the pointer is on one or the thumb is held. The label of the section being read
+is lit, and a click on a label scrolls to its heading. No two labels overlap: a higher
+heading keeps its place, a lower one is moved out of its way, keeping the page's order, as
+far as its point still reaches its spot, and is left out when there is no room there.
+
+The options choose the levels shown (`#`, `##` and `###`, H1 to H3, by default; none turns
+the labels off), how long they stay after the scrolling stops (100 to 10000 ms), and how far
+the page must scroll in one go before they come up (`any` by default, up to 1000 px). Once
+up, any scroll keeps them up.
+
 ## Tables
 
 | Action | How |
@@ -172,7 +186,8 @@ background: a faint grey by default, none, or one of the theme's colours.
 
 ## Referenced by
 
-Above the page, the files that name the open file are listed, each as a link with its path:
+Above the page, the files that name the open file are listed, each as a link with its path,
+in a box marked by a bar of the link colour down its left and a faint wash of it behind:
 a doc opens in the panel, any other file in an editor. Every one is listed; a file naming
 itself is not. A file names another the way a page's names become links (a path from the
 file's own folder, a path ending in the name, or a name only one doc has), or by a
@@ -303,7 +318,7 @@ The sliders button in the tree's top right corner opens the options.
 
 | Section | Settings |
 |---|---|
-| Reading | Text size, line spacing, font, contents list shown, auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), where referencing files are looked for (off / docs / all files), table cell alignment, table header background, mentions shown |
+| Reading | Text size, line spacing, font, contents list shown, heading levels shown beside the scrollbar (H1 to H6), how long they stay after scrolling (ms) and how far to scroll before they show (px), auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), where referencing files are looked for (off / docs / all files), table cell alignment, table header background, mentions shown |
 | Tree | Text size, side of the name the tags are drawn on, bucket outline, bucket background tint, bucket heading position (inside, on the outline, above), style (pill, colour bar, plain name), colour and weight |
 | Tags | One row per tag; see below |
 | Data files | Each file the panel writes, with its size and a **Purge** button |
