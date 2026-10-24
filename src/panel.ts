@@ -143,6 +143,10 @@ export interface PanelState {
   refsScope: RefScope;
   // The heading levels marked beside the reading pane's bar, 1 to 6; none turns them off.
   barLevels: number[];
+  // How long, in ms, they stay after the page stops scrolling, and how far, in px, it must
+  // scroll in one go to bring them up.
+  marksLinger: number;
+  marksReach: number;
   selected: string | null;
   // The files left in edit mode, which open in it again.
   editing: string[];
@@ -187,6 +191,8 @@ const DEFAULT_STATE: PanelState = {
   tableHead: "grey",
   refsScope: "docs",
   barLevels: [1, 2, 3],
+  marksLinger: 1200,
+  marksReach: 0,
   selected: null,
   editing: [],
   searchCase: false,
@@ -1799,6 +1805,8 @@ function normalizeState(value: any): PanelState {
   const textScale = numberOf(value?.textScale);
   const treeScale = numberOf(value?.treeScale);
   const lineHeight = numberOf(value?.lineHeight);
+  const marksLinger = numberOf(value?.marksLinger);
+  const marksReach = numberOf(value?.marksReach);
   const hoverStrength = numberOf(value?.hoverStrength);
   // One padding, before it was split in two, stands for both.
   const blockPad = numberOf(value?.blockPad);
@@ -1873,6 +1881,12 @@ function normalizeState(value: any): PanelState {
     barLevels: Array.isArray(value?.barLevels)
       ? [1, 2, 3, 4, 5, 6].filter((level) => value.barLevels.includes(level))
       : DEFAULT_STATE.barLevels,
+    marksLinger: Number.isFinite(marksLinger)
+      ? Math.min(Math.max(Math.round(marksLinger), 100), 10000)
+      : DEFAULT_STATE.marksLinger,
+    marksReach: Number.isFinite(marksReach)
+      ? Math.min(Math.max(Math.round(marksReach), 0), 1000)
+      : DEFAULT_STATE.marksReach,
     selected: typeof value?.selected === "string" ? value.selected : null,
     editing: Array.isArray(value?.editing) ? value.editing.map(String) : [],
     scrolls

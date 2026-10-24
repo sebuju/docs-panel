@@ -2083,12 +2083,14 @@ img.single {
   box-sizing: border-box;
   overflow: hidden;
   border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
-  border-radius: 9px;
+  border-radius: 999px;
   padding: 0 8px;
   color: var(--vscode-descriptionForeground, #8b949e);
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   box-shadow: 0 1px 4px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
-  font: 11px/16px var(--vscode-font-family);
+  font-family: var(--vscode-font-family);
+  font-size: 11px;
+  line-height: 1.45;
   white-space: nowrap;
   text-overflow: ellipsis;
   cursor: pointer;
@@ -2109,13 +2111,32 @@ img.single {
   pointer-events: auto;
 }
 
+/* The size of the text says the size of the heading, from 14px for # to 10px for ######. */
 #marks .mark.mark-h1 {
   color: var(--vscode-foreground);
+  font-size: 14px;
   font-weight: 600;
 }
 
 #marks .mark.mark-h2 {
   color: var(--vscode-foreground);
+  font-size: 12.5px;
+}
+
+#marks .mark.mark-h3 {
+  font-size: 11.5px;
+}
+
+#marks .mark.mark-h4 {
+  font-size: 11px;
+}
+
+#marks .mark.mark-h5 {
+  font-size: 10.5px;
+}
+
+#marks .mark.mark-h6 {
+  font-size: 10px;
 }
 
 #marks .mark:hover,

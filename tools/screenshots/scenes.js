@@ -26,6 +26,18 @@ const search = (text) => async (page) => {
   await page.waitForTimeout(150);
 };
 
+// A long page of every heading level, sections of uneven length.
+const crowded = () => {
+  const text = (n) => "<p>" + "Some text to read. ".repeat(n) + "</p>";
+  let html = "<h1>Storage layer</h1>" + text(30);
+  for (let i = 1; i <= 6; i++) {
+    html += "<h2>Part " + i + "</h2>" + text(i % 2 ? 4 : 40);
+    html += "<h3>Details of part " + i + "</h3>" + text(3);
+    html += "<h4>Notes " + i + "</h4>" + text(2) + "<h5>Aside " + i + "</h5>" + text(2) + "<h6>Footnote " + i + "</h6>" + text(20);
+  }
+  return html;
+};
+
 // The page's own place is put back when it opens; a wheel a moment later is the reader's.
 const scrollPage = (by) => async (page) => {
   await page.waitForTimeout(400);
@@ -283,6 +295,21 @@ module.exports = [
     state: { selected: "plans/migration-plan-for-the-new-storage-layer.md", textScale: 1.6, barLevels: [2] },
     hover: true,
     act: scrollPage(240)
+  },
+  // Headings of every level, some close together: no two pills overlap, a lower one
+  // moves out of a higher one's way or is left out, and the text size follows the level.
+  {
+    name: "page-marks-crowded",
+    viewport: { width: 1000, height: 420 },
+    state: { barLevels: [1, 2, 3, 4, 5, 6] },
+    hover: true,
+    act: async (page) => {
+      await page.evaluate((html) => window.postMessage({
+        type: "content", path: "plans/roadmap.md", kind: "md", text: "", html: html,
+        created: 1760000000000, modified: 1760500000000
+      }, "*"), crowded());
+      await scrollPage(300)(page);
+    }
   },
   ...["dark-modern", "light-modern"].map((theme) => ({
     name: "page-refs" + (theme === "light-modern" ? "-light" : ""),

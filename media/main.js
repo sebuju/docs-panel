@@ -257,6 +257,15 @@
   let refsScope = "docs";
   // The heading levels marked beside the reading pane's bar; none turns the marks off.
   let barLevels = [1, 2, 3];
+  // How long, in ms, the marks stay after the page stops scrolling, and how far, in px, it
+  // must scroll in one go before they come up.
+  let marksLinger = 1200;
+  const MARKS_LINGER_STEP = 100;
+  const MIN_MARKS_LINGER = 100;
+  const MAX_MARKS_LINGER = 10000;
+  let marksReach = 0;
+  const MARKS_REACH_STEP = 20;
+  const MAX_MARKS_REACH = 1000;
   const REF_SCOPES = ["off", "docs", "all"];
   const REF_SCOPE_LABELS = ["off", "docs", "all files"];
   // How far down each file was read, as a share of the way, oldest first.
@@ -401,6 +410,12 @@
     if (Array.isArray(state.barLevels)) {
       barLevels = [1, 2, 3, 4, 5, 6].filter((level) => state.barLevels.includes(level));
     }
+    if (typeof state.marksLinger === "number") {
+      marksLinger = state.marksLinger;
+    }
+    if (typeof state.marksReach === "number") {
+      marksReach = state.marksReach;
+    }
     selected = typeof state.selected === "string" ? state.selected : null;
     if (typeof state.searchCase === "boolean") {
       searchCase = state.searchCase;
@@ -477,6 +492,8 @@
       tableHead: tableHead,
       refsScope: refsScope,
       barLevels: barLevels,
+      marksLinger: marksLinger,
+      marksReach: marksReach,
       selected: selected,
       editing: [...editing],
       searchCase: searchCase,
@@ -2475,11 +2492,16 @@
   // The headings of a Markdown page, as pills beside the reading pane's bar at the share
   // of the page each stands at, so the thumb lies over the ones on screen. They come up
   // while the page scrolls and go a moment after it stops, staying while the pointer is on
-  // one or the thumb is held. A higher heading has first claim on the room; one with no
-  // room left is not shown. Which levels are shown is an option, and none turns them off.
-  const MARKS_HIDE_MS = 1200;
+  // one or the thumb is held. No two pills overlap: a higher heading has first claim on
+  // the room, a lower one is moved a little out of its way, and one with no room near
+  // its place is not shown. Which levels are shown, how long they stay and how far the
+  // page must scroll to bring them up are options; no level at all turns them off.
   const MARKS_QUIET_MS = 300;
+  // A scroll that pauses this long before it has gone far enough starts counting again.
+  const MARKS_GESTURE_MS = 400;
   const MARK_GAP = 2;
+  // How far a pill may be moved from its place, in pill heights.
+  const MARK_SHIFT = 1.5;
   const marksEl = document.createElement("div");
   marksEl.id = "marks";
   paneEl.appendChild(marksEl);
@@ -2490,6 +2512,9 @@
   // A scroll the page makes itself, putting a file back where it was read, is not the
   // reader scrolling, and brings no pills up.
   let marksQuietUntil = 0;
+  let marksTop = 0;
+  let marksRun = 0;
+  let marksRunAt = 0;
   const marksWatch = new ResizeObserver(() => {
     if (marksShown) {
       layoutMarks();
@@ -2536,22 +2561,41 @@
     const host = paneEl.getBoundingClientRect();
     marksEl.style.top = box.top - host.top + "px";
     marksEl.style.height = view + "px";
-    for (const mark of marks) {
+    marks.forEach((mark, index) => {
       mark.top = mark.heading.getBoundingClientRect().top - box.top + bodyEl.scrollTop;
+      mark.index = index;
       mark.el.hidden = false;
-    }
-    const taken = [];
-    const byRank = [...marks].sort((a, b) => a.level - b.level);
+    });
+    // A spot is free when it clears every pill placed so far and keeps the page's order:
+    // above the pills of the headings after it, below those before it.
+    const placed = [];
+    const free = (index, top, height) =>
+      top >= 0 &&
+      top + height <= view &&
+      placed.every((other) =>
+        other.index < index ? top >= other.bottom + MARK_GAP : top + height <= other.top - MARK_GAP
+      );
+    const byRank = [...marks].sort((a, b) => a.level - b.level || a.index - b.index);
     for (const mark of byRank) {
       const height = mark.el.offsetHeight;
       const y = (mark.top / Math.max(total, 1)) * view;
-      const top = Math.round(Math.min(Math.max(y - height / 2, 0), Math.max(view - height, 0)));
-      const bottom = top + height;
-      if (taken.some((span) => top < span[1] + MARK_GAP && bottom > span[0] - MARK_GAP)) {
+      const want = Math.round(Math.min(Math.max(y - height / 2, 0), Math.max(view - height, 0)));
+      const spots = [want];
+      for (const other of placed) {
+        spots.push(other.bottom + MARK_GAP, other.top - MARK_GAP - height);
+      }
+      let top = null;
+      for (const spot of spots) {
+        const near = Math.abs(spot - want) <= height * MARK_SHIFT;
+        if (near && free(mark.index, spot, height) && (top === null || Math.abs(spot - want) < Math.abs(top - want))) {
+          top = spot;
+        }
+      }
+      if (top === null) {
         mark.el.hidden = true;
         continue;
       }
-      taken.push([top, bottom]);
+      placed.push({ index: mark.index, top: top, bottom: top + height });
       mark.el.style.top = top + "px";
     }
   }
@@ -2582,13 +2626,13 @@
     }
     markReading();
     clearTimeout(marksTimer);
-    marksTimer = setTimeout(() => hideMarks(false), MARKS_HIDE_MS);
+    marksTimer = setTimeout(() => hideMarks(false), marksLinger);
   }
 
   function hideMarks(now) {
     clearTimeout(marksTimer);
     if (!now && (marksHover || bodyBar.bar.classList.contains("held"))) {
-      marksTimer = setTimeout(() => hideMarks(false), MARKS_HIDE_MS);
+      marksTimer = setTimeout(() => hideMarks(false), marksLinger);
       return;
     }
     marksShown = false;
@@ -2597,13 +2641,25 @@
 
   function quietMarks() {
     marksQuietUntil = performance.now() + MARKS_QUIET_MS;
+    marksRun = 0;
   }
 
+  // Once up, the marks stay up for any scroll; only bringing them up asks for the reach.
   bodyEl.addEventListener("scroll", () => {
-    if (performance.now() >= marksQuietUntil) {
+    const now = performance.now();
+    const moved = Math.abs(bodyEl.scrollTop - marksTop);
+    marksTop = bodyEl.scrollTop;
+    if (now < marksQuietUntil) {
+      marksRun = 0;
+      if (marksShown) {
+        markReading();
+      }
+      return;
+    }
+    marksRun = now - marksRunAt > MARKS_GESTURE_MS ? moved : marksRun + moved;
+    marksRunAt = now;
+    if (marksShown || marksRun >= marksReach) {
       revealMarks();
-    } else if (marksShown) {
-      markReading();
     }
   });
 
@@ -2614,6 +2670,18 @@
   marksEl.addEventListener("pointerleave", () => {
     marksHover = false;
   });
+
+  function stepMarksLinger(delta) {
+    marksLinger = Math.min(Math.max(marksLinger + delta, MIN_MARKS_LINGER), MAX_MARKS_LINGER);
+    persist();
+    drawOptions();
+  }
+
+  function stepMarksReach(delta) {
+    marksReach = Math.min(Math.max(marksReach + delta, 0), MAX_MARKS_REACH);
+    persist();
+    drawOptions();
+  }
 
   function toggleBarLevel(level) {
     barLevels = barLevels.includes(level)
@@ -5121,6 +5189,22 @@
         return button;
       })
     ]);
+    optionRow(reading, "Scrollbar headings stay after scrolling", optionStepper(
+      marksLinger + " ms",
+      ["Hide the headings sooner after the page stops", "Keep the headings up longer after the page stops"],
+      () => stepMarksLinger(-MARKS_LINGER_STEP),
+      () => stepMarksLinger(MARKS_LINGER_STEP),
+      marksLinger <= MIN_MARKS_LINGER,
+      marksLinger >= MAX_MARKS_LINGER
+    ));
+    optionRow(reading, "Scroll before scrollbar headings show", optionStepper(
+      marksReach ? marksReach + " px" : "any",
+      ["Bring the headings up after a shorter scroll", "Bring the headings up only after a longer scroll"],
+      () => stepMarksReach(-MARKS_REACH_STEP),
+      () => stepMarksReach(MARKS_REACH_STEP),
+      marksReach <= 0,
+      marksReach >= MAX_MARKS_REACH
+    ));
     optionRow(reading, "Auto size list height", [
       optionChoice(AUTO_LABELS, AUTO_SIZES.indexOf(autoSize), (choice) => setAutoSize(AUTO_SIZES[choice]))
     ]);
