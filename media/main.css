@@ -2064,6 +2064,72 @@ img.single {
   background: rgba(128, 128, 128, 0.75);
 }
 
+/* The page's headings beside its bar, laid over the page and clear of the bar. The pills
+   slide in from the bar as the page scrolls and fade back once it stops; only a pill that
+   is up takes the pointer. Sized in px like the log: they are not the document. */
+#marks {
+  position: absolute;
+  right: 10px;
+  width: min(45%, 260px);
+  z-index: 4;
+  pointer-events: none;
+}
+
+#marks .mark {
+  position: absolute;
+  right: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 9px;
+  padding: 0 8px;
+  color: var(--vscode-descriptionForeground, #8b949e);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  box-shadow: 0 1px 4px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+  font: 11px/16px var(--vscode-font-family);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 240ms ease, transform 240ms ease;
+  pointer-events: none;
+}
+
+#marks .mark[hidden] {
+  display: none;
+}
+
+#marks.shown .mark {
+  opacity: 1;
+  transform: none;
+  transition-duration: 140ms;
+  pointer-events: auto;
+}
+
+#marks .mark.mark-h1 {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+}
+
+#marks .mark.mark-h2 {
+  color: var(--vscode-foreground);
+}
+
+#marks .mark:hover,
+#marks .mark.on {
+  color: var(--vscode-foreground);
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #marks .mark {
+    transform: none;
+    transition: none;
+  }
+}
+
 /* The tree's bar runs down the side's own edge, against the file bar beyond the divider. */
 #side > .bar {
   right: 0;

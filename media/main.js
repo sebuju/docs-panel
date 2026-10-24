@@ -255,6 +255,8 @@
   // Where the files that name the open one are looked for: nowhere, the docs, or every
   // file of the workspace.
   let refsScope = "docs";
+  // The heading levels marked beside the reading pane's bar; none turns the marks off.
+  let barLevels = [1, 2, 3];
   const REF_SCOPES = ["off", "docs", "all"];
   const REF_SCOPE_LABELS = ["off", "docs", "all files"];
   // How far down each file was read, as a share of the way, oldest first.
@@ -396,6 +398,9 @@
     if (REF_SCOPES.includes(state.refsScope)) {
       refsScope = state.refsScope;
     }
+    if (Array.isArray(state.barLevels)) {
+      barLevels = [1, 2, 3, 4, 5, 6].filter((level) => state.barLevels.includes(level));
+    }
     selected = typeof state.selected === "string" ? state.selected : null;
     if (typeof state.searchCase === "boolean") {
       searchCase = state.searchCase;
@@ -471,6 +476,7 @@
       tableAlign: tableAlign,
       tableHead: tableHead,
       refsScope: refsScope,
+      barLevels: barLevels,
       selected: selected,
       editing: [...editing],
       searchCase: searchCase,
@@ -2463,8 +2469,160 @@
 
   addBar(treeEl, sideEl);
   addBar(tocEl, sideEl);
-  addBar(bodyEl, paneEl);
+  const bodyBar = addBar(bodyEl, paneEl);
   addBar(optionsBodyEl, optionsDialogEl);
+
+  // The headings of a Markdown page, as pills beside the reading pane's bar at the share
+  // of the page each stands at, so the thumb lies over the ones on screen. They come up
+  // while the page scrolls and go a moment after it stops, staying while the pointer is on
+  // one or the thumb is held. A higher heading has first claim on the room; one with no
+  // room left is not shown. Which levels are shown is an option, and none turns them off.
+  const MARKS_HIDE_MS = 1200;
+  const MARKS_QUIET_MS = 300;
+  const MARK_GAP = 2;
+  const marksEl = document.createElement("div");
+  marksEl.id = "marks";
+  paneEl.appendChild(marksEl);
+  let marks = [];
+  let marksShown = false;
+  let marksTimer = 0;
+  let marksHover = false;
+  // A scroll the page makes itself, putting a file back where it was read, is not the
+  // reader scrolling, and brings no pills up.
+  let marksQuietUntil = 0;
+  const marksWatch = new ResizeObserver(() => {
+    if (marksShown) {
+      layoutMarks();
+    }
+  });
+
+  function buildMarks() {
+    hideMarks(true);
+    marksEl.textContent = "";
+    marks = [];
+    marksWatch.disconnect();
+    if (!barLevels.length || !article || !current || current.kind !== "md") {
+      return;
+    }
+    const levels = barLevels.map((level) => "h" + level).join(", ");
+    for (const heading of article.querySelectorAll(levels)) {
+      const text = heading.textContent.replace(/\s+/g, " ").trim();
+      if (!text) {
+        continue;
+      }
+      const level = Number(heading.tagName[1]);
+      const el = make("button", "mark mark-h" + level, text);
+      el.type = "button";
+      el.tabIndex = -1;
+      el.title = text;
+      el.addEventListener("click", () => {
+        heading.scrollIntoView({ block: "start" });
+        const section = sections.find((entry) => entry.heading === heading);
+        flash(section ? section.own : [heading]);
+      });
+      marksEl.appendChild(el);
+      marks.push({ heading: heading, el: el, level: level, top: 0 });
+    }
+    if (marks.length) {
+      marksWatch.observe(bodyEl);
+      marksWatch.observe(article);
+    }
+  }
+
+  function layoutMarks() {
+    const view = bodyEl.clientHeight;
+    const total = bodyEl.scrollHeight;
+    const box = bodyEl.getBoundingClientRect();
+    const host = paneEl.getBoundingClientRect();
+    marksEl.style.top = box.top - host.top + "px";
+    marksEl.style.height = view + "px";
+    for (const mark of marks) {
+      mark.top = mark.heading.getBoundingClientRect().top - box.top + bodyEl.scrollTop;
+      mark.el.hidden = false;
+    }
+    const taken = [];
+    const byRank = [...marks].sort((a, b) => a.level - b.level);
+    for (const mark of byRank) {
+      const height = mark.el.offsetHeight;
+      const y = (mark.top / Math.max(total, 1)) * view;
+      const top = Math.round(Math.min(Math.max(y - height / 2, 0), Math.max(view - height, 0)));
+      const bottom = top + height;
+      if (taken.some((span) => top < span[1] + MARK_GAP && bottom > span[0] - MARK_GAP)) {
+        mark.el.hidden = true;
+        continue;
+      }
+      taken.push([top, bottom]);
+      mark.el.style.top = top + "px";
+    }
+  }
+
+  // The pill of the section being read is lit: the last heading at or above the top of
+  // the pane.
+  function markReading() {
+    const line = bodyEl.scrollTop + 8;
+    let on = null;
+    for (const mark of marks) {
+      if (mark.top <= line && !mark.el.hidden) {
+        on = mark;
+      }
+    }
+    for (const mark of marks) {
+      mark.el.classList.toggle("on", mark === on);
+    }
+  }
+
+  function revealMarks() {
+    if (!marks.length || bodyEl.scrollHeight <= bodyEl.clientHeight + 1) {
+      return;
+    }
+    if (!marksShown) {
+      layoutMarks();
+      marksShown = true;
+      marksEl.classList.add("shown");
+    }
+    markReading();
+    clearTimeout(marksTimer);
+    marksTimer = setTimeout(() => hideMarks(false), MARKS_HIDE_MS);
+  }
+
+  function hideMarks(now) {
+    clearTimeout(marksTimer);
+    if (!now && (marksHover || bodyBar.bar.classList.contains("held"))) {
+      marksTimer = setTimeout(() => hideMarks(false), MARKS_HIDE_MS);
+      return;
+    }
+    marksShown = false;
+    marksEl.classList.remove("shown");
+  }
+
+  function quietMarks() {
+    marksQuietUntil = performance.now() + MARKS_QUIET_MS;
+  }
+
+  bodyEl.addEventListener("scroll", () => {
+    if (performance.now() >= marksQuietUntil) {
+      revealMarks();
+    } else if (marksShown) {
+      markReading();
+    }
+  });
+
+  marksEl.addEventListener("pointerenter", () => {
+    marksHover = true;
+  });
+
+  marksEl.addEventListener("pointerleave", () => {
+    marksHover = false;
+  });
+
+  function toggleBarLevel(level) {
+    barLevels = barLevels.includes(level)
+      ? barLevels.filter((own) => own !== level)
+      : [...barLevels, level].sort((a, b) => a - b);
+    buildMarks();
+    persist();
+    drawOptions();
+  }
 
   splitter.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -2629,6 +2787,7 @@
       restored = null;
       return;
     }
+    quietMarks();
     applyScrollRatio(restored.ratio);
     restored.top = bodyEl.scrollTop;
   }, true);
@@ -3419,6 +3578,7 @@
   }
 
   function drawPane() {
+    quietMarks();
     bodyEl.textContent = "";
     tocEl.textContent = "";
     tocEl.hidden = true;
@@ -3438,6 +3598,7 @@
     if (!current) {
       headerEl.hidden = true;
       applyView();
+      buildMarks();
       return;
     }
 
@@ -3455,6 +3616,7 @@
 
     if (mode === "edit") {
       drawEditor();
+      buildMarks();
       return;
     }
 
@@ -3465,6 +3627,7 @@
       img.alt = current.path;
       img.addEventListener("click", () => openLightbox(img.src, img.alt));
       bodyEl.appendChild(img);
+      buildMarks();
       return;
     }
 
@@ -3514,6 +3677,7 @@
     if (current.kind === "md" || current.kind === "html") {
       buildToc();
     }
+    buildMarks();
   }
 
   // A name in the text that is a file, one of the docs or any other in the workspace, is
@@ -3952,6 +4116,7 @@
     }
     const after = log ? log.offsetHeight : 0;
     if (bodyEl.scrollTop > 0 && after !== before) {
+      quietMarks();
       bodyEl.scrollTop += after - before;
     }
   }
@@ -3971,6 +4136,7 @@
     }
     const after = box ? box.offsetHeight : 0;
     if (bodyEl.scrollTop > 0 && after !== before) {
+      quietMarks();
       bodyEl.scrollTop += after - before;
     }
   }
@@ -4943,6 +5109,17 @@
     ]);
     optionRow(reading, "Contents list", [
       optionChoice(["hidden", "shown"], showToc ? 1 : 0, (choice) => setShowToc(choice === 1))
+    ]);
+    optionRow(reading, "Headings beside the scrollbar", [
+      ...(barLevels.length ? [] : [make("span", "opt-dim cap", "off")]),
+      ...[1, 2, 3, 4, 5, 6].map((level) => {
+        const on = barLevels.includes(level);
+        const button = makeButton("H" + level, () => toggleBarLevel(level), "opt-button opt-toggle");
+        button.title = (on ? "Hide " : "Show ") + "#".repeat(level) + " headings beside the scrollbar";
+        button.classList.toggle("active", on);
+        button.setAttribute("aria-pressed", on ? "true" : "false");
+        return button;
+      })
     ]);
     optionRow(reading, "Auto size list height", [
       optionChoice(AUTO_LABELS, AUTO_SIZES.indexOf(autoSize), (choice) => setAutoSize(AUTO_SIZES[choice]))

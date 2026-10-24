@@ -26,6 +26,14 @@ const search = (text) => async (page) => {
   await page.waitForTimeout(150);
 };
 
+// The page's own place is put back when it opens; a wheel a moment later is the reader's.
+const scrollPage = (by) => async (page) => {
+  await page.waitForTimeout(400);
+  await page.mouse.move(600, 200);
+  await page.mouse.wheel(0, by);
+  await page.waitForTimeout(250);
+};
+
 module.exports = [
   { name: "tree-tags-right", state: { tagSide: "right" }, clip: side },
   { name: "tree-tags-left", state: { tagSide: "left" }, clip: side },
@@ -259,5 +267,34 @@ module.exports = [
     act: async (page) => page.mouse.move(500, 85)
   },
   { name: "header-tags", clip: header },
-  { name: "header-tags-light", theme: "light-modern", clip: header }
+  { name: "header-tags-light", theme: "light-modern", clip: header },
+  // A page long enough to scroll, rolled down a little: the headings come up by the bar.
+  ...["dark-modern", "light-modern"].map((theme) => ({
+    name: "page-marks" + (theme === "light-modern" ? "-light" : ""),
+    theme: theme,
+    viewport: { width: 1000, height: 320 },
+    state: { selected: "plans/migration-plan-for-the-new-storage-layer.md", textScale: 1.6 },
+    hover: true,
+    act: scrollPage(240)
+  })),
+  {
+    name: "page-marks-h2",
+    viewport: { width: 1000, height: 320 },
+    state: { selected: "plans/migration-plan-for-the-new-storage-layer.md", textScale: 1.6, barLevels: [2] },
+    hover: true,
+    act: scrollPage(240)
+  },
+  ...["dark-modern", "light-modern"].map((theme) => ({
+    name: "page-refs" + (theme === "light-modern" ? "-light" : ""),
+    theme: theme,
+    clip: { x: 300, y: 0, width: 700, height: 220 },
+    act: async (page) => {
+      await page.evaluate(() => window.postMessage({
+        type: "refs",
+        path: "plans/roadmap.md",
+        refs: [{ path: "README.md" }, { path: "notes/meeting-notes.md" }, { path: "src/panel.ts", workspace: true }]
+      }, "*"));
+      await page.waitForTimeout(100);
+    }
+  }))
 ];

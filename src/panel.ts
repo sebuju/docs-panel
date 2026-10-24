@@ -141,6 +141,8 @@ export interface PanelState {
   tableHead: string;
   // Where the files that name the open one are looked for, if anywhere.
   refsScope: RefScope;
+  // The heading levels marked beside the reading pane's bar, 1 to 6; none turns them off.
+  barLevels: number[];
   selected: string | null;
   // The files left in edit mode, which open in it again.
   editing: string[];
@@ -184,6 +186,7 @@ const DEFAULT_STATE: PanelState = {
   tableAlign: "center",
   tableHead: "grey",
   refsScope: "docs",
+  barLevels: [1, 2, 3],
   selected: null,
   editing: [],
   searchCase: false,
@@ -1867,6 +1870,9 @@ function normalizeState(value: any): PanelState {
     tableAlign: TABLE_ALIGNS.includes(value?.tableAlign) ? value.tableAlign : DEFAULT_STATE.tableAlign,
     tableHead: TABLE_HEADS.includes(value?.tableHead) ? value.tableHead : DEFAULT_STATE.tableHead,
     refsScope: REF_SCOPES.includes(value?.refsScope) ? value.refsScope : DEFAULT_STATE.refsScope,
+    barLevels: Array.isArray(value?.barLevels)
+      ? [1, 2, 3, 4, 5, 6].filter((level) => value.barLevels.includes(level))
+      : DEFAULT_STATE.barLevels,
     selected: typeof value?.selected === "string" ? value.selected : null,
     editing: Array.isArray(value?.editing) ? value.editing.map(String) : [],
     scrolls

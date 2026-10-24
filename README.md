@@ -144,6 +144,14 @@ left. In a Markdown file, `Right` from there returns to the block that was selec
 The block under the pointer is highlighted, a list item together with its bullet or
 number. Its strength and padding are set in the options; strength `off` disables it.
 
+While a Markdown page scrolls, its headings come up as pills beside the scrollbar, each at
+the height that heading stands at in the page, so the thumb lies over the ones on screen.
+They fade out a moment after the scrolling stops, and stay while the pointer is on one or
+the thumb is held. The pill of the section being read is outlined, and a click on a pill
+scrolls to its heading. When pills would overlap, the higher heading is shown. The options
+choose the levels shown, `#`, `##` and `###` (H1 to H3) by default; with none chosen there
+are no pills.
+
 ## Tables
 
 | Action | How |
@@ -303,7 +311,7 @@ The sliders button in the tree's top right corner opens the options.
 
 | Section | Settings |
 |---|---|
-| Reading | Text size, line spacing, font, contents list shown, auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), where referencing files are looked for (off / docs / all files), table cell alignment, table header background, mentions shown |
+| Reading | Text size, line spacing, font, contents list shown, heading levels shown beside the scrollbar (H1 to H6), auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), where referencing files are looked for (off / docs / all files), table cell alignment, table header background, mentions shown |
 | Tree | Text size, side of the name the tags are drawn on, bucket outline, bucket background tint, bucket heading position (inside, on the outline, above), style (pill, colour bar, plain name), colour and weight |
 | Tags | One row per tag; see below |
 | Data files | Each file the panel writes, with its size and a **Purge** button |
