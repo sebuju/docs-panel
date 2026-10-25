@@ -148,15 +148,35 @@ While a Markdown page scrolls, its headings come up as labels beside the scrollb
 on the left, pointed on the right, the point at the height that heading stands at in the
 page, so the thumb lies over the ones on screen. The size of a label's text follows the
 heading's level. They fade out a moment after the scrolling stops (1200 ms by default), and
-stay while the pointer is on one or the thumb is held. The label of the section being read
+stay while the pointer is on one or the thumb is held. Set to come up **on hover** instead,
+they show while the pointer is within a set distance of the scrollbar (40 px by default),
+not on scrolling, and fade out the same moment after it leaves. A file changed on disk
+while they are up keeps them up, redrawn from its headings as they are now. The label of the section being read
 is lit, and a click on a label scrolls to its heading. No two labels overlap: a higher
 heading keeps its place, a lower one is moved out of its way, keeping the page's order, as
 far as its point still reaches its spot, and is left out when there is no room there.
 
-The options choose the levels shown (`#`, `##` and `###`, H1 to H3, by default; none turns
-the labels off), how long they stay after the scrolling stops (100 to 10000 ms), and how far
-the page must scroll in one go before they come up (`any` by default, up to 1000 px). Once
-up, any scroll keeps them up.
+The options choose when they come up (`off`, `on scroll` by default, or `on hover`), which
+headings are shown, how long they stay (100 to 10000 ms), how far the page must scroll in
+one go before they come up on scroll (`any` by default, up to 1000 px; once up, any scroll
+keeps them up), and how near the pointer must come on hover (10 to 400 px).
+
+Which headings are shown is a list of rules split by commas, `h1-3` by default. A heading
+any rule takes is shown once, so rules may overlap.
+
+| Rule | Shows |
+|---|---|
+| `h2` | Every `##` heading |
+| `h1-3` | Every `#`, `##` and `###` heading (`h1-h3` reads the same) |
+| `h1h5` | Every `#` and `#####` heading; levels and ranges can be run together, as in `h1-3h5` |
+| `h4:todo` | The `####` headings with the word *todo* in them |
+| `todo` or `:todo` | Headings of any level with the word *todo* |
+| `h2:plan*` | The `##` headings with a word starting *plan*: *Plan*, *Planning* |
+
+Spaces around each rule are ignored, a word is matched in any case and only as a whole word,
+and `*` stands for any run of characters, so `*plan*` finds *plan* anywhere. A part that is no
+rule, such as `h7`, is skipped, and the box is outlined in red with the part named in its
+tooltip. An empty box shows none.
 
 ## Tables
 
@@ -249,6 +269,12 @@ colour, letters or style, but can be enabled, spanned and ordered like a tag's b
 | From another folder to a bucket | Moves the file into the folder and adds the bucket's tag |
 | To the untagged bucket | Removes all the file's tags, moving it first if it is from another folder |
 
+Only the box at the start of a row makes or removes its tag's bucket, so a click a little
+off while dragging a tag or setting its span changes nothing; `Enter` toggles the
+highlighted one. The sliders button in the picker's top right corner, shown while the pointer
+is on the picker, opens the options at **Tag buckets**; in a file's tag picker it opens them
+at **Tags**.
+
 Layout, set in the picker:
 
 - **−** / **+** next to a tag set how many columns its bucket spans.
@@ -318,8 +344,9 @@ The sliders button in the tree's top right corner opens the options.
 
 | Section | Settings |
 |---|---|
-| Reading | Text size, line spacing, font, contents list shown, heading levels shown beside the scrollbar (H1 to H6), how long they stay after scrolling (ms) and how far to scroll before they show (px), auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), where referencing files are looked for (off / docs / all files), table cell alignment, table header background, mentions shown |
-| Tree | Text size, side of the name the tags are drawn on, bucket outline, bucket background tint, bucket heading position (inside, on the outline, above), style (pill, colour bar, plain name), colour and weight |
+| Reading | Text size, line spacing, font, contents list shown, headings beside the scrollbar (off / on scroll / on hover), the rules for which are shown, how long they stay (ms), how far to scroll before they show (px) or how near the pointer must come (px), auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), where referencing files are looked for (off / docs / all files), table cell alignment, table header background, mentions shown |
+| Tree | Text size, side of the name the tags are drawn on |
+| Tag buckets | Outline, background tint, heading position (inside, on the outline, above), style (pill, colour bar, plain name), colour and weight |
 | Tags | One row per tag; see below |
 | Data files | Each file the panel writes, with its size and a **Purge** button |
 

@@ -1450,12 +1450,33 @@ img.single {
 }
 
 #tagPickerTitle {
-  padding: 0 2px 4px;
+  padding: 0 22px 4px 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.85em;
   opacity: 0.65;
+}
+
+/* The way to the options for what the picker picks, in its corner, shown only while the
+   pointer is on the picker or the button has the focus. */
+#tagPickerOptions {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+#tagPicker:hover #tagPickerOptions {
+  opacity: 0.75;
+}
+
+#tagPicker #tagPickerOptions:hover,
+#tagPickerOptions:focus-visible {
+  opacity: 1;
 }
 
 #tagInput,
@@ -1508,6 +1529,46 @@ img.single {
 
 .tag-choice .tick {
   flex: 0 0 12px;
+}
+
+/* A bucket's box, the only thing in its row that makes or takes away the bucket. Drawn in
+   the editor's own checkbox colours, so it keeps its edge on a lit row; the tick is the
+   text colour, cut out by a mask. */
+.tag-choice input.tick {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  margin: 0;
+  border: 1px solid var(--vscode-checkbox-border, rgba(128, 128, 128, 0.6));
+  border-radius: 3px;
+  background: var(--vscode-checkbox-background, var(--vscode-input-background));
+  cursor: pointer;
+}
+
+.tag-choice input.tick:checked::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background: var(--vscode-checkbox-foreground, currentColor);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2 4 7.6 8.6 2.4' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2 4 7.6 8.6 2.4' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.tag-choice input.tick:hover {
+  border-color: var(--vscode-focusBorder);
+}
+
+.tag-choice:has(input.tick) {
+  cursor: default;
+}
+
+.tag-choice[draggable="true"]:has(input.tick) {
+  cursor: grab;
 }
 
 .tag-choice .name {
@@ -1723,6 +1784,34 @@ img.single {
   background: var(--vscode-input-background);
   font: inherit;
   text-align: center;
+}
+
+/* Wide enough for a few rules, which are typed in it. */
+.opt-text {
+  width: calc(2 * var(--opt-control) + 8px);
+  height: 23px;
+  box-sizing: border-box;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 0 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  font: inherit;
+}
+
+.opt-text:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.opt-text.wrong,
+.opt-text.wrong:focus {
+  outline: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground, #f85149));
+  outline-offset: -1px;
+}
+
+.opt-text::placeholder {
+  opacity: 0.4;
 }
 
 .opt-wrap:focus {
@@ -2339,8 +2428,11 @@ img.single {
   padding: 1px 6px;
 }
 
+/* Exactly as tall as a file's row: the same padding and the same clear border above and
+   below the line. */
 .bucket-empty {
-  padding: 0 8px;
+  padding: 1px 8px;
+  border-block: 1px solid transparent;
   line-height: var(--tree-row);
   font-style: italic;
   opacity: 0.45;

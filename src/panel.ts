@@ -82,6 +82,11 @@ const TABLE_HEADS = ["none", "grey", "red", "orange", "yellow", "green", "blue",
 
 const REF_SCOPES: RefScope[] = ["off", "docs", "all"];
 
+// When the headings beside the reading pane's bar come up: never, while the page
+// scrolls, or while the pointer is near the bar.
+export type MarksMode = "off" | "scroll" | "hover";
+const MARKS_MODES: MarksMode[] = ["off", "scroll", "hover"];
+
 // A folder's tag buckets: the tags that have one, how many stand in a row, how many
 // columns a bucket spans where that is more than one, and whether the tags are in an order
 // of the folder's own or follow the order tags are listed in.
@@ -141,12 +146,16 @@ export interface PanelState {
   tableHead: string;
   // Where the files that name the open one are looked for, if anywhere.
   refsScope: RefScope;
-  // The heading levels marked beside the reading pane's bar, 1 to 6; none turns them off.
-  barLevels: number[];
-  // How long, in ms, they stay after the page stops scrolling, and how far, in px, it must
-  // scroll in one go to bring them up.
+  // When the headings beside the reading pane's bar come up, and which: the rules, split
+  // by commas, of levels and words a heading is taken for, as in "h1-3, h4:todo".
+  marksMode: MarksMode;
+  marksRules: string;
+  // How long, in ms, they stay after the page stops scrolling or the pointer leaves, how
+  // far, in px, the page must scroll in one go to bring them up, and how near, in px, the
+  // pointer must come to the bar.
   marksLinger: number;
   marksReach: number;
+  marksNear: number;
   selected: string | null;
   // The files left in edit mode, which open in it again.
   editing: string[];
@@ -190,9 +199,11 @@ const DEFAULT_STATE: PanelState = {
   tableAlign: "center",
   tableHead: "grey",
   refsScope: "docs",
-  barLevels: [1, 2, 3],
+  marksMode: "scroll",
+  marksRules: "h1-3",
   marksLinger: 1200,
   marksReach: 0,
+  marksNear: 40,
   selected: null,
   editing: [],
   searchCase: false,
@@ -1641,6 +1652,7 @@ export class DocsPanel {
 <div id="menu" hidden></div>
 <div id="tagPicker" hidden>
   <div id="tagPickerTitle"></div>
+  <button id="tagPickerOptions" class="icon" type="button" title="Options">${SLIDERS_ICON}</button>
   <input id="tagInput" type="text" placeholder="Find or add a tag" spellcheck="false">
   <div id="tagList"></div>
   <div id="tagPickerFoot" hidden></div>
@@ -1807,6 +1819,11 @@ function normalizeState(value: any): PanelState {
   const lineHeight = numberOf(value?.lineHeight);
   const marksLinger = numberOf(value?.marksLinger);
   const marksReach = numberOf(value?.marksReach);
+  const marksNear = numberOf(value?.marksNear);
+  // Before there were rules, the levels were picked one by one, and none of them was off.
+  const barLevels: number[] | null = Array.isArray(value?.barLevels)
+    ? [1, 2, 3, 4, 5, 6].filter((level) => value.barLevels.includes(level))
+    : null;
   const hoverStrength = numberOf(value?.hoverStrength);
   // One padding, before it was split in two, stands for both.
   const blockPad = numberOf(value?.blockPad);
@@ -1878,19 +1895,44 @@ function normalizeState(value: any): PanelState {
     tableAlign: TABLE_ALIGNS.includes(value?.tableAlign) ? value.tableAlign : DEFAULT_STATE.tableAlign,
     tableHead: TABLE_HEADS.includes(value?.tableHead) ? value.tableHead : DEFAULT_STATE.tableHead,
     refsScope: REF_SCOPES.includes(value?.refsScope) ? value.refsScope : DEFAULT_STATE.refsScope,
-    barLevels: Array.isArray(value?.barLevels)
-      ? [1, 2, 3, 4, 5, 6].filter((level) => value.barLevels.includes(level))
-      : DEFAULT_STATE.barLevels,
+    marksMode: MARKS_MODES.includes(value?.marksMode)
+      ? value.marksMode
+      : barLevels && !barLevels.length
+        ? "off"
+        : DEFAULT_STATE.marksMode,
+    marksRules: typeof value?.marksRules === "string"
+      ? value.marksRules
+      : barLevels && barLevels.length
+        ? levelRules(barLevels)
+        : DEFAULT_STATE.marksRules,
     marksLinger: Number.isFinite(marksLinger)
       ? Math.min(Math.max(Math.round(marksLinger), 100), 10000)
       : DEFAULT_STATE.marksLinger,
     marksReach: Number.isFinite(marksReach)
       ? Math.min(Math.max(Math.round(marksReach), 0), 1000)
       : DEFAULT_STATE.marksReach,
+    marksNear: Number.isFinite(marksNear)
+      ? Math.min(Math.max(Math.round(marksNear), 10), 400)
+      : DEFAULT_STATE.marksNear,
     selected: typeof value?.selected === "string" ? value.selected : null,
     editing: Array.isArray(value?.editing) ? value.editing.map(String) : [],
     scrolls
   };
+}
+
+// Levels picked one by one written as a rule, each run of them as a range: 1, 2, 3 and 5
+// are "h1-3h5".
+function levelRules(levels: number[]): string {
+  let out = "";
+  for (let i = 0; i < levels.length; i++) {
+    let end = i;
+    while (end + 1 < levels.length && levels[end + 1] === levels[end] + 1) {
+      end++;
+    }
+    out += "h" + levels[i] + (end > i ? "-" + levels[end] : "");
+    i = end;
+  }
+  return out;
 }
 
 // A folder keeps its buckets only while it has a tag with one. Buckets laid down, one
