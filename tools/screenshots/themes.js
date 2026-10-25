@@ -19,6 +19,7 @@ module.exports = {
     "button-secondaryHoverBackground": "#3c3c3c", "button-border": "#ffffff12", "button-background": "#0078d4",
     "dropdown-background": "#313131", "dropdown-border": "#3c3c3c", "dropdown-foreground": "#cccccc",
     "input-background": "#313131", "input-border": "#3c3c3c", "input-foreground": "#cccccc",
+    "checkbox-background": "#313131", "checkbox-border": "#3c3c3c", "checkbox-foreground": "#cccccc",
     "menu-background": "#1f1f1f", "menu-border": "#454545", "menu-foreground": "#cccccc",
     "menu-selectionBackground": "#0078d4", "errorForeground": "#f85149", "toolbar-hoverBackground": "#5a5d5e50",
     "panel-border": "#2b2b2b", "textLink-foreground": "#4daafc",
@@ -37,6 +38,7 @@ module.exports = {
     "button-secondaryHoverBackground": "#45494e", "button-background": "#0e639c",
     "dropdown-background": "#3c3c3c", "dropdown-border": "#3c3c3c", "dropdown-foreground": "#f0f0f0",
     "input-background": "#3c3c3c", "input-foreground": "#cccccc",
+    "checkbox-background": "#3c3c3c", "checkbox-border": "#3c3c3c", "checkbox-foreground": "#f0f0f0",
     "menu-background": "#252526", "menu-foreground": "#cccccc", "menu-selectionBackground": "#04395e",
     "errorForeground": "#f48771", "toolbar-hoverBackground": "#5a5d5e50", "panel-border": "#80808059",
     "textLink-foreground": "#3794ff", "editor-findMatchHighlightBackground": "#ea5c0055"
@@ -54,6 +56,7 @@ module.exports = {
     "button-secondaryHoverBackground": "#cccccc", "button-border": "#0000001a", "button-background": "#005fb8",
     "dropdown-background": "#ffffff", "dropdown-border": "#cecece", "dropdown-foreground": "#3b3b3b",
     "input-background": "#ffffff", "input-border": "#cecece", "input-foreground": "#3b3b3b",
+    "checkbox-background": "#f8f8f8", "checkbox-border": "#cecece", "checkbox-foreground": "#3b3b3b",
     "menu-background": "#ffffff", "menu-border": "#cecece", "menu-foreground": "#3b3b3b",
     "menu-selectionBackground": "#005fb8", "errorForeground": "#f85149", "toolbar-hoverBackground": "#b8b8b850",
     "panel-border": "#e5e5e5", "textLink-foreground": "#005fb8", "editor-findMatchHighlightBackground": "#ea5c0055"

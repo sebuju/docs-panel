@@ -292,7 +292,7 @@ module.exports = [
   {
     name: "page-marks-h2",
     viewport: { width: 1000, height: 320 },
-    state: { selected: "plans/migration-plan-for-the-new-storage-layer.md", textScale: 1.6, barLevels: [2] },
+    state: { selected: "plans/migration-plan-for-the-new-storage-layer.md", textScale: 1.6, marksRules: "h2" },
     hover: true,
     act: scrollPage(240)
   },
@@ -301,7 +301,7 @@ module.exports = [
   {
     name: "page-marks-crowded",
     viewport: { width: 1000, height: 420 },
-    state: { barLevels: [1, 2, 3, 4, 5, 6] },
+    state: { marksRules: "h1-6" },
     hover: true,
     act: async (page) => {
       await page.evaluate((html) => window.postMessage({
@@ -309,6 +309,19 @@ module.exports = [
         created: 1760000000000, modified: 1760500000000
       }, "*"), crowded());
       await scrollPage(300)(page);
+    }
+  },
+  // Brought up by the pointer near the bar rather than by a scroll, and picked by a rule
+  // with a word: the ## headings and the one named Steps.
+  {
+    name: "page-marks-hover",
+    viewport: { width: 1000, height: 320 },
+    state: { selected: "plans/migration-plan-for-the-new-storage-layer.md", textScale: 1.6, marksMode: "hover", marksRules: "h1, h2:ste*" },
+    hover: true,
+    act: async (page) => {
+      await page.waitForTimeout(400);
+      await page.mouse.move(990, 200);
+      await page.waitForTimeout(250);
     }
   },
   ...["dark-modern", "light-modern"].map((theme) => ({

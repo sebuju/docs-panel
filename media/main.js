@@ -58,6 +58,7 @@
   const searchCloseEl = document.getElementById("searchClose");
   const findAllEl = document.getElementById("findAll");
   const openOptionsEl = document.getElementById("openOptions");
+  const tagPickerOptionsEl = document.getElementById("tagPickerOptions");
   const headerTagsEl = document.getElementById("tags");
   const addTagEl = document.getElementById("addTag");
   const tagPickerEl = document.getElementById("tagPicker");
@@ -255,10 +256,16 @@
   // Where the files that name the open one are looked for: nowhere, the docs, or every
   // file of the workspace.
   let refsScope = "docs";
-  // The heading levels marked beside the reading pane's bar; none turns the marks off.
-  let barLevels = [1, 2, 3];
-  // How long, in ms, the marks stay after the page stops scrolling, and how far, in px, it
-  // must scroll in one go before they come up.
+  // When the headings beside the reading pane's bar come up: never, while the page scrolls,
+  // or while the pointer is near the bar; and which, by the rules of levels and words that
+  // pick them, split by commas.
+  let marksMode = "scroll";
+  const MARKS_MODES = ["off", "scroll", "hover"];
+  const MARKS_MODE_LABELS = ["off", "on scroll", "on hover"];
+  let marksRules = "h1-3";
+  // How long, in ms, the marks stay after the page stops scrolling or the pointer leaves,
+  // how far, in px, the page must scroll in one go before they come up, and how near, in
+  // px, the pointer must come to the bar.
   let marksLinger = 1200;
   const MARKS_LINGER_STEP = 100;
   const MIN_MARKS_LINGER = 100;
@@ -266,6 +273,10 @@
   let marksReach = 0;
   const MARKS_REACH_STEP = 20;
   const MAX_MARKS_REACH = 1000;
+  let marksNear = 40;
+  const MARKS_NEAR_STEP = 10;
+  const MIN_MARKS_NEAR = 10;
+  const MAX_MARKS_NEAR = 400;
   const REF_SCOPES = ["off", "docs", "all"];
   const REF_SCOPE_LABELS = ["off", "docs", "all files"];
   // How far down each file was read, as a share of the way, oldest first.
@@ -407,8 +418,14 @@
     if (REF_SCOPES.includes(state.refsScope)) {
       refsScope = state.refsScope;
     }
-    if (Array.isArray(state.barLevels)) {
-      barLevels = [1, 2, 3, 4, 5, 6].filter((level) => state.barLevels.includes(level));
+    if (MARKS_MODES.includes(state.marksMode)) {
+      marksMode = state.marksMode;
+    }
+    if (typeof state.marksRules === "string") {
+      marksRules = state.marksRules;
+    }
+    if (typeof state.marksNear === "number") {
+      marksNear = state.marksNear;
     }
     if (typeof state.marksLinger === "number") {
       marksLinger = state.marksLinger;
@@ -491,9 +508,11 @@
       tableAlign: tableAlign,
       tableHead: tableHead,
       refsScope: refsScope,
-      barLevels: barLevels,
+      marksMode: marksMode,
+      marksRules: marksRules,
       marksLinger: marksLinger,
       marksReach: marksReach,
+      marksNear: marksNear,
       selected: selected,
       editing: [...editing],
       searchCase: searchCase,
@@ -2491,11 +2510,13 @@
 
   // The headings of a Markdown page, as pills beside the reading pane's bar at the share
   // of the page each stands at, so the thumb lies over the ones on screen. They come up
-  // while the page scrolls and go a moment after it stops, staying while the pointer is on
-  // one or the thumb is held. Each points at its heading's very spot. No two overlap: a
-  // higher heading has first claim on the room, a lower one is moved out of its way as
-  // far as its point still reaches the spot, and one with no room there is not shown. Which levels are shown, how long they stay and how far the
-  // page must scroll to bring them up are options; no level at all turns them off.
+  // while the page scrolls, or while the pointer is near the bar, and go a moment after
+  // that stops, staying while the pointer is on one or the thumb is held. Each points at
+  // its heading's very spot. No two overlap: a higher heading has first claim on the room,
+  // a lower one is moved out of its way as far as its point still reaches the spot, and
+  // one with no room there is not shown. When they come up, which headings are shown, how
+  // long they stay, how far the page must scroll and how near the pointer must come to
+  // bring them up are options.
   const MARKS_QUIET_MS = 300;
   // A scroll that pauses this long before it has gone far enough starts counting again.
   const MARKS_GESTURE_MS = 400;
@@ -2507,6 +2528,11 @@
   let marksShown = false;
   let marksTimer = 0;
   let marksHover = false;
+  // Whether the pointer is near enough the bar to hold the marks up, when that is what
+  // brings them up.
+  let marksNearBar = false;
+  // The file the marks were made for, so one rewritten under the reader keeps them up.
+  let marksPath = null;
   // A scroll the page makes itself, putting a file back where it was read, is not the
   // reader scrolling, and brings no pills up.
   let marksQuietUntil = 0;
@@ -2519,21 +2545,84 @@
     }
   });
 
+  // The rules that pick the marks, from the option's text: each part, split off by a
+  // comma, is levels, a word, or levels and a word after a colon. Levels are h and a
+  // digit, or a range of two, run together, as in "h1-3h5". A word is found whole and in
+  // any case, unless a * in it stands for any run of characters there; with no word, every
+  // heading of the levels is taken, and with no levels, every heading with the word. A
+  // heading taken by any rule is shown once. A part that is none of these is left out.
+  const MARK_LEVELS = /^(?:h[1-6](?:-h?[1-6])?)+$/i;
+  const MARK_LEVEL = /h([1-6])(?:-h?([1-6]))?/gi;
+  const ALL_LEVELS = [1, 2, 3, 4, 5, 6];
+
+  function markRules(text) {
+    const rules = [];
+    const wrong = [];
+    for (const part of text.split(",")) {
+      const item = part.trim();
+      if (!item) {
+        continue;
+      }
+      const colon = item.indexOf(":");
+      const head = (colon < 0 ? item : item.slice(0, colon)).trim();
+      const word = colon < 0 ? "" : item.slice(colon + 1).trim();
+      if (MARK_LEVELS.test(head)) {
+        rules.push({ levels: markLevels(head), word: word ? wordPattern(word) : null });
+      } else if (colon < 0 ? !/^h[\d-]+$/i.test(head) : !head && word) {
+        rules.push({ levels: ALL_LEVELS, word: wordPattern(colon < 0 ? item : word) });
+      } else {
+        wrong.push(item);
+      }
+    }
+    return { rules: rules, wrong: wrong };
+  }
+
+  function markLevels(text) {
+    const levels = new Set();
+    for (const [, from, to] of text.matchAll(MARK_LEVEL)) {
+      const a = Number(from);
+      const b = to ? Number(to) : a;
+      for (let level = Math.min(a, b); level <= Math.max(a, b); level++) {
+        levels.add(level);
+      }
+    }
+    return [...levels];
+  }
+
+  // Letters, digits and the underscore make up a word; an end of the word that is not a *
+  // may not run on into more of them.
+  function wordPattern(word) {
+    const body = word
+      .split("*")
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"))
+      .join(".*");
+    const lead = word.startsWith("*") ? "" : "(?<![\\p{L}\\p{N}_])";
+    const tail = word.endsWith("*") ? "" : "(?![\\p{L}\\p{N}_])";
+    return new RegExp(lead + body + tail, "iu");
+  }
+
+  // Made again whenever the page is drawn. A file rewritten under the reader is the same
+  // page, so marks up on it stay up, made from its headings as they are now.
   function buildMarks() {
-    hideMarks(true);
+    const keep = marksShown && !!current && marksPath === current.path;
+    if (!keep) {
+      hideMarks(true);
+    }
     marksEl.textContent = "";
     marks = [];
     marksWatch.disconnect();
-    if (!barLevels.length || !article || !current || current.kind !== "md") {
+    marksPath = current ? current.path : null;
+    const rules = markRules(marksRules).rules;
+    if (marksMode === "off" || !rules.length || !article || !current || current.kind !== "md") {
+      hideMarks(true);
       return;
     }
-    const levels = barLevels.map((level) => "h" + level).join(", ");
-    for (const heading of article.querySelectorAll(levels)) {
+    for (const heading of article.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
       const text = heading.textContent.replace(/\s+/g, " ").trim();
-      if (!text) {
+      const level = Number(heading.tagName[1]);
+      if (!text || !rules.some((rule) => rule.levels.includes(level) && (!rule.word || rule.word.test(text)))) {
         continue;
       }
-      const level = Number(heading.tagName[1]);
       const el = make("button", "mark mark-h" + level, text);
       el.type = "button";
       el.tabIndex = -1;
@@ -2546,9 +2635,21 @@
       marksEl.appendChild(el);
       marks.push({ heading: heading, el: el, level: level, top: 0 });
     }
-    if (marks.length) {
-      marksWatch.observe(bodyEl);
-      marksWatch.observe(article);
+    if (!marks.length) {
+      hideMarks(true);
+      return;
+    }
+    marksWatch.observe(bodyEl);
+    marksWatch.observe(article);
+    if (keep && bodyEl.scrollHeight > bodyEl.clientHeight + 1) {
+      // The place in the page is put back once it is drawn, often to where it was, and
+      // that is no scroll; the lit one is found then.
+      layoutMarks();
+      requestAnimationFrame(markReading);
+    } else if (keep) {
+      hideMarks(true);
+    } else if (marksMode === "hover" && marksNearBar) {
+      revealMarks();
     }
   }
 
@@ -2633,7 +2734,7 @@
 
   function hideMarks(now) {
     clearTimeout(marksTimer);
-    if (!now && (marksHover || bodyBar.bar.classList.contains("held"))) {
+    if (!now && (marksHover || marksNearBar || bodyBar.bar.classList.contains("held"))) {
       marksTimer = setTimeout(() => hideMarks(false), marksLinger);
       return;
     }
@@ -2647,11 +2748,12 @@
   }
 
   // Once up, the marks stay up for any scroll; only bringing them up asks for the reach.
+  // When the pointer is what brings them up, a scroll only moves the lit one.
   bodyEl.addEventListener("scroll", () => {
     const now = performance.now();
     const moved = Math.abs(bodyEl.scrollTop - marksTop);
     marksTop = bodyEl.scrollTop;
-    if (now < marksQuietUntil) {
+    if (now < marksQuietUntil || marksMode !== "scroll") {
       marksRun = 0;
       if (marksShown) {
         markReading();
@@ -2673,6 +2775,49 @@
     marksHover = false;
   });
 
+  // Near the bar means over the page, no further from its right edge than the option
+  // says, and with nothing laid over the page.
+  function nearBar(x, y) {
+    if (marksMode !== "hover" || optionsOpen || finderOpen) {
+      return false;
+    }
+    const box = bodyEl.getBoundingClientRect();
+    return y >= box.top && y < box.bottom && x < box.right && x >= box.right - marksNear;
+  }
+
+  function setNearBar(near) {
+    if (near === marksNearBar) {
+      return;
+    }
+    marksNearBar = near;
+    if (near) {
+      revealMarks();
+    } else if (marksShown) {
+      clearTimeout(marksTimer);
+      marksTimer = setTimeout(() => hideMarks(false), marksLinger);
+    }
+  }
+
+  document.addEventListener("pointermove", (event) => setNearBar(nearBar(event.clientX, event.clientY)));
+  document.addEventListener("pointerout", (event) => {
+    if (!event.relatedTarget) {
+      setNearBar(false);
+    }
+  });
+
+  function setMarksMode(mode) {
+    marksMode = mode;
+    marksNearBar = false;
+    buildMarks();
+    persist();
+  }
+
+  function setMarksRules(text) {
+    marksRules = text;
+    buildMarks();
+    persist();
+  }
+
   function stepMarksLinger(delta) {
     marksLinger = Math.min(Math.max(marksLinger + delta, MIN_MARKS_LINGER), MAX_MARKS_LINGER);
     persist();
@@ -2685,11 +2830,8 @@
     drawOptions();
   }
 
-  function toggleBarLevel(level) {
-    barLevels = barLevels.includes(level)
-      ? barLevels.filter((own) => own !== level)
-      : [...barLevels, level].sort((a, b) => a - b);
-    buildMarks();
+  function stepMarksNear(delta) {
+    marksNear = Math.min(Math.max(marksNear + delta, MIN_MARKS_NEAR), MAX_MARKS_NEAR);
     persist();
     drawOptions();
   }
@@ -4610,6 +4752,7 @@
     pickerFolder = null;
     pickerIndex = 0;
     tagPickerTitleEl.textContent = "Tags of " + path.split("/").pop();
+    tagPickerOptionsEl.title = "Tag options";
     tagInputEl.placeholder = "Find or add a tag";
     tagInputEl.value = "";
     tagPickerFootEl.hidden = true;
@@ -4634,6 +4777,7 @@
       persist();
     }
     tagPickerTitleEl.textContent = "Tag buckets in " + at.split("/").pop();
+    tagPickerOptionsEl.title = "Tag bucket options";
     tagInputEl.placeholder = "Find a tag";
     tagInputEl.value = "";
     tagPickerEl.hidden = false;
@@ -4758,9 +4902,24 @@
       const row = document.createElement("div");
       row.className = "tag-choice" + (index === pickerIndex ? " on" : "");
 
-      const tick = document.createElement("span");
-      tick.className = "tick";
-      tick.textContent = own.has(choice.name) ? "✓" : "";
+      // A bucket is only ever made or taken away by its box, as a click on the row meant
+      // for its drag or its span is easily a little off.
+      const bucket = pickerFolder !== null;
+      const tick = make(bucket ? "input" : "span", "tick");
+      if (bucket) {
+        tick.type = "checkbox";
+        tick.tabIndex = -1;
+        tick.checked = own.has(choice.name);
+        tick.title = tick.checked ? "Take the bucket away" : "Make a bucket";
+        tick.addEventListener("click", (event) => event.stopPropagation());
+        tick.addEventListener("change", () => {
+          pickerIndex = index;
+          toggleTag(choice);
+          tagInputEl.focus({ preventScroll: true });
+        });
+      } else {
+        tick.textContent = own.has(choice.name) ? "✓" : "";
+      }
       row.appendChild(tick);
 
       // The untagged bucket is no tag, so it has no colour of its own to pick.
@@ -4799,7 +4958,11 @@
       });
       row.addEventListener("click", () => {
         pickerIndex = index;
-        toggleTag(choice);
+        if (bucket) {
+          drawTagPicker();
+        } else {
+          toggleTag(choice);
+        }
         tagInputEl.focus({ preventScroll: true });
       });
       tagListEl.appendChild(row);
@@ -4967,7 +5130,8 @@
   let dataFiles = null;
   let version = "";
 
-  function openOptions() {
+  // "at" is the id of a section to open them at, its heading at the top.
+  function openOptions(at) {
     closeMenu();
     closeTagPicker();
     if (finderOpen) {
@@ -4977,6 +5141,13 @@
     optionsLayerEl.hidden = false;
     drawOptions();
     placeOptions();
+    const section = typeof at === "string" && document.getElementById(at);
+    if (section) {
+      // The heading's own room above it is kept, as at the top of the first section.
+      const room = parseFloat(getComputedStyle(section.firstChild).marginTop) || 0;
+      optionsBodyEl.scrollTop +=
+        section.getBoundingClientRect().top - optionsBodyEl.getBoundingClientRect().top - room;
+    }
     optionsDialogEl.focus();
     vscode.postMessage({ type: "dataFiles" });
   }
@@ -5002,7 +5173,12 @@
 
   window.addEventListener("resize", placeOptions);
 
-  openOptionsEl.addEventListener("click", openOptions);
+  openOptionsEl.addEventListener("click", () => openOptions());
+
+  // The picker's own corner opens the options at what it picks: the buckets' look, or the
+  // tags.
+  tagPickerOptionsEl.addEventListener("pointerdown", (event) => event.preventDefault());
+  tagPickerOptionsEl.addEventListener("click", () => openOptions(pickerFolder === null ? "optTags" : "optBuckets"));
 
   optionsLayerEl.addEventListener("pointerdown", (event) => {
     if (event.target === optionsLayerEl) {
@@ -5181,32 +5357,41 @@
       optionChoice(["hidden", "shown"], showToc ? 1 : 0, (choice) => setShowToc(choice === 1))
     ]);
     optionRow(reading, "Headings beside the scrollbar", [
-      ...(barLevels.length ? [] : [make("span", "opt-dim cap", "off")]),
-      ...[1, 2, 3, 4, 5, 6].map((level) => {
-        const on = barLevels.includes(level);
-        const button = makeButton("H" + level, () => toggleBarLevel(level), "opt-button opt-toggle");
-        button.title = (on ? "Hide " : "Show ") + "#".repeat(level) + " headings beside the scrollbar";
-        button.classList.toggle("active", on);
-        button.setAttribute("aria-pressed", on ? "true" : "false");
-        return button;
-      })
+      optionChoice(MARKS_MODE_LABELS, MARKS_MODES.indexOf(marksMode), (choice) => setMarksMode(MARKS_MODES[choice]))
     ]);
-    optionRow(reading, "Scrollbar headings stay after scrolling", optionStepper(
-      marksLinger + " ms",
-      ["Hide the headings sooner after the page stops", "Keep the headings up longer after the page stops"],
-      () => stepMarksLinger(-MARKS_LINGER_STEP),
-      () => stepMarksLinger(MARKS_LINGER_STEP),
-      marksLinger <= MIN_MARKS_LINGER,
-      marksLinger >= MAX_MARKS_LINGER
-    ));
-    optionRow(reading, "Scroll before scrollbar headings show", optionStepper(
-      marksReach ? marksReach + " px" : "any",
-      ["Bring the headings up after a shorter scroll", "Bring the headings up only after a longer scroll"],
-      () => stepMarksReach(-MARKS_REACH_STEP),
-      () => stepMarksReach(MARKS_REACH_STEP),
-      marksReach <= 0,
-      marksReach >= MAX_MARKS_REACH
-    ));
+    if (marksMode !== "off") {
+      optionRow(reading, "Scrollbar headings shown", [rulesInput()]);
+      const hover = marksMode === "hover";
+      optionRow(reading, hover ? "Scrollbar headings stay after the pointer leaves" : "Scrollbar headings stay after scrolling", optionStepper(
+        marksLinger + " ms",
+        hover
+          ? ["Hide the headings sooner after the pointer leaves the scrollbar", "Keep the headings up longer after the pointer leaves the scrollbar"]
+          : ["Hide the headings sooner after the page stops", "Keep the headings up longer after the page stops"],
+        () => stepMarksLinger(-MARKS_LINGER_STEP),
+        () => stepMarksLinger(MARKS_LINGER_STEP),
+        marksLinger <= MIN_MARKS_LINGER,
+        marksLinger >= MAX_MARKS_LINGER
+      ));
+      if (hover) {
+        optionRow(reading, "Pointer distance from the scrollbar", optionStepper(
+          marksNear + " px",
+          ["Bring the headings up only with the pointer closer to the scrollbar", "Bring the headings up with the pointer further from the scrollbar"],
+          () => stepMarksNear(-MARKS_NEAR_STEP),
+          () => stepMarksNear(MARKS_NEAR_STEP),
+          marksNear <= MIN_MARKS_NEAR,
+          marksNear >= MAX_MARKS_NEAR
+        ));
+      } else {
+        optionRow(reading, "Scroll before scrollbar headings show", optionStepper(
+          marksReach ? marksReach + " px" : "any",
+          ["Bring the headings up after a shorter scroll", "Bring the headings up only after a longer scroll"],
+          () => stepMarksReach(-MARKS_REACH_STEP),
+          () => stepMarksReach(MARKS_REACH_STEP),
+          marksReach <= 0,
+          marksReach >= MAX_MARKS_REACH
+        ));
+      }
+    }
     optionRow(reading, "Auto size list height", [
       optionChoice(AUTO_LABELS, AUTO_SIZES.indexOf(autoSize), (choice) => setAutoSize(AUTO_SIZES[choice]))
     ]);
@@ -5283,14 +5468,16 @@
         persist();
       })
     ]);
-    optionRow(tree, "Tag bucket outline", [
+    const bucketBox = optionSection("Tag buckets");
+    bucketBox.id = "optBuckets";
+    optionRow(bucketBox, "Outline", [
       optionChoice(["off", "on"], bucketOutline ? 1 : 0, (choice) => {
         bucketOutline = choice === 1;
         drawTree();
         persist();
       })
     ]);
-    optionRow(tree, "Tag bucket background", optionStepper(
+    optionRow(bucketBox, "Background", optionStepper(
       bucketFill ? bucketFill + "%" : "off",
       ["Fainter tint of the tag's colour, none hides the background", "Stronger tint of the tag's colour"],
       () => stepBucketFill(-BUCKET_FILL_STEP),
@@ -5298,28 +5485,28 @@
       bucketFill <= 0,
       bucketFill >= 100
     ));
-    optionRow(tree, "Tag bucket heading placement", [
+    optionRow(bucketBox, "Heading placement", [
       optionChoice(BUCKET_HEADS, BUCKET_HEADS.indexOf(bucketHead), (choice) => {
         bucketHead = BUCKET_HEADS[choice];
         drawTree();
         persist();
       })
     ]);
-    optionRow(tree, "Tag bucket heading style", [
+    optionRow(bucketBox, "Heading style", [
       optionChoice(BUCKET_HEAD_STYLES, BUCKET_HEAD_STYLES.indexOf(bucketHeadStyle), (choice) => {
         bucketHeadStyle = BUCKET_HEAD_STYLES[choice];
         drawTree();
         persist();
       })
     ]);
-    optionRow(tree, "Tag bucket heading text", [
+    optionRow(bucketBox, "Heading text", [
       optionChoice(["text colour", "tag colour"], bucketHeadTint ? 1 : 0, (choice) => {
         bucketHeadTint = choice === 1;
         drawTree();
         persist();
       })
     ]);
-    optionRow(tree, "Tag bucket heading weight", [
+    optionRow(bucketBox, "Heading weight", [
       optionChoice(["normal", "bold"], bucketHeadBold ? 1 : 0, (choice) => {
         bucketHeadBold = choice === 1;
         drawTree();
@@ -5333,6 +5520,7 @@
     ]);
 
     const tagBox = optionSection("Tags");
+    tagBox.id = "optTags";
     const names = byOrder(Object.keys(tagColors));
     if (!names.length) {
       tagBox.appendChild(make("p", "notice", "No tags yet. Add one with + in a file's header."));
@@ -5393,6 +5581,37 @@
     for (const box of boxes) {
       box.style.width = widest + "px";
     }
+  }
+
+  // The rules for which headings are shown, written out. Each change is taken as it is
+  // typed, and a part that is no rule marks the box and is named in its title.
+  const RULES_TITLE =
+    "Rules split by commas. h1-3 shows every #, ## and ### heading; h1h5 every # and #####;" +
+    " h4:todo the #### headings with the word todo; a word alone looks at every level." +
+    " A word is matched whole, in any case; a * stands for any characters, as in plan*.";
+
+  function rulesInput() {
+    const input = make("input", "opt-text");
+    input.type = "text";
+    input.spellcheck = false;
+    input.value = marksRules;
+    input.placeholder = "h1-3, h4:todo";
+    const mark = () => {
+      const wrong = markRules(input.value).wrong;
+      input.classList.toggle("wrong", wrong.length > 0);
+      input.title = (wrong.length ? "Not a rule: " + wrong.join(", ") + "\n\n" : "") + RULES_TITLE;
+    };
+    mark();
+    input.addEventListener("input", () => {
+      setMarksRules(input.value);
+      mark();
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        input.blur();
+      }
+    });
+    return input;
   }
 
   // Above and below the block, then either side of it: two pairs of buttons in the room
