@@ -976,11 +976,19 @@
     return el;
   }
 
+  // How much of a faint bucket's colour the open file's row lays over its tint, in
+  // percent: a little more than twice the tint, so the row shows as strongly as the
+  // bucket asks.
+  function selectedFill() {
+    return Math.min(2 * bucketFill + 5, 100);
+  }
+
   // A tinted bucket over a dark theme can be light enough that the theme's light text no
-  // longer reads on it. Its colour as drawn, the tag's mixed into the side's background at
-  // the tint's strength, is worked out, and the bucket takes dark text wherever that
-  // stands out from it more than the theme's text does. Where the theme's text is dark
-  // already, nothing changes.
+  // longer reads on it, and its open file, lit more, lighter still. Their colours as
+  // drawn, the tag's mixed into the side's background at the tint's strength and at the
+  // open file's, are worked out, and each takes dark text wherever that stands out from
+  // it more than the theme's text does. Where the theme's text is dark already, nothing
+  // changes.
   function inkBuckets() {
     if (bucketFill <= 0) {
       return;
@@ -991,13 +999,18 @@
       return;
     }
     const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    const darkReads = (drawn) => contrast(drawn, 0) >= contrast(drawn, luminance(text));
+    const fill = bucketFill / 100;
+    // The open file's row lies over the bucket's tint, so the two shares add up.
+    const selected = 1 - (1 - fill) * (1 - selectedFill() / 100);
     for (const box of treeEl.querySelectorAll(".buckets.filled .bucket")) {
       const tag = rgbOf(getComputedStyle(box).getPropertyValue("--c"));
       if (!tag) {
         continue;
       }
-      const drawn = luminance(tag.map((value, i) => value * bucketFill / 100 + base[i] * (1 - bucketFill / 100)));
-      box.classList.toggle("ink-dark", contrast(drawn, 0) >= contrast(drawn, luminance(text)));
+      const drawn = (share) => luminance(tag.map((value, i) => value * share + base[i] * (1 - share)));
+      box.classList.toggle("ink-dark", darkReads(drawn(fill)));
+      box.classList.toggle("ink-dark-selected", darkReads(drawn(selected)));
     }
   }
 
@@ -1349,6 +1362,7 @@
     const grid = make("div", "buckets");
     grid.style.setProperty("--per-row", String(own.perRow));
     grid.style.setProperty("--fill", bucketFill + "%");
+    grid.style.setProperty("--sel-fill", selectedFill() + "%");
     grid.classList.toggle("outlined", bucketOutline);
     grid.classList.toggle("filled", bucketFill > 0);
     // Tinted, a bucket lights its rows in its own colour rather than the theme's: a faint
