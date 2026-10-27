@@ -800,12 +800,14 @@
   }
 
   // The host rewrites the root's colours and the body's classes when the theme or the
-  // font changes; the side's width follows the font.
+  // font changes; the side's width follows the font, and a tinted bucket's text the
+  // theme's colours.
   function followTheme() {
     capHeights.clear();
     treeLineKey = "";
     fitWidth();
     fitTags();
+    inkBuckets();
   }
 
   new MutationObserver(followTheme).observe(document.documentElement, {
@@ -922,6 +924,7 @@
     if (bucketHeadSize !== 100) {
       treeEl.querySelectorAll(".bucket-head").forEach(fitPillHeights);
     }
+    inkBuckets();
     if (autoSize === "tree") {
       fitSide();
     }
@@ -971,6 +974,54 @@
       el.appendChild(make("span", "root-label", dividerLabel === "path" ? root.path || root.name : root.name));
     }
     return el;
+  }
+
+  // A tinted bucket over a dark theme can be light enough that the theme's light text no
+  // longer reads on it. Its colour as drawn, the tag's mixed into the side's background at
+  // the tint's strength, is worked out, and the bucket takes dark text wherever that
+  // stands out from it more than the theme's text does. Where the theme's text is dark
+  // already, nothing changes.
+  function inkBuckets() {
+    if (bucketFill <= 0) {
+      return;
+    }
+    const text = rgbOf(getComputedStyle(treeEl).color);
+    const base = rgbOf(getComputedStyle(sideEl).backgroundColor);
+    if (!text || !base || luminance(text) < 0.5) {
+      return;
+    }
+    const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    for (const box of treeEl.querySelectorAll(".buckets.filled .bucket")) {
+      const tag = rgbOf(getComputedStyle(box).getPropertyValue("--c"));
+      if (!tag) {
+        continue;
+      }
+      const drawn = luminance(tag.map((value, i) => value * bucketFill / 100 + base[i] * (1 - bucketFill / 100)));
+      box.classList.toggle("ink-dark", contrast(drawn, 0) >= contrast(drawn, luminance(text)));
+    }
+  }
+
+  // "#rrggbb", "#rgb" or "rgb(r, g, b)" as three numbers from 0 to 255.
+  function rgbOf(value) {
+    const text = String(value || "").trim();
+    let match = /^#([0-9a-f]{6})$/i.exec(text);
+    if (match) {
+      return [0, 2, 4].map((at) => parseInt(match[1].slice(at, at + 2), 16));
+    }
+    match = /^#([0-9a-f]{3})$/i.exec(text);
+    if (match) {
+      return [...match[1]].map((digit) => parseInt(digit + digit, 16));
+    }
+    match = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(text);
+    return match ? [match[1], match[2], match[3]].map(Number) : null;
+  }
+
+  function luminance(rgb) {
+    const [r, g, b] = rgb.map((value) => {
+      const c = value / 255;
+      return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   }
 
   // How the dividers are drawn, from the options.

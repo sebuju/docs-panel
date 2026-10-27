@@ -2503,6 +2503,17 @@ img.single {
   --row-ring-selected-width: 1px;
 }
 
+/* A bucket light enough for it, over a dark theme, has dark text. Darkening its rows
+   would take from that text's contrast, so the row under the pointer is lightened. */
+.buckets.filled .bucket.ink-dark {
+  --row-hover: rgba(255, 255, 255, 0.28);
+  color: #000;
+}
+
+.buckets.filled .bucket.ink-dark .bucket-empty {
+  opacity: 0.6;
+}
+
 .buckets.filled .bucket .row:hover {
   background-color: var(--row-hover);
 }

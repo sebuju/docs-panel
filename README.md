@@ -338,6 +338,11 @@ on is black. From a tint of 55% up, where more of the colour would not show, the
 darkened instead: a little under the pointer, more for the open file, which has white
 text, with a white ring.
 
+Over a dark theme, a tint can make a bucket light enough that the theme's light text no
+longer reads on it. The bucket's colour as drawn is worked out, and the bucket takes black
+text wherever that stands out from it more than the theme's text does; its row under the
+pointer is then lightened instead of darkened. Light themes have dark text already.
+
 ## Search all docs
 
 Open with the search button in the tree's top right corner (shown while the pointer is in

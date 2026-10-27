@@ -295,12 +295,12 @@ module.exports = [
   // A tinted bucket lights its rows in its own colour: the open file, the file under the
   // pointer and, with the tree focused, the ring of the row the keys are on. A faint tint
   // adds colour; a strong one is darkened.
-  ...[15, 70].flatMap((fill) => ["dark-modern", "light-modern"].flatMap((theme) => [false, true].map((focused) => ({
+  ...[15, 55, 70].flatMap((fill) => ["dark-modern", "light-modern"].flatMap((theme) => [false, true].map((focused) => ({
     name: "buckets-lit-" + fill + (theme === "light-modern" ? "-light" : "") + (focused ? "-focused" : ""),
     theme: theme,
-    state: { bucketFill: fill, buckets: { plans: { tags: ["plan"], perRow: 1 } }, expanded: ["plans"] },
+    state: { bucketFill: fill, buckets: { plans: { tags: ["blocked", "plan"], perRow: 1, ordered: true } }, expanded: ["plans"] },
     hover: true,
-    clip: { x: 0, y: 30, width: 300, height: 150 },
+    clip: { x: 0, y: 30, width: 300, height: 190 },
     act: async (page) => {
       if (focused) {
         await page.focus("#tree");
