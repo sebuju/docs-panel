@@ -6,7 +6,10 @@ compared with an earlier version, from the command line.
 `build.js` builds the page the way the extension does, from a checkout's own
 `src/panel.ts`, `media/main.js` and `media/main.css`, and puts in a stand-in for the
 extension host that answers the page's messages from `fixture/`: the docs folder in
-`fixture/docs`, and the tags, colours and data files in `fixture/marks.json`. The theme
+`fixture/docs`, shown as the workspace root so the scenes' paths are paths in it, and the
+tags, colours and data files in `fixture/marks.json`. A scene's state can name `roots`,
+folders of `fixture/` such as `["docs", "team"]`, to show several root folders; the paths
+are then from `fixture/`, as `docs/plans/roadmap.md`. The theme
 colours VS Code hands a webview are in `themes.js`.
 
 Needs Playwright with Chromium, from the project or installed globally

@@ -13,6 +13,7 @@ import {
   prune,
   pruneTags,
   readsLedger,
+  rebaseReads,
   rekey,
   rekeyFolders,
   renameTag,
@@ -26,6 +27,9 @@ import {
   setTagStyle,
   setTags,
   marksLedger,
+  mergeMarks,
+  carry,
+  usedTags,
   styleOf,
   TagStyle,
   MARKS_FILE,
@@ -81,6 +85,20 @@ const TABLE_ALIGNS: TableAlign[] = ["top", "center", "bottom"];
 const TABLE_HEADS = ["none", "grey", "red", "orange", "yellow", "green", "blue", "purple", "cyan", "magenta"];
 
 const REF_SCOPES: RefScope[] = ["off", "docs", "all"];
+
+// How the divider over each docs folder is drawn, when there are several: what it is
+// labelled with, where the label stands, and the line drawn beside it.
+export type DividerLabel = "name" | "path" | "none";
+const DIVIDER_LABELS: DividerLabel[] = ["name", "path", "none"];
+export type DividerAlign = "left" | "center" | "right";
+const DIVIDER_ALIGNS: DividerAlign[] = ["left", "center", "right"];
+export type DividerLine = "solid" | "dashed" | "dotted" | "double" | "none";
+const DIVIDER_LINES: DividerLine[] = ["solid", "dashed", "dotted", "double", "none"];
+const DIVIDER_COLORS = ["none", "red", "orange", "yellow", "green", "blue", "purple", "cyan", "magenta", "grey"];
+
+// The settings file names every path from the workspace since there can be several docs
+// folders; one without this was written when they were from the one docs folder.
+const PATHS_FROM_WORKSPACE = "workspace";
 
 // When the headings beside the reading pane's bar come up: never, while the page
 // scrolls, or while the pointer is near the bar.
@@ -142,6 +160,20 @@ export interface PanelState {
   bucketHeadBold: boolean;
   bucketHead: BucketHead;
   bucketHeadStyle: BucketHeadStyle;
+  // The size of a bucket's heading, in percent of the tree's text.
+  bucketHeadSize: number;
+  // The divider over each docs folder: its label, where that stands, its size in percent
+  // of the tree's text, bold and in capitals or not, its colour, the line beside it and
+  // how thick that is, in px, and the room left above it, in px.
+  dividerLabel: DividerLabel;
+  dividerAlign: DividerAlign;
+  dividerSize: number;
+  dividerBold: boolean;
+  dividerCaps: boolean;
+  dividerColor: string;
+  dividerLine: DividerLine;
+  dividerWidth: number;
+  dividerGap: number;
   tableAlign: TableAlign;
   tableHead: string;
   // Where the files that name the open one are looked for, if anywhere.
@@ -196,6 +228,16 @@ const DEFAULT_STATE: PanelState = {
   bucketHeadBold: false,
   bucketHead: "inside",
   bucketHeadStyle: "pill",
+  bucketHeadSize: 100,
+  dividerLabel: "name",
+  dividerAlign: "left",
+  dividerSize: 85,
+  dividerBold: true,
+  dividerCaps: true,
+  dividerColor: "none",
+  dividerLine: "solid",
+  dividerWidth: 1,
+  dividerGap: 8,
   tableAlign: "center",
   tableHead: "grey",
   refsScope: "docs",
@@ -257,9 +299,12 @@ interface DataFile {
   uri: vscode.Uri;
 }
 
+// One of the folders the panel shows, each under a divider of its own when there are more
+// than one. None lies inside another, so a path from the workspace is in one of them at most.
 interface Root {
   uri: vscode.Uri;
-  workspace: vscode.Uri;
+  // Its path from the workspace, "" when it is the workspace itself.
+  rel: string;
   label: string;
 }
 
@@ -267,10 +312,11 @@ export class DocsPanel {
   private static current: DocsPanel | undefined;
 
   private readonly disposables: vscode.Disposable[] = [];
-  private watcher: vscode.Disposable | undefined;
+  private watchers: vscode.Disposable[] = [];
   private sessions: vscode.Disposable | undefined;
   private sessionsTimer: NodeJS.Timeout | undefined;
-  private root: Root | undefined;
+  private workspace: vscode.Uri | undefined;
+  private roots: Root[] = [];
   private state: PanelState;
   private ready = false;
   private readonly corpus = new Corpus();
@@ -317,7 +363,7 @@ export class DocsPanel {
     this.state = normalizeState(undefined);
     this.links = new Links(this.build);
     this.refs = new Refs(this.build, () => this.refsSoon());
-    this.root = resolveRoot();
+    ({ workspace: this.workspace, roots: this.roots } = resolveRoots());
     this.settingsLoaded = this.loadSettings();
 
     this.panel.webview.options = {
@@ -354,42 +400,180 @@ export class DocsPanel {
   // A stat each time round; the file is only read when its stamp has moved, and the page
   // only hears of it when what it holds is not what was sent last.
   private async checkMarks(): Promise<void> {
-    if (!this.ready || !this.root) {
+    if (!this.ready || !this.roots.length) {
       return;
     }
-    const spec = marksLedger(this.root.uri);
-    let stamp = "";
-    try {
-      const stat = await vscode.workspace.fs.stat(spec.store);
-      stamp = `${stat.mtime}:${stat.size}`;
-    } catch {
-      stamp = "none";
+    const stamps = [];
+    for (const root of this.roots) {
+      try {
+        const stat = await vscode.workspace.fs.stat(marksLedger(root.uri).store);
+        stamps.push(`${stat.mtime}:${stat.size}`);
+      } catch {
+        stamps.push("none");
+      }
     }
+    const stamp = stamps.join("|");
     if (stamp === this.marksStamp) {
       return;
     }
     this.marksStamp = stamp;
-    this.postMarks(await load(spec));
+    this.postMarks(await this.loadMarks());
   }
 
+  // Every path the page and the panel's state name is from the workspace, so each docs
+  // folder's files keep their own paths whatever other folders are shown beside them.
   private get base(): vscode.Uri | undefined {
-    return this.root?.uri;
+    return this.workspace;
   }
 
-  private get ledgers(): LedgerSpec[] {
-    return this.root ? [marksLedger(this.root.uri), readsLedger(this.root.workspace, this.root.uri)] : [];
+  // The docs folder a path from the workspace is in, if any.
+  private rootOf(path: string): Root | undefined {
+    return this.roots.find((root) => !root.rel || path === root.rel || path.startsWith(`${root.rel}/`));
+  }
+
+  // A path from the workspace as a path from its docs folder, which is how that folder's
+  // marks ledger keys it.
+  private inner(root: Root, path: string): string {
+    return !root.rel ? path : path === root.rel ? "" : path.slice(root.rel.length + 1);
+  }
+
+  private uriOf(path: string): vscode.Uri {
+    return path ? vscode.Uri.joinPath(this.workspace!, ...path.split("/")) : this.workspace!;
+  }
+
+  private get reads(): LedgerSpec | undefined {
+    return this.workspace ? readsLedger(this.workspace, this.roots.map((root) => root.rel)) : undefined;
+  }
+
+  // The marks ledger a path's entry lives in, with the path as that ledger keys it.
+  private marksOf(path: string): { spec: LedgerSpec; key: string } | undefined {
+    const root = this.rootOf(path);
+    return root ? { spec: marksLedger(root.uri), key: this.inner(root, path) } : undefined;
+  }
+
+  // Every docs folder's marks, as the page is shown them: one ledger, keyed from the workspace.
+  private async loadMarks(): Promise<Ledger> {
+    const ledgers = await Promise.all(this.roots.map((root) => load(marksLedger(root.uri))));
+    return mergeMarks(ledgers, this.roots.map((root) => root.rel));
+  }
+
+  // A change to a tag itself, not to a file, is made in every docs folder's ledger, so the
+  // tag stays one tag wherever it is used.
+  private async everyMarks(edit: (spec: LedgerSpec) => Promise<unknown>): Promise<void> {
+    for (const root of this.roots) {
+      await edit(marksLedger(root.uri));
+    }
+    this.postMarks(await this.loadMarks());
+  }
+
+  // A file or folder moved, renamed or trashed from the panel takes its marks and its read
+  // mark along: "files" pairs the old and new path, from the workspace, of every file that
+  // moved, and "folder" those of the folder that did, if one did.
+  private async rekeyAll(files: [string, string][], folder?: [string, string]): Promise<void> {
+    const reads = this.reads;
+    if (reads) {
+      for (const [from, to] of files) {
+        await rekey(reads, from, to);
+      }
+    }
+    const [from, to] = folder ?? files[0] ?? [];
+    const source = from !== undefined ? this.rootOf(from) : undefined;
+    const target = to !== undefined ? this.rootOf(to) : undefined;
+    if (!source || !target) {
+      return;
+    }
+    const inSource = (path: string) => this.inner(source, path);
+    const inTarget = (path: string) => this.inner(target, path);
+    if (source === target) {
+      const spec = marksLedger(source.uri);
+      for (const [a, b] of files) {
+        await rekey(spec, inSource(a), inTarget(b));
+      }
+      if (folder) {
+        await rekeyFolders(spec, inSource(folder[0]), inTarget(folder[1]));
+      }
+      return;
+    }
+    await carry(
+      marksLedger(source.uri),
+      marksLedger(target.uri),
+      files.map(([a, b]) => [inSource(a), inTarget(b)]),
+      folder ? [inSource(folder[0]), inTarget(folder[1])] : undefined
+    );
+  }
+
+  private isRoot(path: string): boolean {
+    return this.roots.some((root) => root.rel === path);
+  }
+
+  // A folder picked to show beside the others is written to the setting, and the panel
+  // reads it back from there like any other change to it. One that is a folder already
+  // shown, lies inside one, or holds one is refused: its files would be shown twice.
+  private async addRoot(): Promise<void> {
+    const workspace = this.workspace;
+    if (!workspace) {
+      return;
+    }
+    const picked = (
+      await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        defaultUri: workspace,
+        openLabel: "Add root folder",
+        title: "Add a root folder to Docs Panel"
+      })
+    )?.[0];
+    if (!picked) {
+      return;
+    }
+    const rel = relativeTo(workspace, picked);
+    if (picked.scheme !== workspace.scheme || rel.startsWith("/")) {
+      void vscode.window.showErrorMessage(`Docs Panel: ${picked.fsPath} is not inside the workspace.`);
+      return;
+    }
+    const named = (path: string) => path || "the workspace root";
+    const clash = this.roots.find((root) => overlaps(root.rel, rel));
+    if (clash) {
+      const why =
+        clash.rel === rel
+          ? `${named(rel)} is already a root folder.`
+          : !clash.rel || rel.startsWith(`${clash.rel}/`)
+            ? `${named(rel)} is inside ${named(clash.rel)}, which is already a root folder.`
+            : `${named(rel)} holds ${clash.rel}, which is already a root folder.`;
+      void vscode.window.showErrorMessage(`Docs Panel: ${why}`);
+      return;
+    }
+    await this.writeRoots([...this.roots.map((root) => root.rel), rel]);
+  }
+
+  // The last root folder cannot go: the panel would have nothing to show.
+  private async removeRoot(path: string): Promise<void> {
+    if (this.roots.length < 2 || !this.isRoot(path)) {
+      return;
+    }
+    await this.writeRoots(this.roots.filter((root) => root.rel !== path).map((root) => root.rel));
+  }
+
+  // One folder is written as the plain string the setting always held, so it still means
+  // the same to an older version of the panel.
+  private async writeRoots(rels: string[]): Promise<void> {
+    const values = rels.map((rel) => rel || ".");
+    try {
+      await vscode.workspace
+        .getConfiguration("docsPanel", this.workspace)
+        .update("folder", values.length === 1 ? values[0] : values, vscode.ConfigurationTarget.WorkspaceFolder);
+    } catch (error) {
+      this.report("could not change the root folders", error);
+    }
   }
 
   private resourceRoots(): vscode.Uri[] {
-    const roots = [vscode.Uri.joinPath(this.context.extensionUri, "media")];
-    if (this.root) {
-      roots.push(this.root.uri);
-    }
-    return roots;
+    return [vscode.Uri.joinPath(this.context.extensionUri, "media"), ...this.roots.map((root) => root.uri)];
   }
 
   private reroot(): void {
-    this.root = resolveRoot();
+    ({ workspace: this.workspace, roots: this.roots } = resolveRoots());
     this.panel.webview.options = {
       enableScripts: true,
       localResourceRoots: this.resourceRoots()
@@ -403,16 +587,12 @@ export class DocsPanel {
   }
 
   private startWatcher(): void {
-    this.watcher?.dispose();
-    this.watcher = undefined;
-    const base = this.base;
-    if (!base) {
-      return;
-    }
-    this.watcher = watchRoot(base, {
+    this.watchers.forEach((watcher) => watcher.dispose());
+    this.watchers = this.roots.map((root) => watchRoot(root.uri, {
       onTreeChange: () => this.sendTree().catch((error) => this.report("could not read the docs folder", error)),
-      onFileChange: (path) => {
-        if (path === MARKS_FILE) {
+      onFileChange: (inner) => {
+        const path = root.rel ? `${root.rel}/${inner}` : inner;
+        if (inner === MARKS_FILE) {
           void this.checkMarks();
         } else if (path === this.state.selected) {
           void this.markRead(path);
@@ -422,7 +602,7 @@ export class DocsPanel {
           this.refsSoon();
         }
       }
-    });
+    }));
   }
 
   // A live session appends to its log constantly, so the writes are let settle before the
@@ -430,11 +610,11 @@ export class DocsPanel {
   private startSessionWatcher(): void {
     this.sessions?.dispose();
     this.sessions = undefined;
-    if (!this.root) {
+    if (!this.workspace) {
       return;
     }
     const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(vscode.Uri.file(sessionsDir(this.root.workspace)), "*.jsonl")
+      new vscode.RelativePattern(vscode.Uri.file(sessionsDir(this.workspace)), "*.jsonl")
     );
     const schedule = () => {
       if (!this.state.mentionLines) {
@@ -454,7 +634,7 @@ export class DocsPanel {
   // Extensions are lower-cased on the way out so the setting can be written either way.
   private sendPrefixes(): void {
     const setting = vscode.workspace
-      .getConfiguration("docsPanel", this.root?.workspace)
+      .getConfiguration("docsPanel", this.workspace)
       .get<Record<string, unknown>>("copyPrefix", {});
     const prefixes: Record<string, string> = {};
     for (const [type, value] of Object.entries(setting ?? {})) {
@@ -467,13 +647,24 @@ export class DocsPanel {
 
   // The file is the only place the settings are kept: without one the panel starts from
   // its defaults.
+  //
+  // Files written before there could be several docs folders name every file from the one
+  // there was. They are found by what they lack, the settings a "paths" of "workspace" and
+  // the read marks a version of 2, and their paths are put behind that folder's, which is
+  // the first one now, once; they are written back so on the next save.
   private async loadSettings(): Promise<void> {
-    if (!this.root) {
+    if (!this.workspace) {
       return;
     }
-    const saved = await loadSettings(this.root.workspace);
+    const prefix = this.roots[0]?.rel ?? "";
+    await rebaseReads(this.reads!, prefix);
+    const saved = await loadSettings(this.workspace);
     if (saved) {
       this.state = normalizeState(saved);
+      if ((saved as { paths?: unknown }).paths !== PATHS_FROM_WORKSPACE) {
+        this.state = rebaseState(this.state, prefix);
+        this.saveSettingsSoon();
+      }
     }
   }
 
@@ -486,12 +677,12 @@ export class DocsPanel {
   private saveSettingsNow(): void {
     clearTimeout(this.settingsTimer);
     this.settingsTimer = undefined;
-    const workspace = this.root?.workspace;
+    const workspace = this.workspace;
     if (!workspace) {
       return;
     }
     this.settingsWrite = this.settingsWrite
-      .then(() => saveSettings(workspace, this.state))
+      .then(() => saveSettings(workspace, { ...this.state, paths: PATHS_FROM_WORKSPACE }))
       .then(
         () => {
           this.settingsFailed = false;
@@ -513,15 +704,26 @@ export class DocsPanel {
   }
 
   private async sendMentions(): Promise<void> {
-    if (!this.ready || !this.root) {
+    if (!this.ready || !this.workspace) {
       return;
     }
     if (!this.state.mentionLines) {
       this.post({ type: "mentions", mentions: {} });
       return;
     }
-    const hits = await refresh(this.root.workspace, this.build);
-    this.post({ type: "mentions", mentions: match(hits, await listFiles(this.root.uri)) });
+    const hits = await refresh(this.workspace, this.build);
+    this.post({ type: "mentions", mentions: match(hits, await this.allFiles()) });
+  }
+
+  // Every file of every docs folder, trashed ones too, by its path from the workspace.
+  private async allFiles(): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const root of this.roots) {
+      for (const path of await listFiles(root.uri)) {
+        out.add(root.rel ? `${root.rel}/${path}` : path);
+      }
+    }
+    return out;
   }
 
   private async onMessage(message: any): Promise<void> {
@@ -620,14 +822,16 @@ export class DocsPanel {
         await this.tagShort(String(message.name));
         return;
       case "tagStyle":
-        if (this.root) {
-          this.postMarks(await setTagStyle(marksLedger(this.root.uri), String(message.name), message.style));
-        }
+        await this.everyMarks((spec) => setTagStyle(spec, String(message.name), message.style));
         return;
       case "tagOrder":
-        if (this.root) {
-          this.postMarks(await setTagOrder(marksLedger(this.root.uri), message.names));
-        }
+        await this.everyMarks((spec) => setTagOrder(spec, message.names));
+        return;
+      case "addRoot":
+        await this.addRoot();
+        return;
+      case "removeRoot":
+        await this.removeRoot(String(message.path ?? ""));
         return;
       case "openWorkspace":
         await this.openWorkspaceFile(String(message.path));
@@ -668,29 +872,34 @@ export class DocsPanel {
   }
 
   private async tags(relPath: string, value: unknown): Promise<void> {
-    if (!this.root || !Array.isArray(value)) {
+    const at = this.marksOf(relPath);
+    if (!at || !Array.isArray(value)) {
       return;
     }
-    this.postMarks(await setTags(marksLedger(this.root.uri), relPath, value));
+    await setTags(at.spec, at.key, value, (await this.loadMarks()).tags);
+    this.postMarks(await this.loadMarks());
   }
 
   private async color(relPath: string, value: unknown, dir: boolean): Promise<void> {
-    if (!this.root) {
+    const at = this.marksOf(relPath);
+    // A docs folder itself has no colour: it is a divider, not a row.
+    if (!at || !at.key) {
       return;
     }
     const color = isColor(value) ? value : null;
-    this.postMarks(await setColor(marksLedger(this.root.uri), relPath, color, dir));
+    await setColor(at.spec, at.key, color, dir);
+    this.postMarks(await this.loadMarks());
   }
 
   private async tagColor(name: string, value: unknown): Promise<void> {
-    if (!this.root || !isTagColor(value)) {
+    if (!isTagColor(value)) {
       return;
     }
-    this.postMarks(await setTagColor(marksLedger(this.root.uri), name, value));
+    await this.everyMarks((spec) => setTagColor(spec, name, value));
   }
 
   private async renameTag(name: string): Promise<void> {
-    if (!this.root) {
+    if (!this.roots.length) {
       return;
     }
     const next = await vscode.window.showInputBox({
@@ -711,16 +920,12 @@ export class DocsPanel {
       }
     }
     this.post({ type: "tagRenamed", from: name, to });
-    this.postMarks(await renameTag(marksLedger(this.root.uri), name, next));
+    await this.everyMarks((spec) => renameTag(spec, name, next));
   }
 
   // The letters a tag shows where its name does not fit; two tags never share them.
   private async tagShort(name: string): Promise<void> {
-    if (!this.root) {
-      return;
-    }
-    const spec = marksLedger(this.root.uri);
-    const ledger = await load(spec);
+    const ledger = await this.loadMarks();
     if (!ledger.tags[name]) {
       return;
     }
@@ -743,15 +948,11 @@ export class DocsPanel {
     if (next === undefined) {
       return;
     }
-    this.postMarks(await setTagShort(spec, name, next));
+    await this.everyMarks((spec) => setTagShort(spec, name, next));
   }
 
   private async deleteTag(name: string): Promise<void> {
-    if (!this.root) {
-      return;
-    }
-    const spec = marksLedger(this.root.uri);
-    const used = Object.values((await load(spec)).files).filter((entry) =>
+    const used = Object.values((await this.loadMarks()).files).filter((entry) =>
       entry.tags.includes(name)
     ).length;
     if (used) {
@@ -764,16 +965,15 @@ export class DocsPanel {
         return;
       }
     }
-    this.postMarks(await deleteTag(spec, name));
+    await this.everyMarks((spec) => deleteTag(spec, name));
   }
 
+  // A tag goes when no file in any docs folder has it.
   private async pruneTags(): Promise<void> {
-    if (!this.root) {
-      return;
-    }
-    const { ledger, pruned } = await pruneTags(marksLedger(this.root.uri));
-    this.postMarks(ledger);
-    this.post({ type: "prunedTags", names: pruned });
+    const before = await this.loadMarks();
+    const used = usedTags(before);
+    await this.everyMarks((spec) => pruneTags(spec, used));
+    this.post({ type: "prunedTags", names: Object.keys(before.tags).filter((name) => !used.has(name)) });
   }
 
   // One message carries everything the marks ledger holds, since the tree draws it all
@@ -817,7 +1017,7 @@ export class DocsPanel {
 
   // A name in a page that is a file of the workspace but not of the docs opens beside.
   private async openWorkspaceFile(relPath: string): Promise<void> {
-    const workspace = this.root?.workspace;
+    const workspace = this.workspace;
     if (!workspace || relPath.split("/").includes("..")) {
       return;
     }
@@ -835,21 +1035,21 @@ export class DocsPanel {
   }
 
   private async markRead(relPath: string): Promise<void> {
-    if (!this.root) {
+    const reads = this.reads;
+    if (!reads || !this.rootOf(relPath)) {
       return;
     }
-    this.postReads(
-      await setStatus(readsLedger(this.root.workspace, this.root.uri), relPath, READ)
-    );
+    this.postReads(await setStatus(reads, relPath, READ));
   }
 
   // A file edited behind the panel's back is no longer the one that was read. The open
   // file is exempt: it is on screen, so the change is being watched as it happens.
   private async unread(relPath: string): Promise<void> {
-    if (!this.root) {
+    const reads = this.reads;
+    if (!reads) {
       return;
     }
-    const ledger = await invalidate(readsLedger(this.root.workspace, this.root.uri), relPath);
+    const ledger = await invalidate(reads, relPath);
     if (ledger) {
       this.postReads(ledger);
     }
@@ -857,7 +1057,7 @@ export class DocsPanel {
 
   private async save(relPath: string, text: string): Promise<void> {
     const base = this.base;
-    if (!base) {
+    if (!base || !this.rootOf(relPath)) {
       return;
     }
     const uri = vscode.Uri.joinPath(base, ...relPath.split("/"));
@@ -877,7 +1077,7 @@ export class DocsPanel {
   // is always what the file holds.
   private async reorderRows(relPath: string, shown: string, rows: unknown, order: unknown): Promise<void> {
     const base = this.base;
-    if (!base) {
+    if (!base || !this.rootOf(relPath)) {
       return;
     }
     const uri = vscode.Uri.joinPath(base, ...relPath.split("/"));
@@ -900,7 +1100,7 @@ export class DocsPanel {
   // The file keeps its folder: only the name is asked for, so a rename cannot move a file.
   private async rename(relPath: string): Promise<void> {
     const base = this.base;
-    if (!base || !this.root) {
+    if (!base || !this.rootOf(relPath) || this.isRoot(relPath)) {
       return;
     }
     const parts = relPath.split("/");
@@ -935,13 +1135,11 @@ export class DocsPanel {
         to,
         { overwrite: false }
       );
-      for (const spec of this.ledgers) {
-        await rekey(spec, relPath, toPath);
-        for (const inner of await listFiles(to)) {
-          await rekey(spec, `${relPath}/${inner}`, `${toPath}/${inner}`);
-        }
-        await rekeyFolders(spec, relPath, toPath);
-      }
+      const inner = [...(await listFiles(to))];
+      await this.rekeyAll(
+        [[relPath, toPath], ...inner.map((path): [string, string] => [`${relPath}/${path}`, `${toPath}/${path}`])],
+        [relPath, toPath]
+      );
       this.repin(relPath, toPath);
       // Renaming a folder from the tree leaves the reading pane alone unless the open
       // file was inside it, in which case its path is gone and the pane is cleared.
@@ -963,22 +1161,18 @@ export class DocsPanel {
 
   // The trash is a folder like any other, so a move is only the prefix going on or off.
   // A file comes back from a folder's own .trash the same way, to the folder holding it.
+  // Each docs folder has a trash of its own, so a file never leaves its folder this way.
   private async shift(relPath: string, direction: "trash" | "restore"): Promise<void> {
-    const root = this.root!.uri;
-    const parts = (direction === "restore" ? untrash(relPath) : relPath).split("/");
-    const name = parts.pop() ?? relPath;
-    const anchor = direction === "trash" ? vscode.Uri.joinPath(root, TRASH_DIR) : root;
+    const root = this.rootOf(relPath)!;
+    const inner = this.inner(root, relPath);
+    const parts = (direction === "restore" ? untrash(inner) : inner).split("/");
+    const name = parts.pop() ?? inner;
+    const anchor = direction === "trash" ? vscode.Uri.joinPath(root.uri, TRASH_DIR) : root.uri;
 
     const target = await makeDirectory(anchor, parts);
     const to = await freeName(target, name);
-    await vscode.workspace.fs.rename(
-      vscode.Uri.joinPath(root, ...relPath.split("/")),
-      to,
-      { overwrite: false }
-    );
-    for (const spec of this.ledgers) {
-      await rekey(spec, relPath, relativeTo(root, to));
-    }
+    await vscode.workspace.fs.rename(this.uriOf(relPath), to, { overwrite: false });
+    await this.rekeyAll([[relPath, relativeTo(this.workspace!, to)]]);
   }
 
   // A folder cannot be trashed whole: every file in it is moved on its own so each keeps
@@ -988,8 +1182,8 @@ export class DocsPanel {
     direction: "trash" | "restore",
     dir: boolean
   ): Promise<void> {
-    const root = this.root?.uri;
-    if (!root || isTrashed(relPath) !== (direction === "restore")) {
+    const root = this.rootOf(relPath);
+    if (!root || this.isRoot(relPath) || isTrashed(this.inner(root, relPath)) !== (direction === "restore")) {
       return;
     }
     try {
@@ -1006,34 +1200,39 @@ export class DocsPanel {
     direction: "trash" | "restore",
     dir: boolean
   ): Promise<void> {
-    const root = this.root!.uri;
     if (!dir) {
       await this.shift(relPath, direction);
       return;
     }
-    const uri = vscode.Uri.joinPath(root, ...relPath.split("/"));
+    const uri = this.uriOf(relPath);
     for (const inner of await listFiles(uri)) {
       await this.shift(`${relPath}/${inner}`, direction);
     }
     await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
     // The files land at the same path on the other side of the trash, and the
     // folders they make there answer to the colours the originals had.
-    const to = direction === "trash" ? `${TRASH_DIR}/${relPath}` : untrash(relPath);
-    for (const spec of this.ledgers) {
-      await rekeyFolders(spec, relPath, to);
-    }
+    const root = this.rootOf(relPath)!;
+    const inner = this.inner(root, relPath);
+    const to = direction === "trash" ? `${TRASH_DIR}/${inner}` : untrash(inner);
+    await this.rekeyAll([], [relPath, root.rel ? `${root.rel}/${to}` : to]);
   }
 
-  // "at" names a bin: the folder its files were trashed from, and "" for the whole trash.
-  // A folder's bin is its part of the trash and, when it has one, its own .trash too.
+  // "at" names a bin: the folder its files were trashed from, and a docs folder for the
+  // whole of its trash. A folder's bin is its part of the trash and, when it has one, its
+  // own .trash too.
   private async binEntries(at: string): Promise<{ bin: string; entries: [string, boolean][] }[]> {
-    const bins = at ? [`${TRASH_DIR}/${at}`, `${at}/${TRASH_DIR}`] : [TRASH_DIR];
+    const root = this.rootOf(at);
+    if (!root) {
+      return [];
+    }
+    const inner = this.inner(root, at);
+    const bins = (inner ? [`${TRASH_DIR}/${inner}`, `${inner}/${TRASH_DIR}`] : [TRASH_DIR]).map((bin) =>
+      root.rel ? `${root.rel}/${bin}` : bin
+    );
     const out = [];
     for (const bin of bins) {
       try {
-        const listed = await vscode.workspace.fs.readDirectory(
-          vscode.Uri.joinPath(this.root!.uri, ...bin.split("/"))
-        );
+        const listed = await vscode.workspace.fs.readDirectory(this.uriOf(bin));
         out.push({
           bin,
           entries: listed.map(([name, type]): [string, boolean] => [
@@ -1051,7 +1250,7 @@ export class DocsPanel {
   // Everything in a bin goes back where it came from, and a folder's bin, emptied, goes
   // with it; the trash itself stays for the next file.
   private async restoreAll(at: string): Promise<void> {
-    if (!this.root) {
+    if (!this.workspace) {
       return;
     }
     for (const { bin, entries } of await this.binEntries(at)) {
@@ -1059,8 +1258,8 @@ export class DocsPanel {
         for (const [name, dir] of entries) {
           await this.transfer(`${bin}/${name}`, "restore", dir);
         }
-        if (at) {
-          await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.root.uri, ...bin.split("/")), {
+        if (!this.isRoot(at)) {
+          await vscode.workspace.fs.delete(this.uriOf(bin), {
             recursive: true,
             useTrash: false
           });
@@ -1074,15 +1273,20 @@ export class DocsPanel {
   }
 
   private async emptyTrash(at: string): Promise<void> {
-    if (!this.root) {
+    if (!this.workspace) {
       return;
     }
     const bins = (await this.binEntries(at)).filter(({ entries }) => entries.length);
     if (!bins.length) {
       return;
     }
+    const whole = this.isRoot(at);
     const answer = await vscode.window.showWarningMessage(
-      at ? `Delete everything trashed from ${at} for good?` : "Delete everything in the trash for good?",
+      !whole
+        ? `Delete everything trashed from ${at} for good?`
+        : this.roots.length > 1
+          ? `Delete everything in the trash of ${at || "the workspace root"} for good?`
+          : "Delete everything in the trash for good?",
       { modal: true, detail: "This cannot be undone." },
       "Delete all"
     );
@@ -1091,9 +1295,9 @@ export class DocsPanel {
     }
     for (const { bin, entries } of bins) {
       try {
-        const target = at ? [bin] : entries.map(([name]) => `${bin}/${name}`);
+        const target = !whole ? [bin] : entries.map(([name]) => `${bin}/${name}`);
         for (const path of target) {
-          await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.root.uri, ...path.split("/")), {
+          await vscode.workspace.fs.delete(this.uriOf(path), {
             recursive: true,
             useTrash: false
           });
@@ -1107,8 +1311,7 @@ export class DocsPanel {
   }
 
   private async remove(relPath: string, dir: boolean): Promise<void> {
-    const root = this.root?.uri;
-    if (!root) {
+    if (!this.rootOf(relPath) || this.isRoot(relPath)) {
       return;
     }
     const name = relPath.split("/").pop() ?? relPath;
@@ -1121,7 +1324,7 @@ export class DocsPanel {
       return;
     }
     try {
-      await vscode.workspace.fs.delete(vscode.Uri.joinPath(root, ...relPath.split("/")), {
+      await vscode.workspace.fs.delete(this.uriOf(relPath), {
         recursive: true,
         useTrash: false
       });
@@ -1132,10 +1335,10 @@ export class DocsPanel {
     }
   }
 
-  // "at" is the folder the new entry lands in, relative to the docs root; "" is the root.
+  // "at" is the folder the new entry lands in, from the workspace; a docs folder itself
+  // when it is one of those.
   private async create(kind: "file" | "folder", at: string): Promise<void> {
-    const base = this.base;
-    if (!base) {
+    if (!this.workspace || !this.rootOf(at)) {
       return;
     }
     const value = kind === "file" ? "untitled.md" : "";
@@ -1150,8 +1353,7 @@ export class DocsPanel {
     if (!name) {
       return;
     }
-    const folder = at ? vscode.Uri.joinPath(base, ...at.split("/")) : base;
-    const uri = vscode.Uri.joinPath(folder, name);
+    const uri = vscode.Uri.joinPath(this.uriOf(at), name);
     const path = at ? `${at}/${name}` : name;
     try {
       await vscode.workspace.fs.stat(uri);
@@ -1180,7 +1382,7 @@ export class DocsPanel {
   // The copy keeps the folder it came from and takes the next free name beside it.
   private async clone(relPath: string, dir: boolean): Promise<void> {
     const base = this.base;
-    if (!base) {
+    if (!base || !this.rootOf(relPath) || this.isRoot(relPath)) {
       return;
     }
     const parts = relPath.split("/");
@@ -1208,17 +1410,25 @@ export class DocsPanel {
     }
   }
 
-  // A drag drops one entry into one folder; "" is the root. The ledger keys of a folder's
-  // files are read before the move, because afterwards the old paths are gone. A file
-  // dropped in one of the folder's tag buckets takes the bucket's tag as it lands, or, in
-  // its untagged bucket, loses all its tags.
+  // A drag drops one entry into one folder, from one docs folder into another too. The
+  // ledger keys of a folder's files are read before the move, because afterwards the old
+  // paths are gone. A file dropped in one of the folder's tag buckets takes the bucket's
+  // tag as it lands, or, in its untagged bucket, loses all its tags.
   private async relocate(from: string, to: string, dir: boolean, tag = "", untag = false): Promise<void> {
-    const root = this.root?.uri;
+    const root = this.workspace;
     const parent = from.split("/").slice(0, -1).join("/");
-    if (!root || to === parent || to === from || to.startsWith(`${from}/`)) {
+    if (
+      !root ||
+      !this.rootOf(from) ||
+      this.isRoot(from) ||
+      !this.rootOf(to) ||
+      to === parent ||
+      to === from ||
+      to.startsWith(`${from}/`)
+    ) {
       return;
     }
-    const fromUri = vscode.Uri.joinPath(root, ...from.split("/"));
+    const fromUri = this.uriOf(from);
     const name = from.split("/").pop() ?? from;
     try {
       const inner = dir ? [...(await listFiles(fromUri))] : [];
@@ -1227,23 +1437,21 @@ export class DocsPanel {
       await vscode.workspace.fs.rename(fromUri, target, { overwrite: false });
 
       const toPath = relativeTo(root, target);
-      for (const spec of this.ledgers) {
-        if (dir) {
-          for (const rel of inner) {
-            await rekey(spec, `${from}/${rel}`, `${toPath}/${rel}`);
-          }
-          await rekeyFolders(spec, from, toPath);
-        } else {
-          await rekey(spec, from, toPath);
-        }
+      if (dir) {
+        await this.rekeyAll(
+          inner.map((rel): [string, string] => [`${from}/${rel}`, `${toPath}/${rel}`]),
+          [from, toPath]
+        );
+      } else {
+        await this.rekeyAll([[from, toPath]]);
       }
-      if (untag && !dir) {
-        await setTags(marksLedger(root), toPath, []);
-      } else if (tag && !dir) {
-        const spec = marksLedger(root);
-        const own = (await load(spec)).files[toPath]?.tags ?? [];
+      const at = this.marksOf(toPath);
+      if (at && untag && !dir) {
+        await setTags(at.spec, at.key, []);
+      } else if (at && tag && !dir) {
+        const own = (await load(at.spec)).files[at.key]?.tags ?? [];
         if (!own.includes(tag)) {
-          await setTags(spec, toPath, [...own, tag]);
+          await setTags(at.spec, at.key, [...own, tag], (await this.loadMarks()).tags);
         }
       }
       this.repin(from, toPath);
@@ -1255,19 +1463,15 @@ export class DocsPanel {
   }
 
   private async reveal(relPath: string): Promise<void> {
-    const base = this.base;
-    if (!base) {
+    if (!this.workspace || !this.rootOf(relPath)) {
       return;
     }
-    await vscode.commands.executeCommand(
-      "revealFileInOS",
-      vscode.Uri.joinPath(base, ...relPath.split("/"))
-    );
+    await vscode.commands.executeCommand("revealFileInOS", this.uriOf(relPath));
   }
 
   private async browse(relPath: string): Promise<void> {
     const base = this.base;
-    if (!base) {
+    if (!base || !this.rootOf(relPath)) {
       return;
     }
     try {
@@ -1286,55 +1490,61 @@ export class DocsPanel {
     if (!this.ready || !base) {
       return;
     }
-    this.post({ type: "corpus", entries: await this.corpus.collect(base, await buildTree(base)) });
+    const nodes = [];
+    for (const root of this.roots) {
+      nodes.push(...(await buildTree(root.uri)).map((node) => prefixNode(node, root.rel)));
+    }
+    this.post({ type: "corpus", entries: await this.corpus.collect(base, nodes) });
   }
 
+  // Each docs folder has its own tags and colours; the rest are the workspace's.
   private dataFiles(): DataFile[] {
-    if (!this.root) {
+    const workspace = this.workspace;
+    if (!workspace) {
       return [];
     }
     return [
-      {
-        id: "ledger",
+      ...this.roots.map((root) => ({
+        id: `ledger:${root.rel}`,
         label: "Tags and colours",
-        note: "every tag and colour is lost",
-        uri: marksLedger(this.root.uri).store
-      },
+        note: this.roots.length > 1 ? `every tag and colour in ${root.rel || "the workspace root"} is lost` : "every tag and colour is lost",
+        uri: marksLedger(root.uri).store
+      })),
       {
         id: "reads",
         label: "Read marks",
         note: "every file goes back to unread",
-        uri: readsLedger(this.root.workspace, this.root.uri).store
+        uri: this.reads!.store
       },
       {
         id: "settings",
         label: "Settings",
         note: "every setting and bucket goes back to its default",
-        uri: settingsUri(this.root.workspace)
+        uri: settingsUri(workspace)
       },
       {
         id: "mentions",
         label: "Mention cache",
         note: "rebuilt from the session logs on the next scan",
-        uri: cacheUri(this.root.workspace)
+        uri: cacheUri(workspace)
       },
       {
         id: "links",
         label: "Link cache",
         note: "the files each page names are looked up again as the pages are opened",
-        uri: linksUri(this.root.workspace)
+        uri: linksUri(workspace)
       },
       {
         id: "refs",
         label: "Reference cache",
         note: "every file is read again for the files it names when the next page is opened",
-        uri: refsUri(this.root.workspace)
+        uri: refsUri(workspace)
       }
     ];
   }
 
   private async sendDataFiles(): Promise<void> {
-    const workspace = this.root?.workspace;
+    const workspace = this.workspace;
     if (!workspace) {
       return;
     }
@@ -1354,7 +1564,7 @@ export class DocsPanel {
   // Each file is deleted outright and whatever it held is sent again, now empty, so the
   // page drops what it was showing from it.
   private async purge(ids: string[]): Promise<void> {
-    if (!this.root) {
+    if (!this.workspace) {
       return;
     }
     const files: (DataFile & { size: number })[] = [];
@@ -1372,7 +1582,7 @@ export class DocsPanel {
       {
         modal: true,
         detail: files
-          .map((file) => `${relativeTo(this.root!.workspace, file.uri)}: ${file.note}.`)
+          .map((file) => `${relativeTo(this.workspace!, file.uri)}: ${file.note}.`)
           .join("\n")
       },
       "Purge"
@@ -1398,8 +1608,8 @@ export class DocsPanel {
     if (files.some((file) => file.id === "settings")) {
       this.post({ type: "state", ...this.state });
     }
-    this.postMarks(await load(marksLedger(this.root.uri)));
-    this.postReads(await load(readsLedger(this.root.workspace, this.root.uri)));
+    this.postMarks(await this.loadMarks());
+    this.postReads(await load(this.reads!));
     await this.sendMentions();
     await this.sendDataFiles();
   }
@@ -1439,53 +1649,60 @@ export class DocsPanel {
     if (!this.ready) {
       return;
     }
-    const base = this.base;
-    if (!base) {
-      this.post({ type: "tree", nodes: [], notice: "Open a folder to use Docs Panel." });
+    const workspace = this.workspace;
+    if (!workspace) {
+      this.post({ type: "tree", roots: [], notice: "Open a folder to use Docs Panel." });
       return;
     }
-    let exists = true;
-    try {
-      await vscode.workspace.fs.stat(base);
-    } catch {
-      exists = false;
-    }
-    if (!exists) {
-      this.post({ type: "tree", nodes: [], trash: [], notice: `No folder at ${this.root?.label}` });
-      return;
-    }
-    // The walk skips dotted names, so the trash is built on its own and its paths are
-    // prefixed here: one list, one set of keys, whichever side of the trash a file is on.
-    const [trashed, nodes] = await Promise.all([buildTree(vscode.Uri.joinPath(base, TRASH_DIR), false), buildTree(base)]);
-    const trash = trashed.map(prefixNode);
-    this.docTimes = timesOf(nodes);
+    // A docs folder that is not there is shown as missing, and its marks are left alone:
+    // matched against no files, every one of them would be dropped.
+    const present = new Set<Root>();
+    const roots = await Promise.all(
+      this.roots.map(async (root) => {
+        const shown = {
+          path: root.rel,
+          name: (root.rel || workspace.path).split("/").pop() ?? "",
+          label: root.label
+        };
+        try {
+          await vscode.workspace.fs.stat(root.uri);
+        } catch {
+          return { ...shown, nodes: [], trash: [], notice: `No folder at ${root.label}` };
+        }
+        present.add(root);
+        // The walk skips dotted names, so the trash is built on its own and its paths are
+        // prefixed here: one list, one set of keys, whichever side of the trash a file is on.
+        const [trashed, nodes] = await Promise.all([
+          buildTree(vscode.Uri.joinPath(root.uri, TRASH_DIR), false),
+          buildTree(root.uri)
+        ]);
+        return {
+          ...shown,
+          nodes: nodes.map((node) => prefixNode(node, root.rel)),
+          trash: trashed.map((node) => prefixNode(node, root.rel ? `${root.rel}/${TRASH_DIR}` : TRASH_DIR))
+        };
+      })
+    );
+    this.docTimes = timesOf(roots.flatMap((root) => root.nodes));
     this.docFiles = new Set(this.docTimes.keys());
     this.docStamp = treeStamp(this.docFiles);
-    this.post({
-      type: "tree",
-      nodes,
-      trash,
-      pinned: this.state.pinned,
-      root: this.root ? relativeTo(this.root.workspace, base) : "",
-      name: base.path.split("/").pop() ?? ""
-    });
-    if (this.root) {
-      const [marks, reads] = await Promise.all([
-        load(marksLedger(this.root.uri)),
-        load(readsLedger(this.root.workspace, this.root.uri))
-      ]);
-      this.postMarks(marks);
-      this.postReads(reads);
-    }
+    this.post({ type: "tree", roots, pinned: this.state.pinned });
+    const reads = this.reads!;
+    const [marks, read] = await Promise.all([this.loadMarks(), load(reads)]);
+    this.postMarks(marks);
+    this.postReads(read);
     await this.dropMissingSelection();
     if (then) {
       await then();
     }
-    if (this.root) {
-      this.postMarks(await prune(marksLedger(this.root.uri)));
-      this.postReads(await prune(readsLedger(this.root.workspace, this.root.uri)));
-      await this.sendMentions();
+    for (const root of present) {
+      await prune(marksLedger(root.uri));
     }
+    this.postMarks(await this.loadMarks());
+    if (present.size === this.roots.length) {
+      this.postReads(await prune(reads));
+    }
+    await this.sendMentions();
     this.refsSoon();
   }
 
@@ -1498,7 +1715,10 @@ export class DocsPanel {
       return;
     }
     try {
-      await vscode.workspace.fs.stat(vscode.Uri.joinPath(base, ...selected.split("/")));
+      if (!this.rootOf(selected)) {
+        throw new Error("outside the docs");
+      }
+      await vscode.workspace.fs.stat(this.uriOf(selected));
     } catch {
       this.state.selected = null;
       this.post({ type: "moved", path: selected });
@@ -1507,11 +1727,11 @@ export class DocsPanel {
 
   private async sendContent(relPath: string): Promise<void> {
     const base = this.base;
-    if (!this.ready || !base) {
+    if (!this.ready || !base || !this.rootOf(relPath)) {
       return;
     }
     const content = await renderFile(base, relPath, this.panel.webview);
-    const workspace = content.kind === "md" && typeof content.text === "string" ? this.root?.workspace : undefined;
+    const workspace = content.kind === "md" && typeof content.text === "string" ? this.workspace : undefined;
     if (!workspace) {
       this.post({ type: "content", ...content, links: {} });
       void this.sendRefs(relPath);
@@ -1546,14 +1766,15 @@ export class DocsPanel {
   // The files that name the open one, which the page lists above it. The first time it is
   // asked this reads every file in the scope, so it never holds up the page itself.
   private async sendRefs(relPath: string): Promise<void> {
-    const root = this.root;
-    if (!this.ready || !root) {
+    const workspace = this.workspace;
+    if (!this.ready || !workspace) {
       return;
     }
     try {
+      // The docs are known by their paths from the workspace, so they are looked for from it.
       const refs = await this.refs.of(
-        root.workspace,
-        relativeTo(root.workspace, root.uri),
+        workspace,
+        "",
         relPath,
         this.state.refsScope,
         this.docTimes,
@@ -1681,7 +1902,7 @@ export class DocsPanel {
     if (this.marksPoll) {
       clearInterval(this.marksPoll);
     }
-    this.watcher?.dispose();
+    this.watchers.forEach((watcher) => watcher.dispose());
     this.sessions?.dispose();
     this.refs.dispose();
     clearTimeout(this.refsTimer);
@@ -1731,11 +1952,17 @@ function sameLinks(a: Record<string, Link>, b: Record<string, Link>): boolean {
   );
 }
 
-function prefixNode(node: TreeNode): TreeNode {
+// A node from a walk of one folder, named by its path from a folder above it.
+function prefixNode(node: TreeNode, prefix: string): TreeNode {
+  if (!prefix) {
+    return node;
+  }
+  const inner = (child: TreeNode) => prefixNode(child, prefix);
   return {
     ...node,
-    path: `${TRASH_DIR}/${node.path}`,
-    children: node.children?.map(prefixNode)
+    path: `${prefix}/${node.path}`,
+    children: node.children?.map(inner),
+    ...(node.trash ? { trash: node.trash.map(inner) } : {})
   };
 }
 
@@ -1791,16 +2018,62 @@ async function freeName(folder: vscode.Uri, name: string): Promise<vscode.Uri> {
   return vscode.Uri.joinPath(folder, `${stem}-${Date.now()}${ext}`);
 }
 
-function resolveRoot(): Root | undefined {
+// The setting names one folder, as it always has, or a list of them, each from the
+// workspace root. A folder outside the workspace is passed over, and so is one that is a
+// folder listed before it, lies inside one or holds one, so no file is shown twice.
+function resolveRoots(): { workspace: vscode.Uri | undefined; roots: Root[] } {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
-    return undefined;
+    return { workspace: undefined, roots: [] };
   }
-  const setting =
-    vscode.workspace.getConfiguration("docsPanel", folder.uri).get<string>("folder") ?? "docs";
-  const parts = setting.split(/[\\/]/).filter((part) => part.length > 0);
-  const uri = parts.length ? vscode.Uri.joinPath(folder.uri, ...parts) : folder.uri;
-  return { uri, workspace: folder.uri, label: uri.fsPath };
+  const setting = vscode.workspace.getConfiguration("docsPanel", folder.uri).get<unknown>("folder");
+  const listed = (Array.isArray(setting) ? setting : [setting ?? "docs"]).filter(
+    (value): value is string => typeof value === "string"
+  );
+  const roots: Root[] = [];
+  for (const value of listed.length ? listed : ["docs"]) {
+    const parts = value.split(/[\\/]/).filter((part) => part.length > 0 && part !== ".");
+    if (parts.includes("..")) {
+      continue;
+    }
+    const rel = parts.join("/");
+    if (roots.some((root) => overlaps(root.rel, rel))) {
+      continue;
+    }
+    const uri = parts.length ? vscode.Uri.joinPath(folder.uri, ...parts) : folder.uri;
+    roots.push({ uri, rel, label: uri.fsPath });
+  }
+  return { workspace: folder.uri, roots };
+}
+
+// Whether one folder, by its path from the workspace, is the other or holds it.
+function overlaps(a: string, b: string): boolean {
+  return a === b || !a || !b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+// The state as written when every path in it was from the one docs folder there was,
+// each path put behind that folder's path from the workspace.
+function rebaseState(state: PanelState, prefix: string): PanelState {
+  if (!prefix) {
+    return state;
+  }
+  const move = (path: string) => (path ? `${prefix}/${path}` : prefix);
+  const keyed = <T>(record: Record<string, T>): Record<string, T> => {
+    const out: Record<string, T> = {};
+    for (const [path, value] of Object.entries(record)) {
+      out[move(path)] = value;
+    }
+    return out;
+  };
+  return {
+    ...state,
+    expanded: state.expanded.map(move),
+    pinned: state.pinned.map(move),
+    editing: state.editing.map(move),
+    selected: state.selected === null ? null : move(state.selected),
+    buckets: keyed(state.buckets),
+    scrolls: keyed(state.scrolls)
+  };
 }
 
 // A number, or a number written as text in a file edited by hand. Anything else, null
@@ -1836,6 +2109,10 @@ function normalizeState(value: any): PanelState {
     ? (value.bucketFill ? OLD_BUCKET_FILL : 0)
     : numberOf(value?.bucketFill);
   const mentionLines = numberOf(value?.mentionLines);
+  const bucketHeadSize = numberOf(value?.bucketHeadSize);
+  const dividerSize = numberOf(value?.dividerSize);
+  const dividerWidth = numberOf(value?.dividerWidth);
+  const dividerGap = numberOf(value?.dividerGap);
   const scrolls: Record<string, number> = {};
   for (const [path, ratio] of Object.entries(value?.scrolls ?? {}).slice(-MAX_SCROLLS)) {
     if (typeof ratio === "number" && Number.isFinite(ratio)) {
@@ -1892,6 +2169,24 @@ function normalizeState(value: any): PanelState {
     bucketHeadStyle: BUCKET_HEAD_STYLES.includes(value?.bucketHeadStyle)
       ? value.bucketHeadStyle
       : DEFAULT_STATE.bucketHeadStyle,
+    bucketHeadSize: Number.isFinite(bucketHeadSize)
+      ? Math.min(Math.max(Math.round(bucketHeadSize), 50), 250)
+      : DEFAULT_STATE.bucketHeadSize,
+    dividerLabel: DIVIDER_LABELS.includes(value?.dividerLabel) ? value.dividerLabel : DEFAULT_STATE.dividerLabel,
+    dividerAlign: DIVIDER_ALIGNS.includes(value?.dividerAlign) ? value.dividerAlign : DEFAULT_STATE.dividerAlign,
+    dividerSize: Number.isFinite(dividerSize)
+      ? Math.min(Math.max(Math.round(dividerSize), 50), 250)
+      : DEFAULT_STATE.dividerSize,
+    dividerBold: typeof value?.dividerBold === "boolean" ? value.dividerBold : DEFAULT_STATE.dividerBold,
+    dividerCaps: typeof value?.dividerCaps === "boolean" ? value.dividerCaps : DEFAULT_STATE.dividerCaps,
+    dividerColor: DIVIDER_COLORS.includes(value?.dividerColor) ? value.dividerColor : DEFAULT_STATE.dividerColor,
+    dividerLine: DIVIDER_LINES.includes(value?.dividerLine) ? value.dividerLine : DEFAULT_STATE.dividerLine,
+    dividerWidth: Number.isFinite(dividerWidth)
+      ? Math.min(Math.max(Math.round(dividerWidth), 1), 4)
+      : DEFAULT_STATE.dividerWidth,
+    dividerGap: Number.isFinite(dividerGap)
+      ? Math.min(Math.max(Math.round(dividerGap), 0), 32)
+      : DEFAULT_STATE.dividerGap,
     tableAlign: TABLE_ALIGNS.includes(value?.tableAlign) ? value.tableAlign : DEFAULT_STATE.tableAlign,
     tableHead: TABLE_HEADS.includes(value?.tableHead) ? value.tableHead : DEFAULT_STATE.tableHead,
     refsScope: REF_SCOPES.includes(value?.refsScope) ? value.refsScope : DEFAULT_STATE.refsScope,

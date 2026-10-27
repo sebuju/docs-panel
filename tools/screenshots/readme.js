@@ -91,6 +91,27 @@ module.exports = [
       await page.click("#menu button:has-text('Tag buckets')");
     }
   },
+  {
+    name: "roots",
+    viewport: { width: 1200, height: 420 },
+    state: {
+      roots: ["docs", "team"],
+      expanded: ["docs/plans", "team/runbooks"],
+      selected: "docs/plans/roadmap.md",
+      buckets: { team: { tags: [" untagged"], perRow: 1 } }
+    },
+    clip: { x: 0, y: 0, width: 360, height: 420 }
+  },
+  {
+    name: "options-roots",
+    viewport: { width: 1200, height: 720 },
+    state: { roots: ["docs", "team"], selected: "docs/plans/roadmap.md" },
+    act: async (page) => {
+      await press("openOptions")(page);
+      await page.evaluate(() => document.getElementById("optRoots").scrollIntoView());
+      await page.waitForTimeout(100);
+    }
+  },
   { name: "options", act: press("openOptions") },
   {
     name: "options-tags",

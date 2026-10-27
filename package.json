@@ -2,7 +2,7 @@
   "name": "docs-panel",
   "displayName": "Docs Panel",
   "description": "Browse and read a project's docs folder in a single editor tab.",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -28,10 +28,16 @@
       "title": "Docs Panel",
       "properties": {
         "docsPanel.folder": {
-          "type": "string",
+          "type": [
+            "string",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          },
           "default": "docs",
           "scope": "resource",
-          "description": "Folder, relative to the workspace root, that Docs Panel shows."
+          "markdownDescription": "Folder, relative to the workspace root, that Docs Panel shows, or a list of them: `[\"docs\", \"notes\"]`. Each is shown under a divider of its own. A folder inside another one listed before it, or holding one, is skipped. `.` is the workspace root."
         },
         "docsPanel.copyPrefix": {
           "type": "object",

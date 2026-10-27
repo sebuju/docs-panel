@@ -1,7 +1,7 @@
 # Docs Panel
 
-A VS Code extension that shows one folder of the workspace (`docs` by default) in a
-single webview tab: a file tree and a contents list on the left, the selected file
+A VS Code extension that shows one or more folders of the workspace (`docs` by default) in
+a single webview tab: a file tree and a contents list on the left, the selected file
 rendered on the right. Both sides follow changes made on disk. Files can be tagged,
 coloured, pinned, grouped into tag buckets, searched by text or by tag, edited and
 trashed from the panel.
@@ -12,6 +12,7 @@ trashed from the panel.
 - [Install](#install)
 - [Layout](#layout)
 - [Tree](#tree)
+- [Root folders](#root-folders)
 - [Page](#page)
 - [Tags](#tags)
 - [Tag buckets](#tag-buckets)
@@ -57,7 +58,7 @@ tab is restored with the window.
 
 | Part | Contents |
 |---|---|
-| Tree | The docs folder. Folders first, sorted by name, then files, most recently modified first. Dot-files, dot-folders and `node_modules` are not shown; folders deeper than 12 levels are cut off. |
+| Tree | The root folders, each under a divider when there are several. Folders first, sorted by name, then files, most recently modified first. Dot-files, dot-folders and `node_modules` are not shown; folders deeper than 12 levels are cut off. |
 | Contents list | The headings of the open Markdown file. The entries whose sections are on screen are highlighted; a click scrolls to the heading. |
 | File bar | File name, created and modified time, age, and buttons for find, edit, tags and trash, followed by the file's tags and `+` to add one. Clicking the file name copies its path relative to the workspace (see `docsPanel.copyPrefix`). |
 | Page | The rendered file. |
@@ -74,9 +75,8 @@ How each file type is shown:
 Each file reopens at the scroll position it was left at, stored as a fraction of the
 page height so it stays close after edits.
 
-The dot in front of a file in the tree shows its read state: unread, read, or unread and
-mentioned in a Claude Code session (see [Mentions](#mentions-from-claude-code-sessions)).
-A file is marked read when opened, and unread again when it changes on disk while not open.
+A file not read yet has its name in italics in the tree. A file is marked read when
+opened, and unread again when it changes on disk while not open.
 
 The panel also works in a light theme:
 
@@ -98,21 +98,22 @@ Right click a row, or press `Space`, `Shift+F10` or the menu key on it, for its 
 |---|---|
 | Open a file | Click it |
 | Tag a file | `Ctrl`+click it, **Tags…** in its menu, or `+` in the file bar |
-| Colour a file or folder | **Colour…** in its menu. Colours come from the active theme. |
-| Pin a file or folder to the top of its folder | **Pin to top** in its menu. A pinned file shows a pin in place of its dot. |
-| Group a folder's files by tag | **Tag buckets…** in the folder's menu; see [Tag buckets](#tag-buckets) |
+| Colour a file or folder | **Colour…** in its menu. Colours come from the active theme. Picking the colour it already has takes it off. |
+| Pin a file or folder to the top of its folder | **Pin to top** in its menu. A pinned file shows a pin in front of its name, or after it in a tag bucket. |
+| Group a folder's files by tag | **Tag buckets…** in the folder's menu, or in a root folder's; see [Tag buckets](#tag-buckets) |
 | Open a file in the system browser | **Open in browser** in its menu |
-| New file or folder | **New file…** / **New folder…** in a folder's menu, or in the menu of the empty space under the tree for the docs root |
+| New file or folder | **New file…** / **New folder…** in a folder's menu, or in a root folder's menu |
 | Rename, clone, copy path, reveal in the OS file manager | The row's menu |
-| Move a file or folder | Drag it onto a folder |
+| Move a file or folder | Drag it onto a folder, or onto a root folder's divider or the space under it; it can go from one root folder to another, taking its tags and colour along |
 | Trash a file | **Move to the trash** in its menu, or the bin button in the file bar |
 | Restore or delete trashed files | Right click a trash folder: **Restore all** or **Delete all**; or an entry's own menu |
 | Resize the side | Drag the divider between the side and the page |
 | Auto size the side's width | Right click that divider: auto size to the files, auto size growing only, or off. While auto sized the divider cannot be dragged; in grow-only mode a click on it refits the side. |
 | Auto size the tree or the contents list | Right click the divider between them: auto size the files, the contents, or neither. The same menu hides the contents list (**Show toc**); the options bring it back. |
 
-Trashed files go to a `.trash` folder next to them. The root's `.trash` is shown at the
-foot of the tree, and each folder lists its own `.trash` as **Trash**.
+Trashed files go to the `.trash` folder of their root folder, keeping the folders they
+were in. That trash is shown at the foot of the root folder, and each folder lists its
+own part of it as **Trash**, together with a `.trash` of its own if another tool made one.
 
 Keys, with the tree focused (click it or `Tab` to it):
 
@@ -126,11 +127,48 @@ Keys, with the tree focused (click it or `Tab` to it):
 From the page (while reading, not editing), `Left` returns to the tree at the row that was
 left. In a Markdown file, `Right` from there returns to the block that was selected.
 
+## Root folders
+
+The panel shows one folder by default, `docs`. More can be added: **Add root folder…** in
+a root folder's menu, or in the options' **Root folders** section, picks a folder of the
+workspace. A folder that is already shown, lies inside one that is, or holds one is
+refused, so no file is ever listed twice. The list is saved to the `docsPanel.folder`
+setting (see [Settings](#settings)), which can also be edited by hand.
+
+![Two root folders, each under its divider](.github/readme/roots.png)
+
+With more than one, each root folder stands under a divider, a line labelled with its
+name. Right click the divider, or the empty space under the folder's entries, for the root
+folder's menu: **Tag buckets…**, **New file…**, **New folder…**, **Reveal in file
+explorer**, **Copy path**, **Add root folder…** and **Remove root**. Removing a root folder
+only stops showing it; nothing in it is touched. With a single root folder there is no
+divider, and its menu is the one on the empty space under the tree.
+
+Every path the panel shows, copies or keeps is from the workspace root, such as
+`docs/plans/roadmap.md`, so the same file has the same path however many root folders
+are shown beside it.
+
+The options' **Root folders** section lists them, each with **Remove**, and sets how the
+dividers look:
+
+![Options: root folders and dividers](.github/readme/options-roots.png)
+
+| Option | Values |
+|---|---|
+| Divider label | the folder's `name` (default), its `path` from the workspace, or `none` for the line alone |
+| Divider label placement | `left` (default), `center`, `right` |
+| Divider text size | 50% to 250% of the tree's text, 85% by default |
+| Divider text | as written or in capitals (default); normal or bold (default) |
+| Divider colour | the text colour, faded (default), or one of the theme's colours |
+| Divider line | `solid` (default), `dashed`, `dotted`, `double`, `none` |
+| Divider line thickness | 1 to 4 px |
+| Space above dividers | 0 to 32 px, 8 by default |
+
 ## Page
 
 | Action | How |
 |---|---|
-| Follow a link | Click a Markdown link, or a file name in the text. A file in the docs folder opens in the panel; any other workspace file (for example `src/panel.ts`) opens in an editor. |
+| Follow a link | Click a Markdown link, or a file name in the text. A file in a root folder opens in the panel; any other workspace file (for example `src/panel.ts`) opens in an editor. |
 | Back / forward | Mouse back and forward buttons walk the history of opened files |
 | Zoom an image | Click it. Scroll to zoom, drag to pan, `0` to fit, `Escape` to close. |
 | Edit | Pen button in the file bar, then `Ctrl+S` to save. A file left in edit mode reopens in edit mode. |
@@ -239,8 +277,13 @@ highlighted tag.
 Clicking a tag in the tree opens the search with `tag:<name>`. With the search already
 open it replaces the tag being searched for; with `Shift` held it is added to it.
 
-Tags and colours are stored in `<docs folder>/.docs-panel.json`, so they are committed
-with the documents. Each entry carries a content hash: a file moved or renamed outside the
+Tags and colours are stored in `<root folder>/.docs-panel.json`, so they are committed
+with the documents. Each root folder has its own, for its own files, keyed by their paths
+from that folder, so a root folder can be shown on its own or beside others and keeps its
+marks either way. Tags themselves are shared: a tag given to a file in another root folder
+comes with the colour, letters and style it already has, and a change to a tag (colour,
+letters, style, order, name, deletion) is written to every root folder's file. Where two
+files disagree about a tag, the first root folder's wins. Each entry carries a content hash: a file moved or renamed outside the
 panel keeps its tags and colour if its content matches exactly one entry; an ambiguous
 match is dropped. A trashed file keeps its entry until it is deleted. The panel checks the
 file's modification time every 1.5 s and reloads it when it changes, so edits from outside
@@ -248,8 +291,9 @@ file's modification time every 1.5 s and reloads it when it changes, so edits fr
 
 ## Tag buckets
 
-**Tag buckets…** in a folder's menu (or a bucket's menu) selects which tags get a bucket
-in that folder. Buckets are drawn at the top of the folder, each outlined in its tag's
+**Tag buckets…** in a folder's menu, a root folder's menu, or a bucket's menu selects
+which tags get a bucket in that folder. The picker opens to the right of the side, so the
+buckets can be watched coming and going as tags are picked. Buckets are drawn at the top of the folder, each outlined in its tag's
 colour. A file directly in the folder goes into the bucket of the first of its tags, in
 bucket order, that has one; it is shown there without its tags. Pinned files come first.
 Files with no matching bucket follow the buckets as usual.
@@ -284,7 +328,20 @@ Layout, set in the picker:
   returns it to the global tag order.
 
 Buckets and their layout are stored per folder and follow the folder when it is renamed or
-moved. Outline, background tint, and heading position and style are set in the options.
+moved. Outline, background tint, and heading position, style and text size are set in the
+options.
+
+A bucket with a background tint lights its rows in its own colour instead of the theme's.
+Under a faint tint the row under the pointer gets more of the colour, the open file is the
+colour itself with black text, as on the tag's pill, and the ring of the row the keys are
+on is black. From a tint of 55% up, where more of the colour would not show, the rows are
+darkened instead: a little under the pointer, more for the open file, which has white
+text, with a white ring.
+
+Over a dark theme, a tint can make a bucket light enough that the theme's light text no
+longer reads on it. The bucket's colour as drawn is worked out, and the bucket takes black
+text wherever that stands out from it more than the theme's text does; its row under the
+pointer is then lightened instead of darkened. Light themes have dark text already.
 
 ## Search all docs
 
@@ -324,7 +381,7 @@ The panel reads the Claude Code session logs for the workspace
 (`~/.claude/projects/<workspace path with every non-alphanumeric character replaced by ->/*.jsonl`)
 and collects every file name written in a user or assistant message. Tool results,
 meta entries and slash command wrappers are ignored. Each name is resolved against the
-docs folder: the longest path suffix that matches a file wins, and a bare file name only
+root folders: the longest path suffix that matches a file wins, and a bare file name only
 counts when exactly one file has it.
 
 The open file's mentions are listed above the page, newest first, with the time since and
@@ -346,7 +403,8 @@ The sliders button in the tree's top right corner opens the options.
 |---|---|
 | Reading | Text size, line spacing, font, contents list shown, headings beside the scrollbar (off / on scroll / on hover), the rules for which are shown, how long they stay (ms), how far to scroll before they show (px) or how near the pointer must come (px), auto size list height and the minimum share kept by the other list, auto size side width (off / fit / grow only) and the minimum share kept by the page, block highlight strength and padding (vertical and horizontal), where referencing files are looked for (off / docs / all files), table cell alignment, table header background, mentions shown |
 | Tree | Text size, side of the name the tags are drawn on |
-| Tag buckets | Outline, background tint, heading position (inside, on the outline, above), style (pill, colour bar, plain name), colour and weight |
+| Tag buckets | Outline, background tint, heading position (inside, on the outline, above), style (pill, colour bar, plain name), colour, weight and text size (50% to 250% of the tree's text) |
+| Root folders | The folders shown, **Add root folder…**, and how the dividers between them look; see [Root folders](#root-folders) |
 | Tags | One row per tag; see below |
 | Data files | Each file the panel writes, with its size and a **Purge** button |
 
@@ -364,7 +422,7 @@ the tags it would remove.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `docsPanel.folder` | `docs` | Folder, relative to the workspace root, shown by the panel |
+| `docsPanel.folder` | `docs` | Folder, relative to the workspace root, shown by the panel, or a list of them: `["docs", "notes"]`. `.` is the workspace root. A folder outside the workspace, or one that is, lies inside or holds a folder listed before it, is skipped. **Add root folder…** and **Remove root** write a list to the workspace's settings, or a plain string when one folder is left. |
 | `docsPanel.copyPrefix` | `{}` | Text put in front of the path copied by clicking the file name in the file bar, keyed by file extension without the dot. Trailing spaces are kept. Example: `{ "md": "/execute-plan " }` |
 
 Both settings have resource scope, so a project can set them in `.vscode/settings.json`.
@@ -379,7 +437,7 @@ deleting it, or **Purge** in the options' data files, resets them.
 
 | File | Contents | Purged effect |
 |---|---|---|
-| `<docs folder>/.docs-panel.json` | Tags, tag colours, letters, styles and order; file and folder colours | All tags and colours are lost |
+| `<root folder>/.docs-panel.json` | Tags, tag colours, letters, styles and order; file and folder colours, one per root folder | All tags and colours of that root folder are lost |
 | `.vscode/docs-panel-settings.json` | Panel settings and layout | Everything returns to defaults |
 | `.vscode/docs-panel-reads.json` | Read marks | Every file is unread |
 | `.vscode/docs-panel-mentions.json` | Mention cache | Rebuilt from the session logs on the next scan |
@@ -388,13 +446,20 @@ deleting it, or **Purge** in the options' data files, resets them.
 
 Only `.docs-panel.json` is meant to be committed; the others are per-user state.
 
+Before 0.14.0, `.vscode/docs-panel-settings.json` and `.vscode/docs-panel-reads.json`
+named every file from the one docs folder. They are recognised by what they lack (the
+settings file has no `"paths": "workspace"`, the reads file a `version` under 2) and
+rewritten once, every path put behind the first root folder's, so nothing set or read is
+lost. Each `.docs-panel.json` is kept as it was: its paths were and stay from its own
+folder.
+
 ## Source layout
 
 | File | Role |
 |---|---|
 | `src/extension.ts` | Activation: registers the command and the webview serializer |
 | `src/panel.ts` | The webview panel: state, messages to and from the page, file operations, timers |
-| `src/tree.ts` | Walks the docs folder into the tree, including each folder's `.trash` |
+| `src/tree.ts` | Walks a root folder into the tree, including each folder's `.trash` |
 | `src/watch.ts` | File system watcher with a 120 ms debounce, reporting tree and file changes |
 | `src/render.ts` | Turns a file into page content by type; Markdown goes through `markdown.api.render` |
 | `src/corpus.ts` | Text of every file for the search, re-read only when its modification time changes |
@@ -453,6 +518,8 @@ from the commits when there is no notes file.
 - Markdown is rendered by VS Code's built-in renderer, but scripts and styles that other
   extensions add to the Markdown preview (mermaid, KaTeX and similar) are removed, so
   their output is not drawn.
-- Markdown links to files outside the docs folder do nothing. A workspace file named in
-  the text, such as `src/panel.ts`, is a link.
+- A Markdown link to a workspace file outside the root folders opens it in an editor; one
+  leading out of the workspace does nothing. A workspace file named in the text, such as
+  `src/panel.ts`, is a link too.
+- Root folders must be inside the first folder of the workspace.
 - **Open in browser** works only for files on the local machine, not in a remote window.

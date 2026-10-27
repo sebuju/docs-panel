@@ -94,10 +94,16 @@ export interface LedgerSpec {
   root: vscode.Uri;
   statuses: readonly string[];
   marks: boolean;
+  // The folders under the root, by their path from it, that hold the files it keys; none
+  // means the whole root.
+  dirs?: string[];
 }
 
 export const MARKS_FILE = ".docs-panel.json";
 const READS_FILE = "docs-panel-reads.json";
+// The reads ledger keyed every file by its path from the one docs folder there was; since
+// there can be several, it keys them by their path from the workspace.
+const READS_VERSION = 2;
 const TRASH_DIR = ".trash";
 const MAX_DEPTH = 12;
 
@@ -105,13 +111,39 @@ export function marksLedger(root: vscode.Uri): LedgerSpec {
   return { store: vscode.Uri.joinPath(root, MARKS_FILE), root, statuses: [], marks: true };
 }
 
-export function readsLedger(workspace: vscode.Uri, root: vscode.Uri): LedgerSpec {
+// "dirs" are the docs folders, by their path from the workspace, "" for the workspace itself.
+export function readsLedger(workspace: vscode.Uri, dirs: string[]): LedgerSpec {
   return {
     store: vscode.Uri.joinPath(workspace, ".vscode", READS_FILE),
-    root,
+    root: workspace,
     statuses: READ_STATUSES,
-    marks: false
+    marks: false,
+    dirs: dirs.includes("") ? undefined : dirs
   };
+}
+
+// A reads ledger written before there could be several docs folders keys its files from
+// the one there was; "prefix" is that folder's path from the workspace, and each key is
+// put behind it once. A ledger already keyed from the workspace is left alone.
+export async function rebaseReads(spec: LedgerSpec, prefix: string): Promise<void> {
+  let version: unknown;
+  try {
+    version = JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(spec.store)))?.version;
+  } catch {
+    return;
+  }
+  if (typeof version === "number" && version >= READS_VERSION) {
+    return;
+  }
+  const ledger = await load(spec);
+  if (prefix) {
+    const files: Record<string, Entry> = {};
+    for (const [path, entry] of Object.entries(ledger.files)) {
+      files[`${prefix}/${path}`] = entry;
+    }
+    ledger.files = files;
+  }
+  await save(spec, ledger);
 }
 
 export function emptyLedger(): Ledger {
@@ -261,7 +293,7 @@ export async function save(spec: LedgerSpec, ledger: Ledger): Promise<void> {
   }
   // The marks are written only once there are some, so the reads ledger keeps the shape it
   // always had.
-  const out: Record<string, unknown> = { version: ledger.version, files };
+  const out: Record<string, unknown> = { version: spec.marks ? ledger.version : READS_VERSION, files };
   if (spec.marks && Object.keys(ledger.folders).length) {
     out.folders = sorted(ledger.folders);
   }
@@ -324,11 +356,18 @@ export function setStatus(
   });
 }
 
-export function setTags(spec: LedgerSpec, relPath: string, tags: unknown): Promise<Ledger> {
+// "known" are the tags as the panel shows them, from every docs folder's ledger: a tag new
+// to this one takes the colour, letters and style it already has elsewhere.
+export function setTags(
+  spec: LedgerSpec,
+  relPath: string,
+  tags: unknown,
+  known: Record<string, TagMark> = {}
+): Promise<Ledger> {
   return change(spec, relPath, (entry, ledger) => {
     entry.tags = cleanTags(tags);
     for (const tag of entry.tags) {
-      defineTag(ledger, tag);
+      defineTag(ledger, tag, known[tag]);
     }
   });
 }
@@ -447,9 +486,14 @@ export async function deleteTag(spec: LedgerSpec, name: string): Promise<Ledger>
 
 // A tag kept for its colour alone, on no file any more, goes; the names in the list are
 // then exactly the tags in use.
-export async function pruneTags(spec: LedgerSpec): Promise<{ ledger: Ledger; pruned: string[] }> {
+// "used" are the tags on a file in any docs folder, when there are several: a tag on none
+// of this one's files is still in use while another's file has it.
+export async function pruneTags(
+  spec: LedgerSpec,
+  used?: Set<string>
+): Promise<{ ledger: Ledger; pruned: string[] }> {
   const ledger = await load(spec);
-  const used = new Set(Object.values(ledger.files).flatMap((entry) => entry.tags));
+  used ??= usedTags(ledger);
   const pruned = Object.keys(ledger.tags).filter((name) => !used.has(name));
   for (const name of pruned) {
     delete ledger.tags[name];
@@ -461,10 +505,19 @@ export async function pruneTags(spec: LedgerSpec): Promise<{ ledger: Ledger; pru
   return { ledger, pruned };
 }
 
+export function usedTags(ledger: Ledger): Set<string> {
+  return new Set(Object.values(ledger.files).flatMap((entry) => entry.tags));
+}
+
 // A new tag takes the first colour no other tag has, and once they are all taken the
-// list goes round again.
-function defineTag(ledger: Ledger, name: string): void {
+// list goes round again; one known from another ledger comes as it is there.
+function defineTag(ledger: Ledger, name: string, known?: TagMark): void {
   if (ledger.tags[name]) {
+    return;
+  }
+  if (known) {
+    ledger.tags[name] = { ...known };
+    ledger.tagOrder.push(name);
     return;
   }
   const used = new Set(Object.values(ledger.tags).map((mark) => mark.color));
@@ -585,13 +638,81 @@ export async function rekeyFolders(spec: LedgerSpec, from: string, to: string): 
   await save(spec, ledger);
 }
 
+// A move from one docs folder to another takes the entries out of the first one's ledger
+// and puts them in the second's, under the paths they now have there, with the tags they
+// carry. "moves" pairs each file's old path with its new one; "folder", when a folder
+// moved, pairs its old path with its new one, for its colour and those below it.
+export async function carry(
+  from: LedgerSpec,
+  to: LedgerSpec,
+  moves: [string, string][],
+  folder?: [string, string]
+): Promise<void> {
+  const source = await load(from);
+  const target = await load(to);
+  let changed = false;
+  for (const [old, next] of moves) {
+    const entry = source.files[old];
+    if (!entry) {
+      continue;
+    }
+    delete source.files[old];
+    for (const tag of entry.tags) {
+      defineTag(target, tag, source.tags[tag]);
+    }
+    target.files[next] = { ...entry, ...(await fingerprint(to.root, next)) };
+    changed = true;
+  }
+  if (folder && from.marks) {
+    const [old, next] = folder;
+    for (const path of Object.keys(source.folders)) {
+      if (path === old || path.startsWith(`${old}/`)) {
+        target.folders[next + path.slice(old.length)] = source.folders[path];
+        delete source.folders[path];
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    await save(from, source);
+    await save(to, target);
+  }
+}
+
+// The marks of several docs folders, shown as one: each file and folder by its path from
+// the workspace, "prefixes" giving each ledger's folder from there, "" for the workspace.
+// A tag defined in more than one is drawn as the first of them has it, and listed in the
+// first one's order, then in the next one's, and so on.
+export function mergeMarks(ledgers: Ledger[], prefixes: string[]): Ledger {
+  if (ledgers.length === 1 && !prefixes[0]) {
+    return ledgers[0];
+  }
+  const out = emptyLedger();
+  const join = (prefix: string, path: string) => (prefix ? `${prefix}/${path}` : path);
+  ledgers.forEach((ledger, i) => {
+    for (const [path, entry] of Object.entries(ledger.files)) {
+      out.files[join(prefixes[i], path)] = entry;
+    }
+    for (const [path, mark] of Object.entries(ledger.folders)) {
+      out.folders[join(prefixes[i], path)] = mark;
+    }
+    for (const [name, mark] of Object.entries(ledger.tags)) {
+      out.tags[name] ??= mark;
+    }
+    out.tagOrder.push(...ledger.tagOrder);
+  });
+  shortenTags(out);
+  orderTags(out);
+  return out;
+}
+
 // Files can also be moved from outside this panel. An entry whose path is gone is matched
 // against the paths that appeared, by content first and by name second, so a rename keeps
 // its marks and two files sharing a name cannot be confused for one another. A folder
 // has nothing to match by, so one that is gone takes its colour with it.
 export async function prune(spec: LedgerSpec): Promise<Ledger> {
   const ledger = await load(spec);
-  const { files: present, folders } = await listTree(spec.root);
+  const { files: present, folders } = await listTree(spec.root, spec.dirs);
 
   let changed = false;
   for (const path of Object.keys(ledger.folders)) {
@@ -668,10 +789,15 @@ export async function listFiles(root: vscode.Uri): Promise<Set<string>> {
 // Unlike the tree walk this one descends into the trash, because a trashed file keeps
 // its ledger entry and must still count as present.
 export async function listTree(
-  root: vscode.Uri
+  root: vscode.Uri,
+  dirs?: string[]
 ): Promise<{ files: Set<string>; folders: Set<string> }> {
   const found = { files: new Set<string>(), folders: new Set<string>() };
-  await walk(root, "", 0, found);
+  if (!dirs) {
+    await walk(root, "", 0, found);
+  } else {
+    await Promise.all(dirs.map((dir) => walk(vscode.Uri.joinPath(root, ...dir.split("/")), dir, 0, found)));
+  }
   return found;
 }
 
