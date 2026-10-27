@@ -1145,13 +1145,18 @@
     row.draggable = true;
 
     // A file has no twisty, and its slot is left empty so a file lines up with a folder,
-    // unless the file is pinned: the pin stands in it. A file not read yet has its name in
-    // italics.
+    // unless the file is pinned: the pin stands in it. A bucket holds only files, so there
+    // is nothing to line up with and a file in one has no slot; its pin goes after its name,
+    // as a folder's does. A file not read yet has its name in italics.
     if (node.dir) {
       const twisty = document.createElement("span");
       twisty.className = "twisty";
       twisty.textContent = expanded.has(node.path) ? "▾" : "▸";
       row.appendChild(twisty);
+    } else if (bare) {
+      if (!reads.has(node.path)) {
+        row.classList.add("unread");
+      }
     } else {
       const slot = document.createElement("span");
       slot.className = "slot";
@@ -1175,7 +1180,7 @@
       row.classList.add("colored", "c-" + colors[node.path]);
     }
 
-    if (node.dir && pinned.has(node.path)) {
+    if ((node.dir || bare) && pinned.has(node.path)) {
       const pin = document.createElement("span");
       pin.className = "pin";
       pin.title = "Pinned";

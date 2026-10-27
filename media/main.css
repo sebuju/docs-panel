@@ -2481,7 +2481,7 @@ img.single {
 /* Exactly as tall as a file's row: the same padding and the same clear border above and
    below the line. */
 .bucket-empty {
-  padding: 1px 8px;
+  padding: 1px 6px;
   border-block: 1px solid transparent;
   line-height: var(--tree-row);
   font-style: italic;

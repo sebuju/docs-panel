@@ -99,7 +99,7 @@ Right click a row, or press `Space`, `Shift+F10` or the menu key on it, for its 
 | Open a file | Click it |
 | Tag a file | `Ctrl`+click it, **Tags…** in its menu, or `+` in the file bar |
 | Colour a file or folder | **Colour…** in its menu. Colours come from the active theme. Picking the colour it already has takes it off. |
-| Pin a file or folder to the top of its folder | **Pin to top** in its menu. A pinned file shows a pin in front of its name. |
+| Pin a file or folder to the top of its folder | **Pin to top** in its menu. A pinned file shows a pin in front of its name, or after it in a tag bucket. |
 | Group a folder's files by tag | **Tag buckets…** in the folder's menu, or in a root folder's; see [Tag buckets](#tag-buckets) |
 | Open a file in the system browser | **Open in browser** in its menu |
 | New file or folder | **New file…** / **New folder…** in a folder's menu, or in a root folder's menu |
