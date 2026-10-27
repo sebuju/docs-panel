@@ -271,6 +271,62 @@ module.exports = [
       await page.click("#menu button:has-text('Tag buckets')");
     }
   },
+  // Buckets in the root folder itself, from the menu of the space under the tree, the
+  // picker standing to the right of the side; and a heading of a bigger size.
+  {
+    name: "buckets-root",
+    state: { expanded: [], buckets: { "": { tags: ["draft", "overview"], perRow: 2 } } },
+    clip: side
+  },
+  {
+    name: "buckets-root-picker",
+    state: { expanded: [] },
+    clip: menu,
+    act: async (page) => {
+      await page.click("#tree", { button: "right", position: { x: 100, y: 250 } });
+      await page.click("#menu button:has-text('Tag buckets')");
+    }
+  },
+  {
+    name: "buckets-head-size",
+    state: { bucketHeadSize: 140, buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 2 } } },
+    clip: side
+  },
+  // Several root folders, each under its divider, drawn as the options set.
+  ...[
+    ["roots", {}],
+    ["roots-centered-dashed", { dividerAlign: "center", dividerLine: "dashed", dividerCaps: false, dividerColor: "blue" }],
+    ["roots-path-right-thick", { dividerLabel: "path", dividerAlign: "right", dividerWidth: 3, dividerSize: 110, dividerGap: 16, dividerBold: false }],
+    ["roots-bare-double", { dividerLabel: "none", dividerLine: "double" }]
+  ].map(([name, look]) => ({
+    name: "tree-" + name,
+    state: Object.assign(
+      {
+        roots: ["docs", "team"],
+        expanded: ["docs/plans", "team/runbooks"],
+        selected: "docs/plans/roadmap.md",
+        buckets: { team: { tags: [" untagged"], perRow: 1 } }
+      },
+      look
+    ),
+    clip: { x: 0, y: 0, width: 340, height: 420 },
+    viewport: { width: 1000, height: 420 }
+  })),
+  {
+    name: "tree-roots-menu",
+    state: { roots: ["docs", "team"], expanded: [], selected: "docs/plans/roadmap.md" },
+    clip: menu,
+    act: async (page) => page.click(".root-section[data-root='team'] .root-divider", { button: "right" })
+  },
+  {
+    name: "options-roots",
+    state: { roots: ["docs", "team"], selected: "docs/plans/roadmap.md" },
+    viewport: { width: 1000, height: 800 },
+    act: async (page) => {
+      await press("openOptions")(page);
+      await page.evaluate(() => document.getElementById("optRoots").scrollIntoView());
+    }
+  },
   {
     name: "page-block-pad",
     state: { selected: "guide.md", blockPadY: 2, blockPadX: 12, hoverStrength: 100 },

@@ -257,7 +257,7 @@ body.dragging-rows {
    on the name's baseline by whole pixels, so their middle is the row's, as the pills' is. */
 .row > .label,
 .row > .twisty,
-.row > .dot,
+.row > .slot,
 .row > .can {
   position: relative;
   top: var(--label-shift, 0px);
@@ -327,9 +327,9 @@ body.dragging-rows {
   opacity: 0.7;
 }
 
-/* Every file has a dot beside its name, and how much it shows says whether it has been
-   read. The box matches the twisty it stands in for, so a file lines up with a folder. */
-.dot {
+/* A file's slot beside its name matches the twisty it stands in for, so a file lines up
+   with a folder. It is empty but for a pinned file's pin, centred in it. */
+.slot {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -337,29 +337,79 @@ body.dragging-rows {
   color: var(--vscode-descriptionForeground, #8b949e);
 }
 
-.dot.read::before {
-  opacity: 0.25;
-}
-
-/* Talked about but not opened yet: the same dot in the same slot, told apart by colour. */
-.dot.noted {
-  color: var(--vscode-textLink-foreground, #4c8eda);
-}
-
-/* A pinned file's pin stands in its dot's slot and is coloured and faded as the dot would
-   be: about as wide as the dot's glyph, and centred in the same box. */
-.dot.pinned::before {
-  content: none;
-}
-
-.dot.pinned svg {
+.slot.pinned svg {
   display: block;
   flex: none;
   opacity: 0.85;
 }
 
-.dot.pinned.read svg {
-  opacity: 0.4;
+/* A file not read yet has its name in italics. */
+.row.unread > .label {
+  font-style: italic;
+}
+
+/* Over each root folder, when there are several, a line across the side with the folder's
+   name in it; the options set what it says, where, how big and in what colour, the line's
+   style and thickness, and the room above it. */
+#tree {
+  --divider-size: 0.85em;
+  --divider-gap: 8px;
+  --divider-style: solid;
+  --divider-width: 1px;
+}
+
+.root-section + .root-section {
+  margin-top: var(--divider-gap);
+}
+
+.root-divider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tree-row);
+  margin: 0 0 2px 4px;
+  color: var(--c);
+  font-size: var(--divider-size);
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* In the text's own colour, faded, unless the options give it one of the theme's. */
+.root-divider:not(.colored) {
+  --c: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.root-divider::before,
+.root-divider::after {
+  content: "";
+  flex: 1 1 0;
+  min-width: 8px;
+  border-top: var(--divider-width) var(--divider-style) color-mix(in srgb, var(--c) 60%, transparent);
+}
+
+#tree.divider-left .root-divider:not(:empty)::before,
+#tree.divider-right .root-divider:not(:empty)::after {
+  flex: 0 0 8px;
+}
+
+.root-label {
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tree.divider-bold .root-label {
+  font-weight: 700;
+}
+
+#tree.divider-caps .root-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Unlabelled, it is the line alone, at its middle. */
+#tree.divider-bare .root-divider {
+  gap: 0;
 }
 
 /* The theme's own colours, under the names the extension stores, for files and folders. */
@@ -959,8 +1009,7 @@ body.dragging {
 
 /* A glyph, not a box: a 5px square rounds to an oval whenever the pane lands off-pixel.
    The dot hangs beside the first line, so a wrapped label keeps one straight edge. */
-#toc a::before,
-.dot::before {
+#toc a::before {
   content: "\2022";
   flex: 0 0 auto;
   width: 5px;
@@ -2334,7 +2383,8 @@ img.single {
   flex: none;
   align-items: center;
   gap: 4px;
-  height: var(--tree-row);
+  font-size: calc(1em * var(--head-scale, 1));
+  height: var(--head-row, var(--tree-row));
   padding: 2px 3px 0;
   overflow: hidden;
 }
@@ -2376,7 +2426,7 @@ img.single {
 
 .buckets.head-over .bucket-head {
   box-sizing: border-box;
-  height: var(--tree-row);
+  height: var(--head-row, var(--tree-row));
   margin-left: 3px;
   padding: 0 3px;
 }
@@ -2413,8 +2463,8 @@ img.single {
 }
 
 .bucket-head .tag {
-  --pill: var(--tree-pill);
-  --room: var(--tree-row);
+  --pill: var(--head-pill, var(--tree-pill));
+  --room: var(--head-row, var(--tree-row));
   align-self: flex-start;
   margin-top: var(--tag-top, calc((var(--room) - var(--pill)) / 2));
   cursor: pointer;

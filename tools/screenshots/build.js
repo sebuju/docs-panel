@@ -39,12 +39,32 @@ async function build(repo, out, themeName = "dark-modern", font = FONT, state = 
   let html = DocsPanel.prototype.html.call(fake);
   html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, "");
 
-  const docs = Uri.file(path.join(HERE, "fixture/docs"));
-  const prefix = (n) => ({ ...n, path: ".trash/" + n.path, children: n.children && n.children.map(prefix) });
-  const tree = await buildTree(docs, true);
-  const trash = (await buildTree(Uri.joinPath(docs, ".trash"), false)).map(prefix);
-  const corpus = await new Corpus().collect(docs, tree);
+  // The fixture's docs folder is shown as the workspace root itself, so every path in the
+  // scenes is a path in it. A scene can name "roots", folders of the fixture, to show
+  // several, each under its own divider: their paths, and the marks', then start with the
+  // folder's name.
+  const fixtureDir = Uri.file(path.join(HERE, "fixture"));
+  const prefix = (p) => (n) => ({ ...n, path: p + n.path, children: n.children && n.children.map(prefix(p)), ...(n.trash ? { trash: n.trash.map(prefix(p)) } : {}) });
+  const several = Array.isArray(state.roots) ? state.roots : null;
+  const roots = [];
+  for (const name of several || ["docs"]) {
+    const dir = Uri.joinPath(fixtureDir, name);
+    const at = several ? name + "/" : "";
+    roots.push({
+      path: several ? name : "",
+      name,
+      label: "/home/user/project/" + name,
+      nodes: (await buildTree(dir, true)).map(prefix(at)),
+      trash: (await buildTree(Uri.joinPath(dir, ".trash"), false)).map(prefix(at + ".trash/"))
+    });
+  }
+  const corpus = await new Corpus().collect(several ? fixtureDir : Uri.joinPath(fixtureDir, "docs"), roots.flatMap((r) => r.nodes));
   const fixture = JSON.parse(fs.readFileSync(path.join(HERE, "fixture/marks.json"), "utf8"));
+  if (several) {
+    for (const key of ["tags", "colors"]) {
+      fixture.marks[key] = Object.fromEntries(Object.entries(fixture.marks[key]).map(([p, v]) => ["docs/" + p, v]));
+    }
+  }
   const fullState = Object.assign(
     {
       split: 300, sideSplit: 0.62, textScale: 1, lineHeight: 1, mono: false, autoSize: "none",
@@ -53,11 +73,13 @@ async function build(repo, out, themeName = "dark-modern", font = FONT, state = 
     },
     state
   );
+  delete fullState.roots;
   const theme = themes[themeName];
   const vars = Object.assign({}, theme.vars, { "font-family": font });
   const style = Object.entries(vars).map(([k, v]) => `--vscode-${k}: ${v};`).join(" ");
   const host = {
-    tree: { type: "tree", nodes: tree, trash, pinned: fullState.pinned, root: "docs", name: "docs" },
+    tree: { type: "tree", roots, pinned: fullState.pinned },
+    reads: several ? ["docs/README.md"] : ["README.md"],
     marks: { type: "marks", ...fixture.marks },
     contents: fixture.contents,
     corpus: { type: "corpus", entries: corpus },
@@ -76,7 +98,7 @@ window.acquireVsCodeApi = () => ({
     window.__sent.push(m);
     const h = window.__host, post = (x) => window.postMessage(x, "*");
     const content = (p) => Object.assign({ type: "content", path: p, kind: "md", text: "", created: 1760000000000, modified: 1760500000000 }, h.contents[p] || { html: "<h1>" + p + "</h1><p>Some text.</p>" });
-    if (m.type === "ready") { post(h.state); post(h.version); post(h.tree); post(h.marks); post({ type: "reads", reads: ["README.md"] }); if (h.state.selected) post(content(h.state.selected)); }
+    if (m.type === "ready") { post(h.state); post(h.version); post(h.tree); post(h.marks); post({ type: "reads", reads: h.reads }); if (h.state.selected) post(content(h.state.selected)); }
     else if (m.type === "open") post(content(m.path));
     else if (m.type === "corpus") post(h.corpus);
     else if (m.type === "dataFiles") post(h.dataFiles);

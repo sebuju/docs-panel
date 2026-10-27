@@ -134,8 +134,12 @@
   const LINE_HEIGHTS = ["normal", "1.6", "2"];
   const LINE_LABELS = ["tight", "normal", "loose"];
   const ACTIVE_SHARE = 0.1;
-  const TRASH_PREFIX = ".trash/";
+  const TRASH = ".trash";
 
+  // The folders the panel shows, each with its tree and its trash, under a divider of its
+  // own when there are several. Every path is from the workspace, so a path is in one of
+  // them at most. "nodes" and "trashNodes" are all of their trees and all of their trashes.
+  let roots = [];
   let nodes = [];
   let expanded = new Set();
   let selected = null;
@@ -156,8 +160,8 @@
 
   let current = null;
   let mode = "preview";
-  // The bins that are open, by the folder they belong to; "" is the root's, which holds
-  // the whole of the trash.
+  // The bins that are open, by the folder they belong to; a root folder's holds the whole
+  // of its trash.
   const trashOpen = new Set();
   let trashNodes = [];
   let zoom = 1;
@@ -186,7 +190,6 @@
   // nothing in it but the trash, which looks the same as a broken one.
   let treeHeard = false;
   let flashModified = false;
-  let rootPrefix = "";
   const bars = [];
   let dragging = null;
   // "tree" or "toc" gives that list the height its entries need; "none" leaves the
@@ -243,6 +246,32 @@
   const BUCKET_HEADS = ["inside", "over", "outside"];
   let bucketHeadStyle = "pill";
   const BUCKET_HEAD_STYLES = ["pill", "fill", "plain"];
+  // The size of a bucket's heading, in percent of the tree's text.
+  let bucketHeadSize = 100;
+  const HEAD_SIZE_STEP = 10;
+  const MIN_HEAD_SIZE = 50;
+  const MAX_HEAD_SIZE = 250;
+  // The divider over each root folder, when there are several: labelled with the folder's
+  // name, its path or nothing, the label standing left, centred or right, at a size in
+  // percent of the tree's text, bold and in capitals or not, in the text's colour or one of
+  // the theme's; the line beside it solid, dashed, dotted, double or none, so many pixels
+  // thick; and so many pixels of room above it.
+  let dividerLabel = "name";
+  const DIVIDER_LABELS = ["name", "path", "none"];
+  let dividerAlign = "left";
+  const DIVIDER_ALIGNS = ["left", "center", "right"];
+  let dividerSize = 85;
+  let dividerBold = true;
+  let dividerCaps = true;
+  let dividerColor = "none";
+  const DIVIDER_COLORS = ["none", "red", "orange", "yellow", "green", "blue", "purple", "cyan", "magenta", "grey"];
+  let dividerLine = "solid";
+  const DIVIDER_LINES = ["solid", "dashed", "dotted", "double", "none"];
+  let dividerWidth = 1;
+  const MAX_DIVIDER_WIDTH = 4;
+  let dividerGap = 8;
+  const DIVIDER_GAP_STEP = 2;
+  const MAX_DIVIDER_GAP = 32;
   // The bucket of a folder's files that have no tag at all. It is chosen, laid out and
   // ordered as a tag's is, but is no tag: a tag's name is trimmed, so none starts with a
   // space, and this one cannot be given to a file.
@@ -409,6 +438,36 @@
     if (BUCKET_HEAD_STYLES.includes(state.bucketHeadStyle)) {
       bucketHeadStyle = state.bucketHeadStyle;
     }
+    if (typeof state.bucketHeadSize === "number") {
+      bucketHeadSize = state.bucketHeadSize;
+    }
+    if (DIVIDER_LABELS.includes(state.dividerLabel)) {
+      dividerLabel = state.dividerLabel;
+    }
+    if (DIVIDER_ALIGNS.includes(state.dividerAlign)) {
+      dividerAlign = state.dividerAlign;
+    }
+    if (typeof state.dividerSize === "number") {
+      dividerSize = state.dividerSize;
+    }
+    if (typeof state.dividerBold === "boolean") {
+      dividerBold = state.dividerBold;
+    }
+    if (typeof state.dividerCaps === "boolean") {
+      dividerCaps = state.dividerCaps;
+    }
+    if (DIVIDER_COLORS.includes(state.dividerColor)) {
+      dividerColor = state.dividerColor;
+    }
+    if (DIVIDER_LINES.includes(state.dividerLine)) {
+      dividerLine = state.dividerLine;
+    }
+    if (typeof state.dividerWidth === "number") {
+      dividerWidth = state.dividerWidth;
+    }
+    if (typeof state.dividerGap === "number") {
+      dividerGap = state.dividerGap;
+    }
     if (TABLE_ALIGNS.includes(state.tableAlign)) {
       tableAlign = state.tableAlign;
     }
@@ -453,6 +512,7 @@
       finderRegex = state.finderRegex;
     }
     markFindOptions();
+    setDividerLook();
   }
 
   function markFindOptions() {
@@ -505,6 +565,16 @@
       bucketHeadBold: bucketHeadBold,
       bucketHead: bucketHead,
       bucketHeadStyle: bucketHeadStyle,
+      bucketHeadSize: bucketHeadSize,
+      dividerLabel: dividerLabel,
+      dividerAlign: dividerAlign,
+      dividerSize: dividerSize,
+      dividerBold: dividerBold,
+      dividerCaps: dividerCaps,
+      dividerColor: dividerColor,
+      dividerLine: dividerLine,
+      dividerWidth: dividerWidth,
+      dividerGap: dividerGap,
       tableAlign: tableAlign,
       tableHead: tableHead,
       refsScope: refsScope,
@@ -825,9 +895,21 @@
     // with it; the place is put back once the rows are in again.
     const top = treeEl.scrollTop;
     treeEl.textContent = "";
-    const list = buildList(nodes, treeHeard ? notice : "Loading the docs…");
-    if (treeHeard) {
-      list.appendChild(trashItem(""));
+    let list;
+    if (!treeHeard || !roots.length) {
+      list = buildList([], treeHeard ? notice : "Loading the docs…");
+    } else if (roots.length === 1) {
+      list = rootList(roots[0]);
+    } else {
+      // Each root folder stands under its divider, in a section of its own that stands for
+      // the folder wherever nothing else is under the pointer.
+      list = document.createElement("ul");
+      for (const root of roots) {
+        const section = make("li", "root-section");
+        section.dataset.root = root.path;
+        section.append(rootDivider(root), rootList(root));
+        list.appendChild(section);
+      }
     }
     treeEl.appendChild(list);
     treeEl.scrollTop = top;
@@ -835,6 +917,9 @@
     markCursor(document.activeElement === treeEl ? cursorRow() : null);
     fitWidth();
     fitTags();
+    if (bucketHeadSize !== 100) {
+      treeEl.querySelectorAll(".bucket-head").forEach(fitPillHeights);
+    }
     if (autoSize === "tree") {
       fitSide();
     }
@@ -862,10 +947,74 @@
     heightWatch.observe(list);
   }
 
+  // A root folder's entries, with its buckets at their head and its trash at their foot,
+  // or why there are none.
+  function rootList(root) {
+    const list = buildList(root.nodes, root.notice || "", root.path);
+    if (!root.notice) {
+      list.appendChild(trashItem(root.path));
+    }
+    return list;
+  }
+
+  // A line across the side, labelled with the folder it stands over; its menu is the
+  // folder's own.
+  function rootDivider(root) {
+    const el = make("div", "root-divider");
+    if (dividerColor !== "none") {
+      el.classList.add("colored", "c-" + dividerColor);
+    }
+    el.title = root.label;
+    if (dividerLabel !== "none") {
+      el.appendChild(make("span", "root-label", dividerLabel === "path" ? root.path || root.name : root.name));
+    }
+    return el;
+  }
+
+  // How the dividers are drawn, from the options.
+  function setDividerLook() {
+    treeEl.style.setProperty("--divider-size", dividerSize / 100 + "em");
+    treeEl.style.setProperty("--divider-gap", dividerGap + "px");
+    treeEl.style.setProperty("--divider-style", dividerLine === "none" ? "none" : dividerLine);
+    // A double line is two lines and the gap between, so it needs three pixels at least.
+    treeEl.style.setProperty("--divider-width", (dividerLine === "double" ? Math.max(3, dividerWidth * 3) : dividerWidth) + "px");
+    for (const align of DIVIDER_ALIGNS) {
+      treeEl.classList.toggle("divider-" + align, dividerAlign === align);
+    }
+    treeEl.classList.toggle("divider-bold", dividerBold);
+    treeEl.classList.toggle("divider-caps", dividerCaps);
+    treeEl.classList.toggle("divider-bare", dividerLabel === "none");
+  }
+
+  // The root folder a path is in: the one whose path it starts with, or the workspace
+  // root when that is one.
+  function rootOf(path) {
+    return roots.find((root) => !root.path || path === root.path || path.startsWith(root.path + "/")) || null;
+  }
+
+  function isRoot(path) {
+    return roots.some((root) => root.path === path);
+  }
+
+  function joinPath(head, tail) {
+    return head && tail ? head + "/" + tail : head || tail;
+  }
+
+  // A path from the workspace as a path from its root folder.
+  function innerPath(root, path) {
+    return !root.path ? path : path === root.path ? "" : path.slice(root.path.length + 1);
+  }
+
+  // Where a folder's part of its root folder's trash is, and for a root folder the trash.
+  function binPath(at) {
+    const root = rootOf(at);
+    return root ? joinPath(joinPath(root.path, TRASH), innerPath(root, at)) : joinPath(TRASH, at);
+  }
+
   // The trash keeps the folders its files came from, so every folder has a bin of its
-  // own: the root's holds the whole trash, a folder's the part that left that folder.
+  // own: a root folder's holds its whole trash, a folder's the part that left that folder.
   function trashItem(at) {
-    const items = at ? trashFor(at) : trashNodes;
+    const items = trashFor(at);
     const li = document.createElement("li");
     li.appendChild(trashRow(at));
     if (trashOpen.has(at)) {
@@ -876,8 +1025,15 @@
 
   // A folder kept by another tool can have a .trash of its own, and that is in its bin too.
   function trashFor(at) {
-    const node = findNode(trashNodes, TRASH_PREFIX + at);
-    const own = findNode(nodes, at);
+    const root = rootOf(at);
+    if (!root) {
+      return [];
+    }
+    if (at === root.path) {
+      return root.trash;
+    }
+    const node = findNode(root.trash, binPath(at));
+    const own = findNode(root.nodes, at);
     return ((node && node.children) || []).concat((own && own.trash) || []);
   }
 
@@ -897,7 +1053,7 @@
   function trashRow(at) {
     const row = document.createElement("div");
     row.className = "row bin";
-    row.dataset.path = at ? TRASH_PREFIX + at : ".trash";
+    row.dataset.path = binPath(at);
     row.dataset.dir = "1";
     row.dataset.open = trashOpen.has(at) ? "1" : "";
 
@@ -925,7 +1081,7 @@
 
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      const empty = !(at ? trashFor(at) : trashNodes).length;
+      const empty = !trashFor(at).length;
       openMenu(event.clientX, event.clientY, [
         { label: "Restore all", disabled: empty, run: () => emptyBin("restoreAll", at) },
         { label: "Delete all", danger: true, disabled: empty, run: () => emptyBin("emptyTrash", at) }
@@ -936,7 +1092,7 @@
 
   // Whatever leaves the bin takes its unsaved drafts along, as a single file would.
   function emptyBin(type, at) {
-    const bins = at ? [TRASH_PREFIX + at + "/", at + "/" + TRASH_PREFIX] : [TRASH_PREFIX];
+    const bins = isRoot(at) ? [binPath(at) + "/"] : [binPath(at) + "/", at + "/" + TRASH + "/"];
     for (const path of [...drafts.keys()]) {
       if (bins.some((bin) => path.startsWith(bin))) {
         drafts.delete(path);
@@ -988,25 +1144,26 @@
     row.dataset.open = node.dir && expanded.has(node.path) ? "1" : "";
     row.draggable = true;
 
-    // A file has no twisty, so the dot takes that slot and costs the row no width. A pin
-    // takes the dot's place, and its colour says what the dot's would.
+    // A file has no twisty, and its slot is left empty so a file lines up with a folder,
+    // unless the file is pinned: the pin stands in it. A file not read yet has its name in
+    // italics.
     if (node.dir) {
       const twisty = document.createElement("span");
       twisty.className = "twisty";
       twisty.textContent = expanded.has(node.path) ? "▾" : "▸";
       row.appendChild(twisty);
     } else {
-      const dot = document.createElement("span");
-      const noted = (mentions[node.path] || []).length;
-      const seen = reads.has(node.path);
-      dot.className = seen ? "dot read" : noted ? "dot noted" : "dot";
-      dot.title = seen ? "Read" : noted ? "Talked about " + noted + " times" : "Not read yet";
+      const slot = document.createElement("span");
+      slot.className = "slot";
       if (pinned.has(node.path)) {
-        dot.classList.add("pinned");
-        dot.innerHTML = PIN_ICON;
-        dot.title = "Pinned, " + dot.title.toLowerCase();
+        slot.classList.add("pinned");
+        slot.innerHTML = PIN_ICON;
+        slot.title = "Pinned";
       }
-      row.appendChild(dot);
+      row.appendChild(slot);
+      if (!reads.has(node.path)) {
+        row.classList.add("unread");
+      }
     }
 
     const label = document.createElement("span");
@@ -1141,6 +1298,14 @@
     grid.classList.toggle("head-out", bucketHead === "outside");
     grid.classList.toggle("head-over", bucketHead === "over");
     grid.classList.add("head-" + bucketHeadStyle);
+    // A heading of another size than the tree's text is a row and a pill of that size.
+    if (bucketHeadSize !== 100) {
+      const scale = bucketHeadSize / 100;
+      const row = parseFloat(treeEl.style.getPropertyValue("--tree-row")) || 18 * treeScale;
+      grid.style.setProperty("--head-scale", String(scale));
+      grid.style.setProperty("--head-row", Math.round(row * scale) + "px");
+      grid.style.setProperty("--head-pill", Math.round(14 * treeScale * scale) + "px");
+    }
     for (const [tag, files] of held) {
       // On the outline, the bucket is a fieldset and its heading the legend, so the
       // browser breaks the line round the heading and starts the tint at its middle.
@@ -1510,10 +1675,10 @@
     }
   }
 
-  // Tree paths are relative to the docs root; anything shown or copied is relative to the
-  // project, which is the path the rest of the editor and the terminal use.
+  // Tree paths are from the workspace, which is the path the rest of the editor and the
+  // terminal use, so they are shown and copied as they are.
   function fullPath(path) {
-    return rootPrefix ? rootPrefix + "/" + path : path;
+    return path;
   }
 
   function copyPath(path, prefixed) {
@@ -1629,14 +1794,14 @@
   }
 
   // "none" is offered only where having no colour at all is a choice; a tag always has one,
-  // from a palette of its own.
+  // from a palette of its own. There, picking the colour already chosen takes it off again.
   function openColorMenu(x, y, chosen, none, apply) {
     const palette = none ? COLORS : TAG_COLORS;
     const items = palette.map((color) => ({
       label: color,
       swatch: (none ? "c-" : "t-") + color,
       checked: chosen === color,
-      run: () => apply(color)
+      run: () => apply(none && chosen === color ? null : color)
     }));
     if (none) {
       items.unshift({ label: "no colour", checked: !chosen, run: () => apply(null) }, { separator: true });
@@ -1707,8 +1872,8 @@
     return items;
   }
 
-  // The same pair of entries wherever a new file can go: a folder's menu, and the empty
-  // space below the tree, which stands for the docs root.
+  // The same pair of entries wherever a new file can go: a folder's menu, and a root
+  // folder's, on its divider and the empty space under it.
   function makeItems(at) {
     return [
       { label: "New file…", run: () => create("file", at) },
@@ -2163,8 +2328,50 @@
       keyMenuAt = 0;
       return;
     }
-    openMenu(event.clientX, event.clientY, makeItems(""));
+    const root = sectionRoot(event.target);
+    openMenu(
+      event.clientX,
+      event.clientY,
+      root ? rootMenu(root, event.clientX, event.clientY) : [{ label: "Add root folder…", run: addRoot }]
+    );
   });
+
+  // The root folder a place in the tree stands for when no row is under it: that of the
+  // section it is in, or the only one there is.
+  function sectionRoot(target) {
+    const section = target && target.closest ? target.closest(".root-section") : null;
+    if (section) {
+      return roots.find((root) => root.path === section.dataset.root) || null;
+    }
+    return roots.length === 1 ? roots[0] : null;
+  }
+
+  // A root folder's menu, on its divider and the space under it: what a folder's menu has
+  // that a root folder can do, and the root folders themselves.
+  function rootMenu(root, x, y) {
+    const items = [];
+    if (!root.notice) {
+      items.push(
+        { label: "Tag buckets…", run: () => openBucketPicker(root.path, x, y) },
+        { separator: true },
+        ...makeItems(root.path),
+        { separator: true }
+      );
+    }
+    items.push({ label: "Reveal in file explorer", run: () => vscode.postMessage({ type: "reveal", path: root.path }) });
+    if (root.path) {
+      items.push({ label: "Copy path", run: () => copyPath(root.path) });
+    }
+    items.push({ separator: true }, { label: "Add root folder…", run: addRoot });
+    if (roots.length > 1) {
+      items.push({ label: "Remove root", run: () => vscode.postMessage({ type: "removeRoot", path: root.path }) });
+    }
+    return items;
+  }
+
+  function addRoot() {
+    vscode.postMessage({ type: "addRoot" });
+  }
 
   // The rows on screen, top to bottom, which is the order the keys walk them in.
   function treeRows() {
@@ -2339,10 +2546,14 @@
     }
     const row = target.closest(".row");
     const bucket = target.closest(".bucket");
+    const section = !row && !bucket ? sectionRoot(target) : null;
+    if (!row && !bucket && !section) {
+      return null;
+    }
     const path = bucket
       ? bucket.dataset.folder
       : !row
-        ? ""
+        ? section.path
         : row.dataset.dir
           ? row.dataset.path
           : row.dataset.path.split("/").slice(0, -1).join("/");
@@ -2361,7 +2572,8 @@
       return null;
     }
     const tag = bucket && !dragging.dir ? bucket.dataset.tag : "";
-    return { el: bucket || row, path: path, tag: tag === UNTAGGED ? "" : tag, untag: tag === UNTAGGED };
+    const el = bucket || row || (roots.length > 1 ? target.closest(".root-section") : null);
+    return { el: el, path: path, tag: tag === UNTAGGED ? "" : tag, untag: tag === UNTAGGED };
   }
 
   let dropEl = null;
@@ -3042,9 +3254,10 @@
     }
   });
 
-  // In the trash at the docs root, or in a folder's own .trash.
+  // In the trash of a root folder, or in a folder's own .trash.
   function inTrash(path) {
-    return path.split("/").slice(0, -1).includes(".trash");
+    const root = rootOf(path);
+    return (root ? innerPath(root, path) : path).split("/").slice(0, -1).includes(TRASH);
   }
 
   function applyView() {
@@ -3359,9 +3572,16 @@
     const message = event.data;
     if (message.type === "tree") {
       treeHeard = true;
-      nodes = message.nodes || [];
-      trashNodes = message.trash || [];
-      rootPrefix = typeof message.root === "string" ? message.root : "";
+      roots = (message.roots || []).map((root) => ({
+        path: root.path || "",
+        name: root.name || "",
+        label: root.label || "",
+        notice: root.notice || "",
+        nodes: root.nodes || [],
+        trash: root.trash || []
+      }));
+      nodes = roots.flatMap((root) => root.nodes);
+      trashNodes = roots.flatMap((root) => root.trash);
       if (finderOpen) {
         vscode.postMessage({ type: "corpus" });
       }
@@ -3863,6 +4083,11 @@
       const link = event.target.closest("a[data-open]");
       if (link) {
         event.preventDefault();
+        // A relative link can lead out of the root folders, to a file only an editor shows.
+        if (!rootOf(link.dataset.open)) {
+          vscode.postMessage({ type: "openWorkspace", path: link.dataset.open });
+          return;
+        }
         expandTo(link.dataset.open, false);
         openFile(link.dataset.open);
         showRow(link.dataset.open, false);
@@ -4765,7 +4990,7 @@
 
   // The same box picks the tags a folder has buckets for, how many columns each spans and
   // the order they stand in, and under them how many stand in a row. The folder is opened,
-  // so the buckets come and go in sight.
+  // and the box stands to the right of the side, so the buckets come and go in sight.
   function openBucketPicker(at, x, y) {
     closeMenu();
     pickerPath = null;
@@ -4776,14 +5001,15 @@
       drawTree();
       persist();
     }
-    tagPickerTitleEl.textContent = "Tag buckets in " + at.split("/").pop();
+    const root = roots.find((one) => one.path === at);
+    tagPickerTitleEl.textContent = "Tag buckets in " + (root ? root.name : at.split("/").pop());
     tagPickerOptionsEl.title = "Tag bucket options";
     tagInputEl.placeholder = "Find a tag";
     tagInputEl.value = "";
     tagPickerEl.hidden = false;
     drawTagPicker();
     drawBucketFoot();
-    place(tagPickerEl, x, y);
+    place(tagPickerEl, Math.max(x, sideEl.getBoundingClientRect().right + 8), y);
     tagInputEl.focus();
   }
 
@@ -5280,6 +5506,22 @@
     return (bytes / 1024 / 1024).toFixed(1) + " MB";
   }
 
+  function stepBucketHeadSize(delta) {
+    bucketHeadSize = Math.min(Math.max(bucketHeadSize + delta, MIN_HEAD_SIZE), MAX_HEAD_SIZE);
+    drawTree();
+    persist();
+    drawOptions();
+  }
+
+  // Any change to the dividers' look is drawn at once and kept.
+  function setDivider(change) {
+    change();
+    setDividerLook();
+    drawTree();
+    persist();
+    drawOptions();
+  }
+
   function stepBucketFill(delta) {
     bucketFill = Math.min(Math.max(Math.round(bucketFill / BUCKET_FILL_STEP) * BUCKET_FILL_STEP + delta, 0), 100);
     drawTree();
@@ -5513,11 +5755,97 @@
         persist();
       })
     ]);
+    optionRow(bucketBox, "Heading text size", optionStepper(
+      bucketHeadSize + "%",
+      ["Smaller bucket headings", "Bigger bucket headings"],
+      () => stepBucketHeadSize(-HEAD_SIZE_STEP),
+      () => stepBucketHeadSize(HEAD_SIZE_STEP),
+      bucketHeadSize <= MIN_HEAD_SIZE,
+      bucketHeadSize >= MAX_HEAD_SIZE
+    ));
 
-    const folder = optionSection("Folder");
-    optionRow(folder, [make("span", "opt-path cap", rootPrefix || "the workspace root")], [
+    // Each root folder with a button to take it off the panel, while there is another.
+    const folder = optionSection("Root folders");
+    folder.id = "optRoots";
+    for (const root of roots) {
+      const where = make("span", "opt-path cap", root.path || "the workspace root");
+      where.title = root.label;
+      const controls = [];
+      if (roots.length > 1) {
+        const remove = makeButton("Remove", () => vscode.postMessage({ type: "removeRoot", path: root.path }), "opt-button");
+        remove.title = "Stop showing this folder; nothing in it is deleted";
+        controls.push(remove);
+      }
+      optionRow(folder, [where], controls);
+    }
+    optionRow(folder, "", [
+      makeButton("Add root folder…", addRoot),
       makeButton("Open settings", () => vscode.postMessage({ type: "settings" }))
     ]);
+    optionRow(folder, "Divider label", [
+      optionChoice(DIVIDER_LABELS, DIVIDER_LABELS.indexOf(dividerLabel), (choice) => setDivider(() => {
+        dividerLabel = DIVIDER_LABELS[choice];
+      }))
+    ]);
+    optionRow(folder, "Divider label placement", [
+      optionChoice(DIVIDER_ALIGNS, DIVIDER_ALIGNS.indexOf(dividerAlign), (choice) => setDivider(() => {
+        dividerAlign = DIVIDER_ALIGNS[choice];
+      }))
+    ]);
+    optionRow(folder, "Divider text size", optionStepper(
+      dividerSize + "%",
+      ["Smaller divider labels", "Bigger divider labels"],
+      () => setDivider(() => {
+        dividerSize = Math.max(dividerSize - HEAD_SIZE_STEP, MIN_HEAD_SIZE);
+      }),
+      () => setDivider(() => {
+        dividerSize = Math.min(dividerSize + HEAD_SIZE_STEP, MAX_HEAD_SIZE);
+      }),
+      dividerSize <= MIN_HEAD_SIZE,
+      dividerSize >= MAX_HEAD_SIZE
+    ));
+    optionRow(folder, "Divider text", [
+      optionChoice(["as written", "capitals"], dividerCaps ? 1 : 0, (choice) => setDivider(() => {
+        dividerCaps = choice === 1;
+      })),
+      optionChoice(["normal", "bold"], dividerBold ? 1 : 0, (choice) => setDivider(() => {
+        dividerBold = choice === 1;
+      }))
+    ]);
+    optionRow(folder, "Divider colour", [
+      optionChoice(DIVIDER_COLORS.map((color) => (color === "none" ? "text colour" : color)), DIVIDER_COLORS.indexOf(dividerColor), (choice) => setDivider(() => {
+        dividerColor = DIVIDER_COLORS[choice];
+      }))
+    ]);
+    optionRow(folder, "Divider line", [
+      optionChoice(DIVIDER_LINES, DIVIDER_LINES.indexOf(dividerLine), (choice) => setDivider(() => {
+        dividerLine = DIVIDER_LINES[choice];
+      }))
+    ]);
+    optionRow(folder, "Divider line thickness", optionStepper(
+      dividerWidth + " px",
+      ["Thinner line", "Thicker line"],
+      () => setDivider(() => {
+        dividerWidth = Math.max(dividerWidth - 1, 1);
+      }),
+      () => setDivider(() => {
+        dividerWidth = Math.min(dividerWidth + 1, MAX_DIVIDER_WIDTH);
+      }),
+      dividerWidth <= 1,
+      dividerWidth >= MAX_DIVIDER_WIDTH
+    ));
+    optionRow(folder, "Space above dividers", optionStepper(
+      dividerGap + " px",
+      ["Less space above each divider", "More space above each divider"],
+      () => setDivider(() => {
+        dividerGap = Math.max(dividerGap - DIVIDER_GAP_STEP, 0);
+      }),
+      () => setDivider(() => {
+        dividerGap = Math.min(dividerGap + DIVIDER_GAP_STEP, MAX_DIVIDER_GAP);
+      }),
+      dividerGap <= 0,
+      dividerGap >= MAX_DIVIDER_GAP
+    ));
 
     const tagBox = optionSection("Tags");
     tagBox.id = "optTags";
