@@ -313,6 +313,17 @@ module.exports = [
     viewport: { width: 1000, height: 420 }
   })),
   {
+    name: "tree-roots-three",
+    state: {
+      roots: ["docs", "team", "specs"],
+      expanded: ["team/runbooks"],
+      selected: "specs/api.md",
+      dividerColor: "blue"
+    },
+    clip: { x: 0, y: 0, width: 340, height: 420 },
+    viewport: { width: 1000, height: 420 }
+  },
+  {
     name: "tree-roots-menu",
     state: { roots: ["docs", "team"], expanded: [], selected: "docs/plans/roadmap.md" },
     clip: menu,
