@@ -236,6 +236,8 @@
   const BUCKET_FILL_STEP = 5;
   // The tint the background had when it was only on or off.
   const OLD_BUCKET_FILL = 14;
+  // From this tint up, a bucket's rows are lit by darkening its colour, not adding to it.
+  const STRONG_BUCKET_FILL = 55;
   // Whether a bucket's heading is written in its tag's colour instead of its own, and bold.
   let bucketHeadTint = false;
   let bucketHeadBold = false;
@@ -1298,6 +1300,11 @@
     grid.style.setProperty("--fill", bucketFill + "%");
     grid.classList.toggle("outlined", bucketOutline);
     grid.classList.toggle("filled", bucketFill > 0);
+    // Tinted, a bucket lights its rows in its own colour rather than the theme's: a faint
+    // tint gets a stronger one under the pointer and the tag's colour itself, with black
+    // text as on its pill, for the open file; a strong tint, where more of the colour
+    // would not show, is darkened instead, the open file the most, with white text.
+    grid.classList.toggle("fill-strong", bucketFill >= STRONG_BUCKET_FILL);
     grid.classList.toggle("head-tinted", bucketHeadTint);
     grid.classList.toggle("head-bold", bucketHeadBold);
     grid.classList.toggle("head-out", bucketHead === "outside");

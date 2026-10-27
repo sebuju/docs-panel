@@ -331,6 +331,13 @@ Buckets and their layout are stored per folder and follow the folder when it is 
 moved. Outline, background tint, and heading position, style and text size are set in the
 options.
 
+A bucket with a background tint lights its rows in its own colour instead of the theme's.
+Under a faint tint the row under the pointer gets more of the colour, the open file is the
+colour itself with black text, as on the tag's pill, and the ring of the row the keys are
+on is black. From a tint of 55% up, where more of the colour would not show, the rows are
+darkened instead: a little under the pointer, more for the open file, which has white
+text, with a white ring.
+
 ## Search all docs
 
 Open with the search button in the tree's top right corner (shown while the pointer is in

@@ -292,6 +292,22 @@ module.exports = [
     state: { bucketHeadSize: 140, buckets: { plans: { tags: ["plan", "blocked", "q3"], perRow: 2 } } },
     clip: side
   },
+  // A tinted bucket lights its rows in its own colour: the open file, the file under the
+  // pointer and, with the tree focused, the ring of the row the keys are on. A faint tint
+  // adds colour; a strong one is darkened.
+  ...[15, 70].flatMap((fill) => ["dark-modern", "light-modern"].flatMap((theme) => [false, true].map((focused) => ({
+    name: "buckets-lit-" + fill + (theme === "light-modern" ? "-light" : "") + (focused ? "-focused" : ""),
+    theme: theme,
+    state: { bucketFill: fill, buckets: { plans: { tags: ["plan"], perRow: 1 } }, expanded: ["plans"] },
+    hover: true,
+    clip: { x: 0, y: 30, width: 300, height: 150 },
+    act: async (page) => {
+      if (focused) {
+        await page.focus("#tree");
+      }
+      await page.hover('.row[data-path="plans/migration-plan-for-the-new-storage-layer.md"] .label');
+    }
+  })))),
   // Several root folders, each under its divider, drawn as the options set.
   ...[
     ["roots", {}],
