@@ -111,9 +111,12 @@ Right click a row, or press `Space`, `Shift+F10` or the menu key on it, for its 
 | Auto size the side's width | Right click that divider: auto size to the files, auto size growing only, or off. While auto sized the divider cannot be dragged; in grow-only mode a click on it refits the side. |
 | Auto size the tree or the contents list | Right click the divider between them: auto size the files, the contents, or neither. The same menu hides the contents list (**Show toc**); the options bring it back. |
 
-Trashed files go to the `.trash` folder of their root folder, keeping the folders they
-were in. That trash is shown at the foot of the root folder, and each folder lists its
-own part of it as **Trash**, together with a `.trash` of its own if another tool made one.
+A trashed file goes to the `.trash` of the folder it was in: `docs/plans/test.md` to
+`docs/plans/.trash/test.md`. A trashed folder goes to the `.trash` of the folder holding
+it, with its files in it. Each folder lists its `.trash` as **Trash**; a root folder's is
+shown at its foot. Files trashed by earlier versions into the root folder's `.trash`,
+under the folders they came from, are still listed in those folders' **Trash** and
+restore to where they were.
 
 Keys, with the tree focused (click it or `Tab` to it):
 

@@ -1077,8 +1077,8 @@
     return root ? joinPath(joinPath(root.path, TRASH), innerPath(root, at)) : joinPath(TRASH, at);
   }
 
-  // The trash keeps the folders its files came from, so every folder has a bin of its
-  // own: a root folder's holds its whole trash, a folder's the part that left that folder.
+  // Every folder has a bin of its own: its .trash, and the part of its root folder's
+  // trash that left that folder, where earlier versions put a trashed file.
   function trashItem(at) {
     const items = trashFor(at);
     const li = document.createElement("li");
@@ -1089,7 +1089,7 @@
     return li;
   }
 
-  // A folder kept by another tool can have a .trash of its own, and that is in its bin too.
+  // A file trashed from a folder lies in that folder's own .trash.
   function trashFor(at) {
     const root = rootOf(at);
     if (!root) {
