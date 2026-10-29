@@ -1159,17 +1159,24 @@ export class DocsPanel {
     }
   }
 
-  // The trash is a folder like any other, so a move is only the prefix going on or off.
-  // A file comes back from a folder's own .trash the same way, to the folder holding it.
-  // Each docs folder has a trash of its own, so a file never leaves its folder this way.
-  private async shift(relPath: string, direction: "trash" | "restore"): Promise<void> {
+  // The trash is a folder like any other, so a move is only a .trash going in or out of
+  // the path. An entry goes to the .trash of the folder holding it, and comes back to that
+  // folder with the .trash taken out, so a file never leaves its folder this way. "from" is
+  // the folder whose .trash it goes to: for a folder trashed file by file, the one holding
+  // that folder.
+  private shifted(relPath: string, direction: "trash" | "restore", from = parentOf(relPath)): string {
+    if (direction === "trash") {
+      return [from, TRASH_DIR, from ? relPath.slice(from.length + 1) : relPath].filter(Boolean).join("/");
+    }
     const root = this.rootOf(relPath)!;
-    const inner = this.inner(root, relPath);
-    const parts = (direction === "restore" ? untrash(inner) : inner).split("/");
-    const name = parts.pop() ?? inner;
-    const anchor = direction === "trash" ? vscode.Uri.joinPath(root.uri, TRASH_DIR) : root.uri;
+    const back = untrash(this.inner(root, relPath));
+    return root.rel ? `${root.rel}/${back}` : back;
+  }
 
-    const target = await makeDirectory(anchor, parts);
+  private async shift(relPath: string, direction: "trash" | "restore", from?: string): Promise<void> {
+    const parts = this.shifted(relPath, direction, from).split("/");
+    const name = parts.pop() ?? relPath;
+    const target = await makeDirectory(this.workspace!, parts);
     const to = await freeName(target, name);
     await vscode.workspace.fs.rename(this.uriOf(relPath), to, { overwrite: false });
     await this.rekeyAll([[relPath, relativeTo(this.workspace!, to)]]);
@@ -1205,16 +1212,14 @@ export class DocsPanel {
       return;
     }
     const uri = this.uriOf(relPath);
+    const from = parentOf(relPath);
     for (const inner of await listFiles(uri)) {
-      await this.shift(`${relPath}/${inner}`, direction);
+      await this.shift(`${relPath}/${inner}`, direction, from);
     }
     await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: false });
     // The files land at the same path on the other side of the trash, and the
     // folders they make there answer to the colours the originals had.
-    const root = this.rootOf(relPath)!;
-    const inner = this.inner(root, relPath);
-    const to = direction === "trash" ? `${TRASH_DIR}/${inner}` : untrash(inner);
-    await this.rekeyAll([], [relPath, root.rel ? `${root.rel}/${to}` : to]);
+    await this.rekeyAll([], [relPath, this.shifted(relPath, direction)]);
   }
 
   // "at" names a bin: the folder its files were trashed from, and a docs folder for the
@@ -1920,6 +1925,11 @@ export class DocsPanel {
 // root, or a folder's own .trash.
 function isTrashed(relPath: string): boolean {
   return relPath.split("/").slice(0, -1).includes(TRASH_DIR);
+}
+
+function parentOf(relPath: string): string {
+  const at = relPath.lastIndexOf("/");
+  return at < 0 ? "" : relPath.slice(0, at);
 }
 
 // Where a trashed path goes back to: the same path with the trash taken out of it.
